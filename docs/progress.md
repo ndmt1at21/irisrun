@@ -14,7 +14,7 @@ Cập nhật 14/10/2026, cuối session đầu tiên. File này để session sa
 | P0-05 OpenSwiftUI trên Linux | Giao subagent, đang chạy lúc lưu | Chỉ được sửa `runtimes/ios/**` (trừ `Sources/IrisProtocol`), `examples/ios-swiftui/**`; báo cáo `reports/p0-05-openswiftui-linux.md` |
 | P0-07 Objective-C trên Linux | Giao subagent, đang chạy lúc lưu | `native/objc/**`, `reports/p0-07-objc-linux.md` |
 | P0-08 Corpus iOS | Giao subagent, đang chạy lúc lưu | `tools/ios-corpus/**`, `reports/p0-08-ios-corpus.md` |
-| P0-09 Binary Doctor | Giao subagent, đang chạy lúc lưu | `crates/doctor/**`, lệnh `irisrun doctor`, `reports/p0-09-binary-doctor.md` |
+| P0-09 Binary Doctor | Xong | `crates/doctor`, lệnh `irisrun doctor <path>`; quét 14 SDK, xem [reports/p0-09-binary-doctor.md](reports/p0-09-binary-doctor.md) |
 | P0-06 Render core, P0-10 cloud Android, P0-11 cloud iOS | Chưa làm | P0-06 chờ P0-05. P0-10 làm được ở local vì máy có `/dev/kvm`. P0-11 cần Mac |
 | P0-13, P0-14, P0-15, P0-16 | Không phải việc code | Pháp lý, đối tác, họp cổng 0, giữ chỗ tên |
 
@@ -35,12 +35,21 @@ Lỗi đã sửa trên đường đi:
 - Robolectric đọc đường dẫn tài nguyên theo thư mục hiện tại: host giờ chạy ở `workingDir` của task test.
 - Robolectric cần `--add-opens=java.base/java.io=ALL-UNNAMED`: giờ lấy từ `allJvmArgs`.
 
-Lúc lưu file này đang chạy lại `irisrun start examples/android-views` để kiểm tra lần sửa thứ ba.
+- Lỗi thứ tư: SDK 36 cần thêm `--add-opens=java.base/jdk.internal.access=ALL-UNNAMED`; CLI giờ luôn thêm cờ này.
+- Lỗi thứ năm: `ViewRootImpl` tự recycle MotionEvent, nên host không được recycle lần nữa (lỗi "recycled twice").
+
+**Đã chạy được** `irisrun start examples/android-views`:
+
+- Build bằng init script mất 50–70 s khi cache Gradle đã có. Lần đầu tiên mất khoảng 20 phút vì tải AGP qua mạng chậm.
+- Frame đầu tiên đến 18,6 s sau khi JVM khởi động (43,6 s lần đầu, khi Robolectric còn phải tải `android-all`). Frame 1078×2422, vẽ đúng giao diện Material 3.
+- Chạm hoạt động (bấm Greet ra "Xin chào, Iris!"). `startActivity` mở được DetailActivity, và Back quay về màn chính.
+
+**Lỗi còn mở:** chữ gửi qua `InputConnection` (setComposingText, commitText) chưa vào EditText, dù EditText đã có focus sau khi chạm. Hướng tìm: kiểm tra `activity.currentFocus` trong `InputDispatcher.text()` có null không (có thể cửa sổ chưa có window focus trong Robolectric); thử `ShadowInputMethodManager`, hoặc gọi `view.onCreateInputConnection` sau khi `imm.showSoftInput`.
 
 Còn lại:
 
-1. Chạy `irisrun start examples/android-views` và thấy dòng `irisrun: first frame … after start`. Nếu lỗi, đọc stack trace in ra stderr.
-2. Kiểm tra bằng client: kết nối `ws://127.0.0.1:7777/device`, gửi chạm, chữ (setComposingText rồi commitText với "Tiếng Việt") và nút Back, rồi lưu frame PNG ra để xem. Session đầu dùng một script tsx viết tạm, import code sinh ra từ `apps/web/src/gen`. Mở UI thật ở `http://127.0.0.1:7777` sau khi chạy `pnpm build`.
+1. Sửa lỗi gõ chữ ở trên, rồi thử lại "Tiếng Việt" (setComposingText rồi commitText).
+2. Cách kiểm tra đang dùng: một client tạm kết nối `ws://127.0.0.1:7777/device`, gửi chạm/chữ/Back và lưu frame PNG ra để xem. Session đầu viết nó bằng tsx trong scratchpad (`scratchpad/client/client.mts`), import code sinh ra từ `apps/web/src/gen`. Nên biến nó thành test E2E cho P1-33. Mở UI thật ở `http://127.0.0.1:7777` sau khi chạy `pnpm build`.
 3. Làm tương tự với `examples/android-compose`. Rủi ro: IME của Compose, back trên API 36 (predictive back đi qua `OnBackInvokedDispatcher`).
 4. Đo: thời gian build lần đầu (CLI in `built in`), khởi động lại (bấm Restart, CLI in `first frame`) và fps (overlay trong UI). Robolectric tự tải `android-all-instrumented` SDK 36 (213 MB) vào `~/.m2` ở lần chạy đầu.
 5. Viết `docs/reports/p0-04-android-runtime.md`.

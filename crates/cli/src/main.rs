@@ -97,13 +97,13 @@ async fn start(project: &Path, port: u16) -> Result<()> {
 
     let started = Instant::now();
     let java_home = toolchains.java_home();
-    let classpath = project.build(&java_home, &sdk, &maven_repo).await?;
+    let launch = project.build(&java_home, &sdk, &maven_repo).await?;
     eprintln!("irisrun: built in {:.1}s", started.elapsed().as_secs_f64());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     eprintln!("irisrun: open the Device UI at http://{addr}");
     device::serve(addr, move || {
-        android::host_command(&java_home, &classpath, DEFAULT_QUALIFIERS)
+        android::host_command(&java_home, &launch, DEFAULT_QUALIFIERS)
     })
     .await
 }

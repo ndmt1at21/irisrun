@@ -67,8 +67,8 @@ internal class InputDispatcher {
             downTime, now, action, touches.size, properties.toTypedArray(), coords.toTypedArray(),
             0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
         )
+        // ViewRootImpl recycles the event once it is handled.
         deliver(activity, event)
-        event.recycle()
     }
 
     private fun key(activity: Activity, input: KeyInput) {
@@ -89,7 +89,10 @@ internal class InputDispatcher {
 
     private fun text(activity: Activity, edit: TextEdit) {
         // A fresh connection per edit is fine: views keep the composing span in their own text.
-        val connection = activity.currentFocus?.onCreateInputConnection(EditorInfo()) ?: return
+        val focus = activity.currentFocus
+        val connection = focus?.onCreateInputConnection(EditorInfo())
+        Log.w(TAG, "DEBUG text ${edit.editCase} focus=$focus connection=$connection")
+        connection ?: return
         when (edit.editCase) {
             TextEdit.EditCase.COMMIT_TEXT -> connection.commitText(edit.commitText, 1)
             TextEdit.EditCase.SET_COMPOSING_TEXT -> connection.setComposingText(edit.setComposingText, 1)

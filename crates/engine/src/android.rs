@@ -5,4 +5,4 @@ mod license;
 mod project;
 
 pub use license::{AndroidSdk, License};
-pub use project::{AndroidProject, DEFAULT_QUALIFIERS, host_command};
+pub use project::{AndroidProject, DEFAULT_QUALIFIERS, Launch, host_command};

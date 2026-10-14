@@ -116,6 +116,9 @@ pub fn host_command(java_home: &Path, launch: &Launch, qualifiers: &str) -> Comm
     command
         .current_dir(&launch.working_dir)
         .args(&launch.jvm_args)
+        // Robolectric reaches FileDescriptor internals through SharedSecrets
+        // when it boots SDK 36 (ApplicationSharedMemory).
+        .arg("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
         .arg(format!("-Dirisrun.qualifiers={qualifiers}"))
         .arg("-cp")
         .arg(&launch.classpath)
@@ -129,7 +132,7 @@ fn app_launch_file(out: &Path) -> Result<PathBuf> {
     let mut modules = Vec::new();
     for entry in std::fs::read_dir(out)? {
         let path = entry?.path();
-        if path.extension().is_some_and(|ext| ext == "classpath") {
+        if path.extension().is_some_and(|ext| ext == "launch") {
             modules.push(path);
         }
     }
