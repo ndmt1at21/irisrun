@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package irisrun.device.v1alpha1;
+
+import "google/protobuf/timestamp.proto";
+
+// A line from the app's log, or from the runtime under the tag "irisrun".
+message LogEntry {
+  google.protobuf.Timestamp time = 1;
+  LogLevel level = 2;
+  // The Android log tag, or the iOS subsystem and category.
+  string tag = 3;
+  string message = 4;
+}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_VERBOSE = 1;
+  LOG_LEVEL_DEBUG = 2;
+  LOG_LEVEL_INFO = 3;
+  LOG_LEVEL_WARNING = 4;
+  LOG_LEVEL_ERROR = 5;
+  LOG_LEVEL_FATAL = 6;
+}

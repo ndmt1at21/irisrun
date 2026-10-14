@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+// The Device Protocol connects a host with a device.
+//
+// The host is the Device UI, reached through the irisrun CLI (local) or the
+// media gateway (cloud). The device is whatever runs the app: a local runtime
+// (Robolectric, OpenKit), an emulator, a simulator or a real phone.
+//
+// Each side sends a stream of envelopes: the host sends HostMessage and the
+// device sends DeviceMessage. On WebSocket and WebRTC data channels every
+// binary message holds exactly one envelope. On byte streams, such as the link
+// between the CLI and a local runtime, every envelope is preceded by its
+// length as a varint (the standard size-delimited encoding).
+//
+// The device sends DeviceInfo first, then frames, logs and status changes as
+// they happen. Receivers ignore envelopes whose payload they do not know, so
+// adding a payload is a compatible change.
+package irisrun.device.v1alpha1;
+
+import "irisrun/device/v1alpha1/adapter.proto";
+import "irisrun/device/v1alpha1/frame.proto";
+import "irisrun/device/v1alpha1/input.proto";
+import "irisrun/device/v1alpha1/log.proto";
+
+// An envelope sent by the host to the device.
+message HostMessage {
+  oneof payload {
+    Input input = 1;
+    DeviceConfig config = 2;
+    AppControl app_control = 3;
+    AdapterResponse adapter_response = 4;
+    AdapterEvent adapter_event = 5;
+  }
+}
+
+// An envelope sent by the device to the host.
+message DeviceMessage {
+  oneof payload {
+    DeviceInfo device_info = 1;
+    Frame frame = 2;
+    AppStatus app_status = 3;
+    LogEntry log = 4;
+    AdapterRequest adapter_request = 5;
+  }
+}
+
+// What the device is. Sent as the device's first message, and again whenever
+// any field changes, for example when a rotation changes the display.
+message DeviceInfo {
+  Platform platform = 1;
+  DeviceKind kind = 2;
+  // A human-readable model name, such as "Pixel 9" or "iPhone 16".
+  string model = 3;
+  // The OS version the app runs on, such as "16" or "18.2".
+  string os_version = 4;
+  Display display = 5;
+}
+
+enum Platform {
+  PLATFORM_UNSPECIFIED = 0;
+  PLATFORM_ANDROID = 1;
+  PLATFORM_IOS = 2;
+}
+
+enum DeviceKind {
+  DEVICE_KIND_UNSPECIFIED = 0;
+  // The app runs on the developer's machine, on Robolectric or OpenKit.
+  DEVICE_KIND_LOCAL_RUNTIME = 1;
+  DEVICE_KIND_EMULATOR = 2;
+  DEVICE_KIND_SIMULATOR = 3;
+  DEVICE_KIND_PHYSICAL = 4;
+}
+
+// The screen the app draws on.
+message Display {
+  // Size in physical pixels, in the current orientation.
+  uint32 width_px = 1;
+  uint32 height_px = 2;
+  // Physical pixels per density-independent pixel (Android) or point (iOS),
+  // such as 2.625 for a 420 dpi Android phone or 3 for a recent iPhone.
+  float scale = 3;
+}
+
+// The configuration the host wants the device to use. The host sends the
+// whole configuration whenever part of it changes, and the device applies the
+// difference the way the platform would, recreating activities or scenes as
+// needed. Unset fields mean the device's default.
+message DeviceConfig {
+  Display display = 1;
+  Appearance appearance = 2;
+  // A BCP 47 language tag, such as "vi-VN".
+  string locale = 3;
+  // The user's preferred text size as a multiple of the default size.
+  float font_scale = 4;
+}
+
+enum Appearance {
+  APPEARANCE_UNSPECIFIED = 0;
+  APPEARANCE_LIGHT = 1;
+  APPEARANCE_DARK = 2;
+}
+
+// A request from the host to change the app's lifecycle.
+message AppControl {
+  oneof action {
+    RestartApp restart = 1;
+    OpenUrl open_url = 2;
+  }
+}
+
+// Stops the app if it is running, then launches it again.
+message RestartApp {}
+
+// Opens a URL the way a deep link would: Android delivers an ACTION_VIEW
+// intent and iOS calls the app's URL handler, launching the app if needed.
+message OpenUrl {
+  string url = 1;
+}
+
+// The app's lifecycle state. Sent whenever it changes.
+message AppStatus {
+  AppState state = 1;
+  // The Android application ID or the iOS bundle identifier.
+  string app_id = 2;
+  // Why the app stopped, when state is APP_STATE_CRASHED. Usually the
+  // uncaught exception and its stack trace.
+  string crash_report = 3;
+}
+
+enum AppState {
+  APP_STATE_UNSPECIFIED = 0;
+  // The app process has started but has not drawn its first frame yet.
+  APP_STATE_LAUNCHING = 1;
+  // The app is visible and drawing frames.
+  APP_STATE_FOREGROUND = 2;
+  // The app is running but not visible, for example after the home button.
+  APP_STATE_BACKGROUND = 3;
+  // The app exited normally.
+  APP_STATE_STOPPED = 4;
+  // The app exited because of an error.
+  APP_STATE_CRASHED = 5;
+}

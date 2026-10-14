@@ -1,0 +1,26 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Gradle / JVM
+.gradle/
+build/
+.kotlin/
+local.properties
+
+# SwiftPM
+.build/
+.swiftpm/
+
+# irisrun output inside projects it runs
+.irisrun/
+
+# Editors and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store

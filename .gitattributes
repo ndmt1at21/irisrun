@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary
+
+# Generated from proto/ by `pnpm proto:generate`; collapsed in diffs.
+crates/protocol/src/gen/** linguist-generated
+apps/web/src/gen/** linguist-generated
+runtimes/android/protocol/src/main/** linguist-generated
+runtimes/ios/Sources/IrisProtocol/** linguist-generated

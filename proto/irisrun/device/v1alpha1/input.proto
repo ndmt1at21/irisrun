@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package irisrun.device.v1alpha1;
+
+// User input, sent by the host and delivered to the app.
+message Input {
+  oneof event {
+    TouchInput touch = 1;
+    KeyInput key = 2;
+    TextEdit text = 3;
+    ButtonPress button = 4;
+  }
+}
+
+// The touches on the screen after a change. Coordinates are in display pixels
+// from the top-left corner of the frame.
+message TouchInput {
+  // Every touch on the screen, including touches that just ended. The phase
+  // tells which ones changed.
+  repeated TouchPoint touches = 1;
+}
+
+message TouchPoint {
+  // Identifies a finger from the moment it touches the screen until it lifts.
+  uint32 id = 1;
+  TouchPhase phase = 2;
+  float x = 3;
+  float y = 4;
+}
+
+enum TouchPhase {
+  TOUCH_PHASE_UNSPECIFIED = 0;
+  TOUCH_PHASE_BEGAN = 1;
+  TOUCH_PHASE_MOVED = 2;
+  // Still on the screen, but neither moved nor lifted in this event.
+  TOUCH_PHASE_STATIONARY = 3;
+  TOUCH_PHASE_ENDED = 4;
+  // The host lost track of the touch, for example when its window lost focus.
+  TOUCH_PHASE_CANCELLED = 5;
+}
+
+// A key on a hardware keyboard. Text typed through an input method arrives as
+// TextEdit instead.
+message KeyInput {
+  KeyAction action = 1;
+  // The physical key, as a W3C UI Events KeyboardEvent.code value such as
+  // "KeyA", "Enter", "Backspace" or "ArrowLeft".
+  string code = 2;
+  bool shift = 3;
+  bool control = 4;
+  bool alt = 5;
+  bool meta = 6;
+}
+
+enum KeyAction {
+  KEY_ACTION_UNSPECIFIED = 0;
+  KEY_ACTION_DOWN = 1;
+  KEY_ACTION_UP = 2;
+}
+
+// An edit from the host's input method, applied at the cursor of the focused
+// text field. This is how composed text arrives, such as Vietnamese typed with
+// Telex or Chinese typed with pinyin. Lengths are in UTF-16 code units.
+message TextEdit {
+  oneof edit {
+    // Inserts text at the cursor, replacing the composing text if any.
+    string commit_text = 1;
+    // Sets the composing (marked) text, replacing the previous composing text.
+    string set_composing_text = 2;
+    DeleteSurroundingText delete_surrounding_text = 3;
+  }
+}
+
+// Deletes text around the cursor, outside the composing text.
+message DeleteSurroundingText {
+  uint32 before_length = 1;
+  uint32 after_length = 2;
+}
+
+// A press on one of the phone's buttons.
+message ButtonPress {
+  Button button = 1;
+}
+
+enum Button {
+  BUTTON_UNSPECIFIED = 0;
+  // Android only.
+  BUTTON_BACK = 1;
+  BUTTON_HOME = 2;
+  // The recent apps button on Android, the app switcher on iOS.
+  BUTTON_APP_SWITCH = 3;
+  BUTTON_VOLUME_UP = 4;
+  BUTTON_VOLUME_DOWN = 5;
+  BUTTON_POWER = 6;
+}

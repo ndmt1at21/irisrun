@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+// Adapters stand in for hardware and services that the device lacks, such as
+// the camera or the store's payment sheet. Each adapter is a contract between
+// the runtime, which intercepts the app's call, and the host, which shows the
+// user a control to answer it.
+package irisrun.device.v1alpha1;
+
+import "irisrun/device/v1alpha1/frame.proto";
+
+// A call the app made through an adapter. The host answers with an
+// AdapterResponse carrying the same id, asking the user first if needed.
+// A host that does not know the request answers with AdapterError.
+message AdapterRequest {
+  // Chosen by the device and unique among its unanswered requests.
+  uint64 id = 1;
+  oneof request {
+    CaptureImageRequest capture_image = 2;
+    PurchaseRequest purchase = 3;
+    BiometricRequest biometric = 4;
+  }
+}
+
+message AdapterResponse {
+  // The id of the request this answers.
+  uint64 id = 1;
+  oneof response {
+    CaptureImageResponse capture_image = 2;
+    PurchaseResponse purchase = 3;
+    BiometricResponse biometric = 4;
+    AdapterError error = 5;
+  }
+}
+
+// The host could not answer the request.
+message AdapterError {
+  string message = 1;
+}
+
+// Something the host delivers to the app without being asked.
+message AdapterEvent {
+  oneof event {
+    PushNotification push_notification = 1;
+    LocationUpdate location = 2;
+  }
+}
+
+// The app wants a photo: an image capture intent on Android, or PhotosPicker
+// or UIImagePickerController on iOS.
+message CaptureImageRequest {
+  ImageSource source = 1;
+}
+
+enum ImageSource {
+  IMAGE_SOURCE_UNSPECIFIED = 0;
+  IMAGE_SOURCE_CAMERA = 1;
+  IMAGE_SOURCE_LIBRARY = 2;
+}
+
+// The photo the user chose. Empty data means the user cancelled.
+message CaptureImageResponse {
+  ImageFormat format = 1;
+  bytes data = 2;
+}
+
+// The app started a purchase through Play Billing or StoreKit.
+message PurchaseRequest {
+  string product_id = 1;
+  // How the store would show the product, when the runtime knows it.
+  string display_name = 2;
+  string display_price = 3;
+}
+
+message PurchaseResponse {
+  PurchaseResult result = 1;
+}
+
+enum PurchaseResult {
+  PURCHASE_RESULT_UNSPECIFIED = 0;
+  PURCHASE_RESULT_SUCCEEDED = 1;
+  PURCHASE_RESULT_DECLINED = 2;
+  // Waiting for approval, as with Ask to Buy or a slow payment method.
+  PURCHASE_RESULT_PENDING = 3;
+  PURCHASE_RESULT_CANCELLED = 4;
+}
+
+// The app asked for a fingerprint or face check, through BiometricPrompt on
+// Android or LocalAuthentication on iOS.
+message BiometricRequest {
+  // The reason the app gives the user.
+  string reason = 1;
+}
+
+message BiometricResponse {
+  BiometricResult result = 1;
+}
+
+enum BiometricResult {
+  BIOMETRIC_RESULT_UNSPECIFIED = 0;
+  BIOMETRIC_RESULT_MATCHED = 1;
+  BIOMETRIC_RESULT_NOT_MATCHED = 2;
+  BIOMETRIC_RESULT_CANCELLED = 3;
+}
+
+// A push notification, delivered as if it came from FCM or APNs.
+message PushNotification {
+  string title = 1;
+  string body = 2;
+  // Custom data: the FCM data payload, or the keys beside "aps" in an APNs
+  // payload.
+  map<string, string> data = 3;
+}
+
+// The device moved. It reports this location until the next update.
+message LocationUpdate {
+  double latitude = 1;
+  double longitude = 2;
+  // Radius of uncertainty, in meters.
+  double accuracy_meters = 3;
+}

@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+
+# Install scripts run only for packages listed here with `true`.
+allowBuilds:
+  # Ships its binary as an optional dependency; the script only checks it.
+  "@bufbuild/buf": false

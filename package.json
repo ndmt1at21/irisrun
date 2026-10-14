@@ -1,0 +1,20 @@
+{
+  "name": "irisrun-monorepo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.28.5",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "proto:lint": "buf lint && buf format --diff --exit-code",
+    "proto:generate": "buf generate",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "1.73.0"
+  }
+}

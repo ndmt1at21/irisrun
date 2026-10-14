@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package irisrun.device.v1alpha1;
+
+// A picture of the whole display. Video from emulators, simulators and real
+// phones travels as a WebRTC media track instead.
+message Frame {
+  // Starts at 1 and grows with every frame. Images may finish decoding out of
+  // order, so the host never draws a frame older than the one on screen.
+  uint64 sequence = 1;
+  ImageFormat format = 2;
+  // The encoded image, sized like the display in DeviceInfo.
+  bytes data = 3;
+}
+
+enum ImageFormat {
+  IMAGE_FORMAT_UNSPECIFIED = 0;
+  IMAGE_FORMAT_PNG = 1;
+  IMAGE_FORMAT_JPEG = 2;
+  IMAGE_FORMAT_WEBP = 3;
+}

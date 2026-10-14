@@ -1,0 +1,31 @@
+# Generates the Device Protocol bindings for every language from proto/.
+# Run `pnpm proto:generate` after editing a .proto file and commit the output;
+# CI fails when the committed code is stale. Plugin versions must match the
+# runtime libraries: prost (Cargo.toml), @bufbuild/protobuf (apps/web),
+# protobuf-kotlin-lite (runtimes/android) and SwiftProtobuf (runtimes/ios).
+version: v2
+clean: true
+managed:
+  enabled: true
+  override:
+    - file_option: java_package_prefix
+      value: dev
+    - file_option: swift_prefix
+      value: Iris
+inputs:
+  - directory: proto
+plugins:
+  - remote: buf.build/community/neoeinstein-prost:v0.5.0
+    out: crates/protocol/src/gen
+  - remote: buf.build/bufbuild/es:v2.16.0
+    out: apps/web/src/gen
+    opt: target=ts
+  - remote: buf.build/protocolbuffers/java:v36.2
+    out: runtimes/android/protocol/src/main/java
+    opt: lite
+  - remote: buf.build/protocolbuffers/kotlin:v36.2
+    out: runtimes/android/protocol/src/main/kotlin
+    opt: lite
+  - remote: buf.build/apple/swift:v1.39.0
+    out: runtimes/ios/Sources/IrisProtocol
+    opt: Visibility=Public
