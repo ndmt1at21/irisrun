@@ -42,7 +42,7 @@ quiet cmake -S "$out/libobjc2" -B "$out/build" -G "$generator" -DCMAKE_BUILD_TYP
   -DCMAKE_REQUIRED_INCLUDES="$dispatch/src/BlocksRuntime" \
   -DCMAKE_C_FLAGS="$inc" -DCMAKE_CXX_FLAGS="$inc" -DCMAKE_OBJC_FLAGS="$inc" -DCMAKE_OBJCXX_FLAGS="$inc" \
   -DCMAKE_INSTALL_PREFIX="$out/prefix" -DCMAKE_INSTALL_RPATH="$swift_lib/linux"
-quiet cmake --build "$out/build" -j "$(nproc)"
+quiet cmake --build "$out/build" -j "${JOBS:-$(nproc)}"
 quiet cmake --install "$out/build"
 
 cc="$toolchain/bin/clang -fobjc-runtime=gnustep-2.0 -fblocks -fobjc-exceptions -O1 -Wall -I$out/prefix/include -I$swift_lib"

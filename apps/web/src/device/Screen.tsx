@@ -97,18 +97,22 @@ function useFrames(
 ): number {
   const [fps, setFps] = useState(0);
   useEffect(() => {
-    let drawn = 0n;
+    // Counts frames as they arrive, not by frame.sequence, which starts over
+    // when the device restarts.
+    let received = 0;
+    let drawn = 0;
     let count = 0;
     const timer = setInterval(() => {
       setFps(count);
       count = 0;
     }, 1000);
     const unsubscribe = subscribeFrames(async (frame) => {
+      const index = ++received;
       const bitmap = await createImageBitmap(new Blob([frame.data as BlobPart], { type: MIME_TYPES[frame.format] }));
       // Decoding finishes out of order; never draw over a newer frame.
       const target = canvas.current;
-      if (frame.sequence > drawn && target) {
-        drawn = frame.sequence;
+      if (index > drawn && target) {
+        drawn = index;
         count++;
         if (target.width !== bitmap.width || target.height !== bitmap.height) {
           target.width = bitmap.width;

@@ -38,7 +38,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val fruits = listOf("Xoài", "Sầu riêng", "Măng cụt", "Chôm chôm", "Thanh long", "Vải", "Nhãn", "Mít")
+// Longer than the screen, so the list scrolls.
+private val fruits = listOf(
+    "Xoài", "Sầu riêng", "Măng cụt", "Chôm chôm", "Thanh long", "Vải", "Nhãn", "Mít", "Bưởi", "Chuối",
+    "Dứa", "Đu đủ", "Ổi", "Na", "Chanh dây", "Dưa hấu", "Hồng xiêm", "Vú sữa", "Mận", "Khế",
+)
 
 @Composable
 private fun App() {

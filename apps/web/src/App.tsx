@@ -6,6 +6,20 @@ import { input } from "./device/input";
 import { Screen } from "./device/Screen";
 import { useDevice } from "./device/useDevice";
 
+const PLATFORMS: Record<Platform, string> = {
+  [Platform.UNSPECIFIED]: "Unknown OS",
+  [Platform.ANDROID]: "Android",
+  [Platform.IOS]: "iOS",
+};
+
+const KINDS: Record<DeviceKind, string> = {
+  [DeviceKind.UNSPECIFIED]: "unknown device",
+  [DeviceKind.LOCAL_RUNTIME]: "local runtime",
+  [DeviceKind.EMULATOR]: "emulator",
+  [DeviceKind.SIMULATOR]: "simulator",
+  [DeviceKind.PHYSICAL]: "phone",
+};
+
 const STATES: Record<AppState, string> = {
   [AppState.UNSPECIFIED]: "Connecting",
   [AppState.LAUNCHING]: "Launching",
@@ -58,17 +72,19 @@ export function App() {
           <h1>{status?.appId || "Iris"}</h1>
           <p>
             {state.connected ? STATES[appState] : "Disconnected"}
-            {info && ` · ${info.model} · ${Platform[info.platform]} ${info.osVersion} · ${DeviceKind[info.kind]}`}
+            {info && ` · ${info.model} · ${PLATFORMS[info.platform]} ${info.osVersion} · ${KINDS[info.kind]}`}
           </p>
         </header>
         {status?.crashReport ? <pre className="crash">{status.crashReport}</pre> : null}
-        <ol className="logs" aria-label="Logs">
-          {state.logs.map((log, index) => (
-            <li key={index} className={`log level-${LogLevel[log.level].toLowerCase()}`}>
-              <span className="tag">{log.tag}</span> {log.message}
-            </li>
-          ))}
-        </ol>
+        <div className="logs">
+          <ol aria-label="Logs">
+            {state.logs.map((log, index) => (
+              <li key={index} className={`log level-${LogLevel[log.level].toLowerCase()}`}>
+                <span className="tag">{log.tag}</span> {log.message}
+              </li>
+            ))}
+          </ol>
+        </div>
       </aside>
     </main>
   );

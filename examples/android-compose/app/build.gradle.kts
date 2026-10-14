@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "dev.irisrun.examples.compose"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "dev.irisrun.examples.compose"

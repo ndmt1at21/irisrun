@@ -159,11 +159,19 @@ button {
   font-size: 12px;
 }
 
+/* column-reverse makes the scroll position stick to the bottom, so the newest
+   line stays in view until the reader scrolls up. */
 .logs {
   flex: 1;
-  margin: 0;
-  padding: 8px 16px;
+  display: flex;
+  flex-direction: column-reverse;
   overflow: auto;
+}
+
+.logs ol {
+  /* Keeps a short log at the top. */
+  margin: 0 0 auto;
+  padding: 8px 16px;
   list-style: none;
   font: 12px/1.5 ui-monospace, monospace;
 }

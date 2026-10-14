@@ -1,0 +1,144 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens from the design artboards (the union of all of them). `.light` lets a
+   subtree show the light theme inside the dark one, as the Foundations page does. */
+:root,
+.light {
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --muted: #f4f4f5;
+  --muted-foreground: #63636b;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --primary: #5b5bd6;
+  --primary-foreground: #ffffff;
+  --accent: #f4f4f5;
+  --ring: #5b5bd6;
+  --destructive: #dc2626;
+  --success: #15803d;
+  --warning: #b45309;
+  --info: #2563eb;
+  --link: #4f4cc4;
+  --stage: #ededf0;
+  --selection: #ebebfd;
+  --code: #fafafa;
+  --sidebar: #fafafa;
+  --side: #f4f4f5;
+  --skeleton: #ececef;
+  --overlay: rgba(9, 9, 11, 0.45);
+  --series-1: #5b5bd6;
+  --series-2: #e08a1e;
+  --grid: #ececef;
+  --shadow: 0 1px 2px rgba(9, 9, 11, 0.08);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #111114;
+  --popover: #111114;
+  --muted: #1c1c20;
+  --muted-foreground: #a1a1aa;
+  --border: #27272a;
+  --input: #2e2e33;
+  --primary: #5b5bd6;
+  --primary-foreground: #ffffff;
+  --accent: #1f1f24;
+  --ring: #8b8bf2;
+  --destructive: #f87171;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --info: #60a5fa;
+  --link: #b1a9ff;
+  --stage: #050507;
+  --selection: #1f1d44;
+  --code: #050507;
+  --sidebar: #0c0c0e;
+  --side: #0f0f12;
+  --skeleton: #1f1f24;
+  --overlay: rgba(0, 0, 0, 0.7);
+  --series-1: #7c7cf0;
+  --series-2: #f5b04a;
+  --grid: #1f1f24;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-link: var(--link);
+  --color-stage: var(--stage);
+  --color-selection: var(--selection);
+  --color-code: var(--code);
+  --color-sidebar: var(--sidebar);
+  --color-side: var(--side);
+  --color-skeleton: var(--skeleton);
+  --color-overlay: var(--overlay);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-grid: var(--grid);
+  --shadow-xs: var(--shadow);
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop {
+    border-color: var(--border);
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  a {
+    color: var(--link);
+  }
+
+  a:hover {
+    color: var(--foreground);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* The dotted backdrop behind the device. */
+@utility bg-stage-grid {
+  background-color: var(--stage);
+  background-image: radial-gradient(color-mix(in srgb, var(--foreground) 10%, transparent) 1px, transparent 1px);
+  background-size: 16px 16px;
+}

@@ -89,10 +89,13 @@ internal class InputDispatcher {
 
     private fun text(activity: Activity, edit: TextEdit) {
         // A fresh connection per edit is fine: views keep the composing span in their own text.
-        val focus = activity.currentFocus
+        // Not activity.currentFocus: Robolectric's ShadowActivity answers that from a field of its own.
+        val focus = activity.window.decorView.findFocus()
         val connection = focus?.onCreateInputConnection(EditorInfo())
-        Log.w(TAG, "DEBUG text ${edit.editCase} focus=$focus connection=$connection")
-        connection ?: return
+        if (connection == null) {
+            Log.w(TAG, "Dropped text: ${focus ?: "nothing"} has focus and takes no text")
+            return
+        }
         when (edit.editCase) {
             TextEdit.EditCase.COMMIT_TEXT -> connection.commitText(edit.commitText, 1)
             TextEdit.EditCase.SET_COMPOSING_TEXT -> connection.setComposingText(edit.setComposingText, 1)

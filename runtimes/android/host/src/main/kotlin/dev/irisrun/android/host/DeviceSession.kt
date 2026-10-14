@@ -112,14 +112,18 @@ private class Device(input: InputStream, output: OutputStream) {
         }
     }
 
-    /** Plays the activity manager: starts what the app asked for and pops finished activities. */
+    /**
+     * Plays the activity and window managers: starts what the app asked for, pops finished
+     * activities and gives the top window focus. Without window focus, ViewRootImpl drops
+     * every key but Back, and Robolectric's setup() never grants it.
+     */
     private fun followActivities() {
         val instrumentation = shadowOf(RuntimeEnvironment.getApplication())
         while (true) launch(instrumentation.nextStartedActivity ?: break)
 
         while (activities.lastOrNull()?.get()?.isFinishing == true) {
             activities.removeLast().pause().stop().destroy()
-            activities.lastOrNull()?.restart()?.start()?.resume()
+            activities.lastOrNull()?.restart()?.start()?.resume()?.windowFocusChanged(true)
             if (activities.isEmpty()) send(status(AppState.APP_STATE_STOPPED))
         }
     }
@@ -132,8 +136,8 @@ private class Device(input: InputStream, output: OutputStream) {
         }
         val previous = activities.lastOrNull()?.pause()
         val activity = Class.forName(className).asSubclass(Activity::class.java)
-        activities.addLast(Robolectric.buildActivity(activity, intent).setup())
-        previous?.stop()
+        activities.addLast(Robolectric.buildActivity(activity, intent).setup().windowFocusChanged(true))
+        previous?.windowFocusChanged(false)?.stop()
     }
 
     private fun draw() {
@@ -142,7 +146,7 @@ private class Device(input: InputStream, output: OutputStream) {
         send(deviceMessage {
             frame = frame {
                 sequence = frames.sequence
-                format = ImageFormat.IMAGE_FORMAT_PNG
+                format = ImageFormat.IMAGE_FORMAT_JPEG
                 data = image
             }
         })
@@ -151,7 +155,7 @@ private class Device(input: InputStream, output: OutputStream) {
 
     private fun forwardLogs() {
         val logs = ShadowLog.getLogs()
-        for (item in logs.drop(logsSent)) {
+        for (item in logs.drop(logsSent).filterNot(::isSoftwareCanvasNoise)) {
             send(deviceMessage {
                 log = logEntry {
                     time = now()
@@ -203,6 +207,11 @@ private class Device(input: InputStream, output: OutputStream) {
             Log.ASSERT to LogLevel.LOG_LEVEL_FATAL,
         )
 
+        // ponytail: drops the warning that drawing on a software canvas logs for every ripple
+        // frame, which buries the app's own logs; goes away with hardware rendering (P1-08).
+        fun isSoftwareCanvasNoise(item: ShadowLog.LogItem) =
+            item.tag == "RippleDrawable" && item.msg.orEmpty().startsWith("The RippleDrawable.STYLE_PATTERNED animation is not supported")
+
         fun now(): Timestamp {
             val millis = System.currentTimeMillis()
             return Timestamp.newBuilder().setSeconds(millis / 1000).setNanos((millis % 1000).toInt() * 1_000_000).build()
@@ -233,7 +242,9 @@ private class FrameEncoder {
         previous = bitmap
         sequence++
         return ByteString.newOutput().use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            // JPEG encodes a full phone screen in 10-30 ms, PNG in 100-400 ms;
+            // at this quality text looks the same.
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
             out.toByteString()
         }
     }
