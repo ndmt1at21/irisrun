@@ -1,0 +1,655 @@
+{
+  "catalog": "https://github.com/dkhamsing/open-source-ios-apps/blob/6d688054a66dcb9d7551270d4757e5da0716618c/contents.json",
+  "apps": [
+    {
+      "id": "ice-cubes",
+      "name": "Ice Cubes",
+      "repo": "https://github.com/Dimillian/IceCubesApp",
+      "commit": "98098b9c4b5928f89f338203193c2bf40ab7f38c",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["mastodon", "duo", "swiftui"],
+      "why": "Large modular Mastodon client (7k stars); local SPM packages, widgets"
+    },
+    {
+      "id": "mlem",
+      "name": "Mlem",
+      "repo": "https://github.com/mlemgroup/mlem",
+      "commit": "3a6d07f84ea10083b4d3e0dfa58f8150874f48ea",
+      "license": "gpl-3.0",
+      "ui": "swiftui",
+      "tags": ["social", "swiftui"],
+      "why": "Large Lemmy client, over 1,000 Swift files; recent iOS APIs"
+    },
+    {
+      "id": "icysky",
+      "name": "IcySky for BlueSky",
+      "repo": "https://github.com/Dimillian/IcySky",
+      "commit": "03560c6a30277175ea91a6bfc63b50380542017c",
+      "license": "agpl-3.0",
+      "ui": "swiftui",
+      "tags": ["swiftui"],
+      "why": "Bluesky client built on current SwiftUI and Observation patterns"
+    },
+    {
+      "id": "critical-maps",
+      "name": "Critical Maps",
+      "repo": "https://github.com/criticalmaps/criticalmaps-ios",
+      "commit": "f1f8e8cc3dc533aac35d4ceb6b2265e25a7c6940",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["social", "swiftui", "combine", "tca", "snapshottesting"],
+      "why": "Production app on The Composable Architecture with maps"
+    },
+    {
+      "id": "thunderbird",
+      "name": "Thunderbird Email",
+      "repo": "https://github.com/thunderbird/thunderbird-ios",
+      "commit": "6724ef484f27119f67cc0fd617cfc4e85e06a44d",
+      "license": "mpl-2.0",
+      "ui": "swiftui",
+      "tags": ["communication", "swiftui"],
+      "why": "New production mail client from Mozilla (2026)"
+    },
+    {
+      "id": "foundation-chat",
+      "name": "FoundationChat",
+      "repo": "https://github.com/Dimillian/FoundationChat",
+      "commit": "10f46eb4954a994368d76c0273164e4f8da512f2",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["communication", "swiftui", "ios26"],
+      "why": "Small iOS 26 app on Foundation Models: newest API surface"
+    },
+    {
+      "id": "clendar",
+      "name": "Clendar",
+      "repo": "https://github.com/vinhnx/Clendar",
+      "commit": "1527cf3142e15a274df8bb8f414553789743a5fd",
+      "license": "gpl-3.0",
+      "ui": "swiftui",
+      "tags": ["calendar", "widget", "apple-watch", "swiftui", "iphone", "ipad"],
+      "why": "Calendar with widgets and a watch app; Vietnamese author"
+    },
+    {
+      "id": "oscar-weather",
+      "name": "Oscar Weather",
+      "repo": "https://github.com/strumswell/oscar-weather",
+      "commit": "e925398c5e83ef100581947a41b75704f2a19515",
+      "license": "other",
+      "ui": "swiftui",
+      "tags": ["weather", "swiftui"],
+      "why": "Large, actively developed weather app"
+    },
+    {
+      "id": "sky-wizard",
+      "name": "Sky Wizard",
+      "repo": "https://github.com/hishd/SkyWizard-SwiftUI",
+      "commit": "afaa94f05a2004cbe32c1a6ba7e866244b43c979",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["weather", "swiftui", "spritekit", "scenekit", "openmetro", "geocoding"],
+      "why": "Weather app mixing SwiftUI with SceneKit and SpriteKit"
+    },
+    {
+      "id": "harbour",
+      "name": "Harbour",
+      "repo": "https://github.com/rrroyal/Harbour",
+      "commit": "e56c10cb376baaa3ada49b29b8396e1ab9293942",
+      "license": "gpl-3.0",
+      "ui": "swiftui",
+      "tags": ["developer", "swiftui", "docker", "ipad"],
+      "why": "Docker/Portainer client for iPhone and iPad"
+    },
+    {
+      "id": "zeitgeist",
+      "name": "Zeitgeist",
+      "repo": "https://github.com/daneden/Zeitgeist",
+      "commit": "56c776cbb75248a3dcb49b73ba4260b283e7923b",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["developer"],
+      "why": "Vercel deployment dashboard; developer tool"
+    },
+    {
+      "id": "enchanted",
+      "name": "Enchanted",
+      "repo": "https://github.com/gluonfield/enchanted",
+      "commit": "dc9bff882411a1317ff0cc5869de7e0515897df0",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["developer"],
+      "why": "Popular Ollama/LLM client (6k stars), multiplatform"
+    },
+    {
+      "id": "gisthub",
+      "name": "GistHub",
+      "repo": "https://github.com/ldakhoa/GistHub",
+      "commit": "05c63a4b9f98401891d0c09a18d9b1547f94199b",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["github", "swiftui", "asyncswift"],
+      "why": "GitHub Gist client mixing SwiftUI and UIKit; Vietnamese author"
+    },
+    {
+      "id": "dime",
+      "name": "Dime",
+      "repo": "https://github.com/rafsoh/dimeApp",
+      "commit": "0463cb8caba237de781ae02e70a2ec82ae900c67",
+      "license": "gpl-3.0",
+      "ui": "swiftui",
+      "tags": ["finance", "swiftui"],
+      "why": "Popular expense tracker (1.9k stars)"
+    },
+    {
+      "id": "inpenso",
+      "name": "Inpenso",
+      "repo": "https://github.com/VintusS/Inpenso",
+      "commit": "27e04f8633d59ccbcc5c77dbf9b07535101ee773",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["finance", "swiftui", "swiftdata", "analytics"],
+      "why": "Expense tracker on SwiftData with analytics"
+    },
+    {
+      "id": "easy-crypto",
+      "name": "EasyCrypto",
+      "repo": "https://github.com/mehrankmlf/EasyCrypto",
+      "commit": "befca355402723af02d7ba250edc37c85b3dcf72",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["swiftui", "combine", "core-data", "mvvm", "clean-architecture"],
+      "why": "Crypto market app; Combine, Core Data, clean architecture"
+    },
+    {
+      "id": "go-cycling",
+      "name": "Go Cycling Tracker",
+      "repo": "https://github.com/AnthonyH93/GoCycling",
+      "commit": "12f0cfdf37d03b90672a1a1f20b24459962c5e94",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["health", "core-data", "swiftui", "mapkit"],
+      "why": "Ride tracker; MapKit, Core Data"
+    },
+    {
+      "id": "moodsnap",
+      "name": "MoodSnap",
+      "repo": "https://github.com/drpeterrohde/MoodSnap",
+      "commit": "304454c3ee18417a2cc8adad2869fc82ef0aa45f",
+      "license": "gpl-3.0",
+      "ui": "swiftui",
+      "tags": ["health", "swiftui"],
+      "why": "Mood diary written almost entirely in SwiftUI"
+    },
+    {
+      "id": "pulse",
+      "name": "Pulse – Your Micro-Journal",
+      "repo": "https://github.com/marcusraitner/pulse",
+      "commit": "728689eb6610432e5b05e2e1dffa943cd137b126",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["health", "swiftdata", "cloudkit"],
+      "why": "Micro-journal on SwiftData and CloudKit"
+    },
+    {
+      "id": "solstice",
+      "name": "Solstice",
+      "repo": "https://github.com/daneden/Solstice",
+      "commit": "1b9acee9261f3f9e75829c04c6c9387d78437f50",
+      "license": "cc0-1.0",
+      "ui": "swiftui",
+      "tags": ["health"],
+      "why": "Daylight tracker with widgets, multiplatform"
+    },
+    {
+      "id": "pilgrim",
+      "name": "Pilgrim",
+      "repo": "https://github.com/walktalkmeditate/pilgrim-ios",
+      "commit": "e551b11ccfe878a4c8e9067055ba6bc016628822",
+      "license": "gpl-3.0",
+      "ui": "swiftui",
+      "tags": ["health", "swiftui"],
+      "why": "Large walking/meditation app with on-device transcription"
+    },
+    {
+      "id": "pompaddo",
+      "name": "PomPadDo",
+      "repo": "https://github.com/amikhaylin/pompaddo",
+      "commit": "30aa024874ba24b9c28201e97788ba6f9f41e749",
+      "license": "other",
+      "ui": "swiftui",
+      "tags": ["productivity", "swiftui", "swiftdata"],
+      "why": "Task planner on SwiftData"
+    },
+    {
+      "id": "foqos",
+      "name": "Foqos",
+      "repo": "https://github.com/awaseem/foqos",
+      "commit": "fb957e5a676cbea92d5f3893a8887a1bec04f579",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["productivity"],
+      "why": "Focus app on Screen Time APIs and NFC"
+    },
+    {
+      "id": "make-it-so",
+      "name": "MakeItSo",
+      "repo": "https://github.com/peterfriese/MakeItSo",
+      "commit": "1e089b47b52adc33551eac948bd8c4ff55298632",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["swiftui", "clone", "firebase"],
+      "why": "Reminders clone on Firebase (SPM)"
+    },
+    {
+      "id": "ai-dictation",
+      "name": "AI Dictation",
+      "repo": "https://github.com/writingmate/aidictation",
+      "commit": "f69487d808a4aa4cf062f5256585023541160402",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["productivity", "swiftui"],
+      "why": "Voice-to-text keyboard; iOS and macOS targets"
+    },
+    {
+      "id": "fingerspelling",
+      "name": "Fingerspelling",
+      "repo": "https://github.com/OpenASL/Fingerspelling-iOS",
+      "commit": "64f62460a630f9918e98669b66a7d347c05002a2",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["education", "swiftui", "combine"],
+      "why": "ASL practice app; education"
+    },
+    {
+      "id": "detext",
+      "name": "DeTeXt",
+      "repo": "https://github.com/venkatasg/DeTeXt",
+      "commit": "b36e77f7da3987bcfc6b383e494af84166c30c2b",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["education", "swiftui", "macos"],
+      "why": "LaTeX symbol recognizer by drawing; education"
+    },
+    {
+      "id": "leitnerbox",
+      "name": "LeitnerBox",
+      "repo": "https://github.com/hamed8080/LeitnerBox",
+      "commit": "5ec62460ad314cf77291445e9445c8246fbafc70",
+      "license": "other",
+      "ui": "swiftui",
+      "tags": ["education", "swiftui"],
+      "why": "Flashcards app; vendors FFmpeg xcframeworks"
+    },
+    {
+      "id": "swiftui-2048",
+      "name": "swiftui-2048",
+      "repo": "https://github.com/eleev/swiftui-2048",
+      "commit": "9c63bd59f7b46a5a6c71535fbcb86e50debc2862",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["swiftui", "ipad"],
+      "why": "Pure SwiftUI game with animations"
+    },
+    {
+      "id": "isowords",
+      "name": "isowords",
+      "repo": "https://github.com/pointfreeco/isowords",
+      "commit": "c727d3a7c49cf0c98f2fa4f24c562f81e30165f7",
+      "license": "other",
+      "ui": "swiftui",
+      "tags": ["swiftui"],
+      "why": "Large TCA game by Point-Free with many local modules"
+    },
+    {
+      "id": "construct",
+      "name": "Construct for D&D 5e",
+      "repo": "https://github.com/Thomvis/Construct",
+      "commit": "65db2bb055985933cf6121043b6eb01b79f1bd48",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["misc", "swiftui"],
+      "why": "Dungeon Master companion on TCA"
+    },
+    {
+      "id": "swiftfin",
+      "name": "Swiftfin",
+      "repo": "https://github.com/jellyfin/Swiftfin",
+      "commit": "791fe1249e12ffd066c763f28b4291866a14ac49",
+      "license": "mpl-2.0",
+      "ui": "swiftui",
+      "tags": ["apple-tv"],
+      "why": "Jellyfin media client (4k stars); large, video playback"
+    },
+    {
+      "id": "yattee",
+      "name": "Yattee",
+      "repo": "https://github.com/yattee/yattee",
+      "commit": "2969b086924b1d9f490615fee57ba42761fa8973",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["video", "macos", "tvos"],
+      "why": "Large YouTube/Invidious client, multiplatform"
+    },
+    {
+      "id": "movie-swiftui",
+      "name": "MovieSwiftUI",
+      "repo": "https://github.com/Dimillian/MovieSwiftUI",
+      "commit": "72eb4ae7117fbf893be533c9a277c47a7287d87e",
+      "license": "other",
+      "ui": "swiftui",
+      "tags": ["content", "swiftui", "macos", "themoviedb", "combine", "ipad"],
+      "why": "Classic SwiftUI 1.0-era app (6.5k stars), Redux-style state"
+    },
+    {
+      "id": "spotify-clone",
+      "name": "SpotifyClone",
+      "repo": "https://github.com/denoni/SpotifyClone",
+      "commit": "bd016f95fea583f29484eb837a728295df611cb8",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["clone", "swiftui", "spotify", "combine", "mvvm", "alamofire"],
+      "why": "Spotify clone on the official API; Alamofire, Combine"
+    },
+    {
+      "id": "nytimes",
+      "name": "NYTimes-iOS",
+      "repo": "https://github.com/TheCodeMonks/NYTimes-iOS",
+      "commit": "7a60237c47a744133b28a225c53b66cff37952fa",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["news", "swiftui", "combine", "swiftsoup"],
+      "why": "Small news app; SwiftSoup scraping, Combine"
+    },
+    {
+      "id": "hipstapaper",
+      "name": "Hipstapaper",
+      "repo": "https://github.com/jeffreybergier/Hipstapaper",
+      "commit": "2632929a3a65dc9dc8ee4a8b67dfd03cb268c436",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["news", "macos", "swiftui", "core-data"],
+      "why": "Cross-platform reading list on Core Data"
+    },
+    {
+      "id": "hackers",
+      "name": "Hackers",
+      "repo": "https://github.com/weiran/Hackers",
+      "commit": "d4b44c180dde8f608b504ef2db19aad589afb680",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["hacker-news"],
+      "why": "Hacker News client migrated from UIKit to SwiftUI"
+    },
+    {
+      "id": "scan-now",
+      "name": "Scan Now",
+      "repo": "https://github.com/WezSieTato/ScanNow",
+      "commit": "b2312304483b4f0d548ea35cd07a4eee33e8c1c9",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["scan", "swiftui", "visionkit", "pdf", "productivity", "ipad"],
+      "why": "Document scanner; VisionKit, PDF"
+    },
+    {
+      "id": "openfind",
+      "name": "Find",
+      "repo": "https://github.com/aheze/OpenFind",
+      "commit": "db1eede9cf4d9fa54d1e01972ea9388faf2842e6",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["photo", "swiftui", "realm", "camera"],
+      "why": "Hybrid SwiftUI/UIKit photo search; Realm xcframework, camera"
+    },
+    {
+      "id": "backyard-birds",
+      "name": "Backyard Birds",
+      "repo": "https://github.com/apple/sample-backyard-birds",
+      "commit": "1843d5655bf884b501e2889ad9862ec58978fdbe",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["sample", "swiftdata", "widget", "ios17", "iap", "swiftui"],
+      "why": "Apple WWDC23 sample: SwiftData, widgets, in-app purchase"
+    },
+    {
+      "id": "food-truck",
+      "name": "Food Truck",
+      "repo": "https://github.com/apple/sample-food-truck",
+      "commit": "3954a769e99f3cc53297d94f2b960ceb2665b3d6",
+      "license": "other",
+      "ui": "swiftui",
+      "tags": ["swiftui", "macos"],
+      "why": "Apple WWDC22 sample: one codebase for Mac, iPad and iPhone"
+    },
+    {
+      "id": "clean-architecture-swiftui",
+      "name": "Clean Architecture for SwiftUI + Combine",
+      "repo": "https://github.com/nalexn/clean-architecture-swiftui",
+      "commit": "9eca97b8cfff96a14084b564b1fefd949c93d232",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["swiftui", "macos", "mvvm"],
+      "why": "Popular architecture template (6.6k stars)"
+    },
+    {
+      "id": "milestones",
+      "name": "Milestones",
+      "repo": "https://github.com/jpsim/Milestones",
+      "commit": "55f12be2879b398588af3a462146d048f572e5cb",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["swiftui", "macos", "combine"],
+      "why": "Small countdown app; Combine"
+    },
+    {
+      "id": "betterblue",
+      "name": "BetterBlue",
+      "repo": "https://github.com/schmidtwmark/BetterBlue",
+      "commit": "dae05cc6e4c93a69a6f1b8d2adc18e553bf572ef",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["communication", "swiftui"],
+      "why": "Controls Hyundai/Kia cars; recent production app"
+    },
+    {
+      "id": "basic-car-maintenance",
+      "name": "Basic Car Maintenance",
+      "repo": "https://github.com/mikaelacaron/Basic-Car-Maintenance",
+      "commit": "f42a49b6196122337f9f9469f4cebe2f66f74d76",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["swiftui", "firebase"],
+      "why": "Community-built car log on Firebase"
+    },
+    {
+      "id": "pet-note",
+      "name": "Pet Note",
+      "repo": "https://github.com/XunMengWinter/PetNote-oss",
+      "commit": "ed28632f49470b05c40a291edd8323b495946b66",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["notes", "swiftui"],
+      "why": "Pet journal; Chinese author"
+    },
+    {
+      "id": "ac-helper",
+      "name": "AC Helper",
+      "repo": "https://github.com/Dimillian/ACHNBrowserUI",
+      "commit": "7bcb4e383a740fd81ae3ef6498a3f1757de24460",
+      "license": "apache-2.0",
+      "ui": "swiftui",
+      "tags": ["swiftui", "ipad"],
+      "why": "Animal Crossing catalogue (1.7k stars), iPad"
+    },
+    {
+      "id": "reddit-swiftui",
+      "name": "reddit-swiftui",
+      "repo": "https://github.com/carson-katri/reddit-swiftui",
+      "commit": "cc71ae8b677c835d098ec0e0dfa293ec5e76b55c",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["news", "swiftui", "macos", "watchos"],
+      "why": "Cross-platform Reddit client with 2022-era code"
+    },
+    {
+      "id": "swift-radio-pro",
+      "name": "Swift Radio Pro",
+      "repo": "https://github.com/analogcode/Swift-Radio-Pro",
+      "commit": "2a6b47c5735f5c84824f6630158ee507e436e1f2",
+      "license": "mit",
+      "ui": "swiftui",
+      "tags": ["audio"],
+      "why": "Popular radio app (2.9k stars) migrated from UIKit to SwiftUI"
+    },
+    {
+      "id": "wikipedia",
+      "name": "Wikipedia",
+      "repo": "https://github.com/wikimedia/wikipedia-ios",
+      "commit": "d41deed3abd52c664a48d3a7212093a1fa8ac188",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["official"],
+      "why": "Official Wikipedia app: large UIKit codebase with Objective-C and SwiftUI parts"
+    },
+    {
+      "id": "netnewswire",
+      "name": "NetNewsWire",
+      "repo": "https://github.com/Ranchero-Software/NetNewsWire",
+      "commit": "a3e61ddc5ab3c5b8fe49297cbaddb60b6201017f",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["rss"],
+      "why": "Popular RSS reader (10k stars); UIKit and AppKit"
+    },
+    {
+      "id": "bark",
+      "name": "Bark",
+      "repo": "https://github.com/Finb/Bark",
+      "commit": "c8f2c38f18559f182e38e73de2e1c9ea5f322902",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["developer"],
+      "why": "Push-notification tool (9k stars); Chinese author"
+    },
+    {
+      "id": "zlgithubclient",
+      "name": "ZLGithubClient",
+      "repo": "https://github.com/ExistOrLive/GithubClient",
+      "commit": "7969212a8b6c938f93391d6e37666cc2c4a4c207",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["github"],
+      "why": "GitHub client mixing Swift and Objective-C; Chinese author"
+    },
+    {
+      "id": "off-day",
+      "name": "Off-Day",
+      "repo": "https://github.com/zizicici/Off-Day",
+      "commit": "59850651d495ca70f3bb36d935198f1c74a76c91",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["clock"],
+      "why": "Holiday alarm clock; Chinese author"
+    },
+    {
+      "id": "swifthub",
+      "name": "SwiftHub",
+      "repo": "https://github.com/khoren93/SwiftHub",
+      "commit": "58d85c58f0d43e406cb78ddbca37e953e6ee0df8",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["github", "rxswift", "mvvm", "moya", "fastlane"],
+      "why": "GitHub client on RxSwift and Moya (3k stars)"
+    },
+    {
+      "id": "pass",
+      "name": "Pass",
+      "repo": "https://github.com/mssun/passforios",
+      "commit": "cb836aaeda1828fd9aff55773c3d355d049dc426",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["password", "carthage", "keychainaccess", "onetimepassword"],
+      "why": "password-store client; Carthage dependencies"
+    },
+    {
+      "id": "metax",
+      "name": "MetaX",
+      "repo": "https://github.com/Ckitakishi/MetaX",
+      "commit": "a44093e58b86e5af63d72ac52e2fb6610e57af72",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["photo"],
+      "why": "Photo metadata editor"
+    },
+    {
+      "id": "jotify",
+      "name": "Jotify",
+      "repo": "https://github.com/leathalman/Jotify",
+      "commit": "219ed7ee020558cf505494a345ef7c82d3f1f441",
+      "license": "apache-2.0",
+      "ui": "uikit",
+      "tags": ["notes", "ipad"],
+      "why": "Quick notes app for iPhone and iPad"
+    },
+    {
+      "id": "authenticator",
+      "name": "Authenticator",
+      "repo": "https://github.com/mattrubin/authenticator",
+      "commit": "0c6cdf41e06b52a25e349fe3f52ee304268cd72f",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["password", "2fa"],
+      "why": "Two-factor authentication app"
+    },
+    {
+      "id": "say-their-names",
+      "name": "Say Their Names",
+      "repo": "https://github.com/Say-Their-Name/say-their-names-ios",
+      "commit": "e9d9f7a4c529ca3769a0f3bce4b16c4f33145321",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["misc"],
+      "why": "Community UIKit app with many screens"
+    },
+    {
+      "id": "feeds4u",
+      "name": "Feeds4U",
+      "repo": "https://github.com/EvgenyKarkan/Feeds4U",
+      "commit": "dcdefac7b09c8a0dad5716b7117054c8d8ced3f5",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["rss"],
+      "why": "RSS reader"
+    },
+    {
+      "id": "clean-architecture-mvvm",
+      "name": "Template using Clean Architecture and MVVM",
+      "repo": "https://github.com/kudoleh/iOS-Clean-Architecture-MVVM",
+      "commit": "a68da3e3faad7b221c4015e8aea92ba784666278",
+      "license": "other",
+      "ui": "uikit",
+      "tags": ["sample", "mvvm", "clean-architecture"],
+      "why": "Popular UIKit MVVM template (4.4k stars)"
+    },
+    {
+      "id": "racerunner",
+      "name": "RaceRunner",
+      "repo": "https://github.com/vermont42/RaceRunner",
+      "commit": "73483eb42549d86e1b316150a6b1870ed466174f",
+      "license": "mit",
+      "ui": "uikit",
+      "tags": ["fitness"],
+      "why": "Run tracker for racers"
+    },
+    {
+      "id": "chess",
+      "name": "Chess",
+      "repo": "https://github.com/nicklockwood/Chess",
+      "commit": "dce9734320dfb41e396fb44ea66994e8b4efa474",
+      "license": "other",
+      "ui": "uikit",
+      "tags": ["game"],
+      "why": "Small UIKit game"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Iris Views</string>
+    <string name="title">Android Views on Iris</string>
+    <string name="name_hint">Your name</string>
+    <string name="greet">Greet</string>
+    <string name="greeting">Xin chào, %1$s!</string>
+    <string name="open_detail">Open detail</string>
+    <string name="detail">Detail for %1$s. Press back to return.</string>
+</resources>

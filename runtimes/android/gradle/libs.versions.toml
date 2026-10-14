@@ -1,0 +1,16 @@
+[versions]
+kotlin = "2.4.21"
+# Keep in step with the protocolbuffers/java and /kotlin plugin versions in buf.gen.yaml.
+protobuf = "4.36.2"
+robolectric = "4.17"
+junit = "4.13.2"
+
+[libraries]
+junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+# The Android framework jar Robolectric runs for SDK 36; the host compiles against it.
+robolectric-android-all = { module = "org.robolectric:android-all-instrumented", version = "16-robolectric-13921718-i7" }
+protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

@@ -1,0 +1,16 @@
+[package]
+name = "irisrun-doctor"
+description = "Finds the native binaries a mobile project ships and picks how each one can run."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+goblin.workspace = true
+roxmltree.workspace = true
+zip.workspace = true
+
+[lints]
+workspace = true

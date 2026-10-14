@@ -1,0 +1,30 @@
+[package]
+name = "irisrun-engine"
+description = "The local engine behind the irisrun CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+irisrun-protocol.workspace = true
+prost.workspace = true
+reqwest.workspace = true
+roxmltree.workspace = true
+rust-embed.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tokio.workspace = true
+webpki-root-certs.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

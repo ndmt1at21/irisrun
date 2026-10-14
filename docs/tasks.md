@@ -1,5 +1,7 @@
 # Tasks
 
+> Tiến độ chi tiết và cách làm tiếp: [progress.md](progress.md).
+>
 > Bản xuất từ tab "Tasks" của tài liệu Claude Docs "Iris — Plan & Stack" ngày 14/10/2026. Bản gốc có cột trạng thái dạng dropdown: https://claude.ai/code/artifact/e38b9ae5-5779-42fc-a076-f9fb4416b193
 
 Plan được chia thành 16 task cho Phase 0, 34 task cho Phase 1 (MVP) và 15 epic cho Phase 2–3. Epic sẽ được chia nhỏ ở cuối phase trước, khi có kết quả cổng.
@@ -12,18 +14,18 @@ Mục tiêu: có câu trả lời go/no-go và số đo thật cho từng hướ
 
 | ID | Task | Track | Cỡ | Phụ thuộc | Xong khi | Trạng thái |
 | --- | --- | --- | --- | --- | --- | --- |
-| P0-01 | Dựng monorepo: Cargo workspace, pnpm workspace, Gradle, SwiftPM, buf; CI GitHub Actions có runner Linux và macOS | PLT | S | — | CI xanh cho Rust, TS, Kotlin, Swift và `buf lint` | Chưa làm |
-| P0-02 | Device Protocol v0 bằng Protobuf: frame, input (chạm, phím, chữ), vòng đời app, log, adapter request/response; sinh code cho Rust, TS, Kotlin, Swift | PLT | M | P0-01 | Code sinh tự động trong CI; `buf breaking` đã bật | Chưa làm |
-| P0-03 | Thử tự tải toolchain vào `~/.irisrun`: JDK 21, Swift 6.4.1, license Android SDK cho AGP; kiểm tra checksum | PLT | M | P0-01 | Máy sạch Linux và macOS chạy được; có số đo dung lượng và thời gian tải | Chưa làm |
-| P0-04 | Thử Android runtime: init script Gradle + Robolectric Native Graphics chạy 1 app View và 1 app Compose không sửa code | AND | M | P0-02, P0-03 | Chạm, gõ chữ, back hoạt động; có số đo build lần đầu, khởi động lại, fps | Chưa làm |
-| P0-05 | Fork OpenSwiftUI (dùng kèm OpenAttributeGraph), build trên Linux với Swift 6.4.1; app SwiftUI mẫu (đếm số, list, navigation) compile không sửa nhờ `-module-alias` | IOS | M | P0-01 | App mẫu chạy với renderer stdout; `@State`, `@Observable` cập nhật đúng | Chưa làm |
+| P0-01 | Dựng monorepo: Cargo workspace, pnpm workspace, Gradle, SwiftPM, buf; CI GitHub Actions có runner Linux và macOS | PLT | S | — | CI xanh cho Rust, TS, Kotlin, Swift và `buf lint` | Xong ở local, chờ CI |
+| P0-02 | Device Protocol v0 bằng Protobuf: frame, input (chạm, phím, chữ), vòng đời app, log, adapter request/response; sinh code cho Rust, TS, Kotlin, Swift | PLT | M | P0-01 | Code sinh tự động trong CI; `buf breaking` đã bật | Xong ở local, chờ CI |
+| P0-03 | Thử tự tải toolchain vào `~/.irisrun`: JDK 21, Swift 6.4.1, license Android SDK cho AGP; kiểm tra checksum | PLT | M | P0-01 | Máy sạch Linux và macOS chạy được; có số đo dung lượng và thời gian tải | Xong (Linux) |
+| P0-04 | Thử Android runtime: init script Gradle + Robolectric Native Graphics chạy 1 app View và 1 app Compose không sửa code | AND | M | P0-02, P0-03 | Chạm, gõ chữ, back hoạt động; có số đo build lần đầu, khởi động lại, fps | Đang làm |
+| P0-05 | Fork OpenSwiftUI (dùng kèm OpenAttributeGraph), build trên Linux với Swift 6.4.1; app SwiftUI mẫu (đếm số, list, navigation) compile không sửa nhờ `-module-alias` | IOS | M | P0-01 | App mẫu chạy với renderer stdout; `@State`, `@Observable` cập nhật đúng | Đang làm |
 | P0-06 | Thử render core Rust + rust-skia: API C cho layer tree; vẽ hình, chữ (dấu tiếng Việt, CJK), ảnh; Swift gọi qua C ABI; vẽ app mẫu của P0-05 thành frame | IOS | L | P0-05 | Frame xuất ra đúng app mẫu; có số đo fps | Chưa làm |
-| P0-07 | Đánh giá Objective-C trên Linux: build libobjc2 + clang, thử Swift toolchain bật ObjC interop | IOS | M | — | Báo cáo go/no-go kèm ước lượng công; demo nhỏ nếu khả thi | Chưa làm |
-| P0-08 | Corpus iOS: chọn khoảng 50 app SwiftUI từ open-source-ios-apps; script compile thử với OpenKit; xếp hạng API SwiftUI/UIKit theo mức dùng | QA | M | P0-05 | Có bảng xếp hạng API và tỉ lệ compile ban đầu | Chưa làm |
-| P0-09 | Binary Doctor bản thử (Rust + goblin): quét ELF/Mach-O của khoảng 10 SDK lớn (ML Kit, Firebase, Stripe, Realm, SQLCipher…) | PLT | S | P0-01 | Báo cáo kiến trúc, ABI, phụ thuộc, chiến lược cho từng SDK | Chưa làm |
+| P0-07 | Đánh giá Objective-C trên Linux: build libobjc2 + clang, thử Swift toolchain bật ObjC interop | IOS | M | — | Báo cáo go/no-go kèm ước lượng công; demo nhỏ nếu khả thi | Đang làm |
+| P0-08 | Corpus iOS: chọn khoảng 50 app SwiftUI từ open-source-ios-apps; script compile thử với OpenKit; xếp hạng API SwiftUI/UIKit theo mức dùng | QA | M | P0-05 | Có bảng xếp hạng API và tỉ lệ compile ban đầu | Đang làm |
+| P0-09 | Binary Doctor bản thử (Rust + goblin): quét ELF/Mach-O của khoảng 10 SDK lớn (ML Kit, Firebase, Stripe, Realm, SQLCipher…) | PLT | S | P0-01 | Báo cáo kiến trúc, ABI, phụ thuộc, chiến lược cho từng SDK | Đang làm |
 | P0-10 | Thử cloud Android: emulator trong container trên host KVM ở Singapore; stream H.264 qua str0m (WebRTC); input qua data channel | CLD | M | P0-02 | Điều khiển được từ browser ở VN; có số đo độ trễ và số emulator mỗi host | Chưa làm |
 | P0-11 | Thử cloud iOS: simulator trên Mac thuê (EC2 Mac Singapore hoặc MacStadium); `idb video-stream` → WebRTC; input qua idb | CLD | M | P0-10 | Điều khiển được từ browser; có số đo độ trễ và số simulator mỗi Mac | Chưa làm |
-| P0-12 | Device UI bản thử: khung máy, vẽ frame lên canvas qua WebSocket, player WebRTC, chuột thành chạm, phím, gõ tiếng Việt qua composition | FE | M | P0-02 | Dùng được cho demo của P0-04, P0-06, P0-10, P0-11 | Chưa làm |
+| P0-12 | Device UI bản thử: khung máy, vẽ frame lên canvas qua WebSocket, player WebRTC, chuột thành chạm, phím, gõ tiếng Việt qua composition | FE | M | P0-02 | Dùng được cho demo của P0-04, P0-06, P0-10, P0-11 | Đang làm |
 | P0-13 | Tư vấn pháp lý: danh mục API từ tài liệu Apple, mục 2.7 với dịch vụ simulator, image emulator có Google Play, license libhybris/bionic_translation; tra cứu nhãn hiệu Iris (Intel Iris, InterSystems IRIS) | BIZ | M | — | Có ý kiến pháp lý bằng văn bản, bảng rủi ro cập nhật, kết quả tra cứu nhãn hiệu Iris | Chưa làm |
 | P0-14 | Khảo sát đối tác máy thật có data center châu Á (đo độ trễ từ VN) và các đời EC2 Mac ở Singapore/Tokyo | BIZ | S | — | Bảng so sánh giá, độ trễ, model máy | Chưa làm |
 | P0-15 | Họp cổng 0: go/no-go từng hướng; chốt số mục tiêu cổng 1 (tỉ lệ corpus iOS, độ trễ) | Tất cả | S | P0-04 đến P0-14 | Biên bản quyết định; plan được cập nhật | Chưa làm |

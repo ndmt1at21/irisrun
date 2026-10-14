@@ -1,0 +1,64 @@
+// Applied by `irisrun start` through `gradlew --init-script`, so no project
+// file changes. For every application module it:
+//   - puts the irisrun host on the debug unit-test classpath,
+//   - turns on includeAndroidResources, which Robolectric needs for the merged
+//     resources and manifest,
+//   - adds an `irisrunClasspath` task that writes <irisrun.out>/<module>.launch
+//     for the CLI, describing the JVM the unit tests would run in: its working
+//     directory (Robolectric resolves resource paths from there), classpath and
+//     JVM arguments (Robolectric needs --add-opens on recent JDKs), one per line.
+//
+// Project properties, set by the CLI:
+//   irisrun.repo     Maven repository holding the dev.irisrun.android artifacts
+//   irisrun.version  version of dev.irisrun.android:host
+//   irisrun.out      directory for the .launch files
+
+def property = { String name ->
+    def value = gradle.startParameter.projectProperties[name]
+    if (value == null) throw new GradleException("irisrun: missing -P$name")
+    value
+}
+def repo = property('irisrun.repo')
+def version = property('irisrun.version')
+def out = new File(property('irisrun.out'))
+
+def addRepo = { RepositoryHandler repositories ->
+    repositories.maven {
+        url = repo
+        content { includeGroup 'dev.irisrun.android' }
+    }
+}
+
+settingsEvaluated { settings ->
+    def resolution = settings.dependencyResolutionManagement
+    addRepo(resolution.repositories)
+    // In this mode a project that declares its own repositories ignores the
+    // settings ones, so it needs the irisrun repository too.
+    if (resolution.repositoriesMode.get() == RepositoriesMode.PREFER_PROJECT) {
+        settings.gradle.allprojects { project ->
+            project.afterEvaluate {
+                if (!project.repositories.isEmpty()) addRepo(project.repositories)
+            }
+        }
+    }
+}
+
+allprojects { project ->
+    project.plugins.withId('com.android.application') {
+        project.android.testOptions.unitTests.includeAndroidResources = true
+        project.dependencies.add('testImplementation', "dev.irisrun.android:host:$version")
+
+        project.tasks.register('irisrunClasspath') { task ->
+            def test = project.tasks.named('testDebugUnitTest', Test).get()
+            def classpath = test.classpath
+            def workingDir = test.workingDir.absolutePath
+            def jvmArgs = test.allJvmArgs
+            def file = new File(out, (project.path.substring(1) ?: project.name).replace(':', '_') + '.launch')
+            task.inputs.files(classpath)
+            task.outputs.file(file)
+            task.doLast {
+                file.text = [workingDir, classpath.files.join(File.pathSeparator), jvmArgs.join('\t')].join('\n')
+            }
+        }
+    }
+}

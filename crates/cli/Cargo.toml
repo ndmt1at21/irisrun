@@ -1,0 +1,18 @@
+[package]
+name = "irisrun"
+description = "Run Android and iOS apps from source, without devices or SDK installs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+indicatif.workspace = true
+irisrun-doctor.workspace = true
+irisrun-engine.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
