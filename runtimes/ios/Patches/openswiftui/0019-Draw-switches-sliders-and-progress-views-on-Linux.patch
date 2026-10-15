@@ -1,0 +1,285 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 17:28:49 +0700
+Subject: [PATCH 19/22] Draw switches, sliders and progress views on Linux
+
+Toggle and ProgressView crashed on Linux, where their styles ask UIKit for a
+UISwitch or a UIProgressView, and Slider's system style drew nothing. They
+are now drawn by SwiftUI with UIKit's sizes and colors: a 51 x 31 switch that
+flips on a tap, a slider with a 28-point thumb that follows a drag and snaps
+to its steps, a 4-point progress bar and a still activity indicator. Toggle
+takes a title.
+---
+ .../View/Control/IrisControls.swift           | 135 ++++++++++++++++++
+ .../CircularProgressViewStyle.swift           |   2 +-
+ .../LinearProgressViewStyle.swift             |   2 +-
+ .../Control/Slider/SystemSliderStyle.swift    |  17 +++
+ .../View/Toggle/SwitchToggleStyle.swift       |   2 +-
+ Sources/OpenSwiftUI/View/Toggle/Toggle.swift  |  26 ++++
+ 6 files changed, 181 insertions(+), 3 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/View/Control/IrisControls.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Control/IrisControls.swift b/Sources/OpenSwiftUI/View/Control/IrisControls.swift
+new file mode 100644
+index 0000000..59802e9
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Control/IrisControls.swift
+@@ -0,0 +1,135 @@
++//
++//  IrisControls.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++import OpenSwiftUICore
++
++// Iris: iOS controls drawn by SwiftUI itself on Linux, where UIKit is not there to draw a
++// UISwitch, UISlider or UIProgressView. Sizes and colors follow UIKit's defaults.
++
++/// systemGreen, UISwitch's default on color.
++private let switchOn = Color(red: 52 / 255, green: 199 / 255, blue: 89 / 255)
++/// The off track of UISwitch and the empty track of UISlider and UIProgressView.
++private let trackOff = Color(red: 233 / 255, green: 233 / 255, blue: 234 / 255)
++/// systemBlue, the default tint.
++private let systemBlue = Color(red: 0, green: 122 / 255, blue: 1)
++
++// MARK: - IrisSwitch
++
++/// UISwitch: 51 × 31 points; a tap flips it.
++struct IrisSwitch: View {
++    @Binding var isOn: Bool
++    var tint: Color?
++
++    var body: some View {
++        ZStack(alignment: isOn ? .trailing : .leading) {
++            Capsule().fill(isOn ? (tint ?? switchOn) : trackOff)
++            Circle()
++                .fill(Color.white)
++                .shadow(color: .black.opacity(0.15), radius: 2, y: 2)
++                .padding(2)
++        }
++        .frame(width: 51, height: 31)
++        .contentShape(Rectangle())
++        .onTapGesture {
++            withAnimation(.easeInOut(duration: 0.2)) {
++                isOn.toggle()
++            }
++        }
++    }
++}
++
++// MARK: - IrisSlider
++
++/// UISlider: a 4-point track filled in the tint up to a 28-point thumb, which a touch drags.
++/// `value` runs from 0 to 1; a slider with steps snaps to them.
++struct IrisSlider: View {
++    @Binding var value: Double
++    var steps: Int
++    var tint: Color?
++    var onEditingChanged: (Bool) -> Void
++
++    @State private var isEditing = false
++
++    var body: some View {
++        GeometryReader { track in
++            let thumb: CGFloat = 28
++            let usable = max(track.size.width - thumb, 1)
++            let fraction = min(max(value, 0), 1)
++            ZStack(alignment: .leading) {
++                Capsule().fill(trackOff).frame(height: 4)
++                Capsule()
++                    .fill(tint ?? systemBlue)
++                    .frame(width: thumb / 2 + usable * fraction, height: 4)
++                Circle()
++                    .fill(Color.white)
++                    .shadow(color: .black.opacity(0.2), radius: 3, y: 2)
++                    .frame(width: thumb, height: thumb)
++                    .offset(x: usable * fraction)
++            }
++            .frame(height: track.size.height)
++            .contentShape(Rectangle())
++            .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
++                if !isEditing {
++                    isEditing = true
++                    onEditingChanged(true)
++                }
++                var fraction = min(max((drag.location.x - thumb / 2) / usable, 0), 1)
++                if steps > 1 {
++                    fraction = (fraction * CGFloat(steps - 1)).rounded() / CGFloat(steps - 1)
++                }
++                value = Double(fraction)
++            }.onEnded { _ in
++                isEditing = false
++                onEditingChanged(false)
++            })
++        }
++        .frame(height: 34)
++    }
++}
++
++// MARK: - Progress
++
++/// UIProgressView's default style: a 4-point track filled in the tint.
++struct IrisLinearProgress: View {
++    var fraction: Double?
++    var tint: Color?
++
++    var body: some View {
++        GeometryReader { track in
++            ZStack(alignment: .leading) {
++                Capsule().fill(trackOff)
++                Capsule()
++                    .fill(tint ?? systemBlue)
++                    .frame(width: track.size.width * min(max(fraction ?? 0, 0), 1))
++            }
++        }
++        .frame(height: 4)
++    }
++}
++
++/// UIActivityIndicatorView's medium style: eight bars around a circle fading in turn.
++/// ponytail: it stands still.
++struct IrisSpinner: View {
++    var tint: Color?
++
++    var body: some View {
++        ZStack {
++            ForEach(0 ..< 8, id: \.self) { index in
++                Capsule()
++                    .fill(tint ?? Color.gray)
++                    .frame(width: 3, height: 6)
++                    .offset(y: -6)
++                    .rotationEffect(.degrees(Double(index) * 45))
++                    .opacity(0.25 + 0.75 * Double(index) / 7)
++            }
++        }
++        .frame(width: 20, height: 20)
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/View/Control/ProgressView/CircularProgressViewStyle.swift b/Sources/OpenSwiftUI/View/Control/ProgressView/CircularProgressViewStyle.swift
+index 2d97486..587a8c0 100644
+--- a/Sources/OpenSwiftUI/View/Control/ProgressView/CircularProgressViewStyle.swift
++++ b/Sources/OpenSwiftUI/View/Control/ProgressView/CircularProgressViewStyle.swift
+@@ -111,7 +111,7 @@ public struct CircularProgressViewStyle: ProgressViewStyle {
+                 )
+             }
+             #else
+-            _openSwiftUIPlatformUnimplementedFailure()
++            IrisSpinner(tint: tint ?? controlTint)
+             #endif
+         }
+     }
+diff --git a/Sources/OpenSwiftUI/View/Control/ProgressView/LinearProgressViewStyle.swift b/Sources/OpenSwiftUI/View/Control/ProgressView/LinearProgressViewStyle.swift
+index a262880..e70ca1a 100644
+--- a/Sources/OpenSwiftUI/View/Control/ProgressView/LinearProgressViewStyle.swift
++++ b/Sources/OpenSwiftUI/View/Control/ProgressView/LinearProgressViewStyle.swift
+@@ -88,7 +88,7 @@ public struct LinearProgressViewStyle: ProgressViewStyle {
+                 tint: tint ?? controlTint
+             )
+             #else
+-            _openSwiftUIPlatformUnimplementedFailure()
++            IrisLinearProgress(fraction: configuration.fractionCompleted, tint: tint ?? controlTint)
+             #endif
+         }
+     }
+diff --git a/Sources/OpenSwiftUI/View/Control/Slider/SystemSliderStyle.swift b/Sources/OpenSwiftUI/View/Control/Slider/SystemSliderStyle.swift
+index 8987da3..8c8493f 100644
+--- a/Sources/OpenSwiftUI/View/Control/Slider/SystemSliderStyle.swift
++++ b/Sources/OpenSwiftUI/View/Control/Slider/SystemSliderStyle.swift
+@@ -9,7 +9,24 @@
+ // TODO
+ private struct SystemSliderStyle: SliderStyle {
+     func body(configuration: Slider<SliderStyleLabel, SliderStyleValueLabel>) -> some View {
++        #if canImport(Darwin)
+         EmptyView()
++        #else
++        // Iris: UISlider drawn by SwiftUI, between the value labels when there are any.
++        HStack(spacing: 8) {
++            if configuration.hasCustomMinMaxValueLabels {
++                SliderMinimumValueLabel()
++            }
++            IrisSlider(
++                value: configuration.$value,
++                steps: configuration.discreteValueCount,
++                onEditingChanged: configuration.onEditingChanged
++            )
++            if configuration.hasCustomMinMaxValueLabels {
++                SliderMaximumValueLabel()
++            }
++        }
++        #endif
+     }
+ }
+ 
+diff --git a/Sources/OpenSwiftUI/View/Toggle/SwitchToggleStyle.swift b/Sources/OpenSwiftUI/View/Toggle/SwitchToggleStyle.swift
+index 507becd..09c50c6 100644
+--- a/Sources/OpenSwiftUI/View/Toggle/SwitchToggleStyle.swift
++++ b/Sources/OpenSwiftUI/View/Toggle/SwitchToggleStyle.swift
+@@ -73,7 +73,7 @@ public struct SwitchToggleStyle: ToggleStyle {
+             #elseif os(macOS)
+             Switch(isOn: configuration.$isOn, tint: tint, font: font)
+             #else
+-            _openSwiftUIPlatformUnimplementedFailure()
++            IrisSwitch(isOn: configuration.$isOn, tint: tint ?? controlTint)
+             #endif
+         }
+         LabeledContent {
+diff --git a/Sources/OpenSwiftUI/View/Toggle/Toggle.swift b/Sources/OpenSwiftUI/View/Toggle/Toggle.swift
+index 88859d5..6ea3b4c 100644
+--- a/Sources/OpenSwiftUI/View/Toggle/Toggle.swift
++++ b/Sources/OpenSwiftUI/View/Toggle/Toggle.swift
+@@ -14,6 +14,9 @@ public struct Toggle<Label>: View where Label: View {
+     @Binding var toggleState: ToggleState
+ 
+     var label: Label
++    #if !canImport(Darwin)
++    @Environment(\.tintColor) private var tint: Color?
++    #endif
+ 
+     // var appIntentAction: AppIntentAction?
+ 
+@@ -58,6 +61,15 @@ public struct Toggle<Label>: View where Label: View {
+     }
+ 
+     public var body: some View {
++        #if !canImport(Darwin)
++        // Iris: the label and a switch, as UIKit lays out a switch row. ponytail: toggle styles
++        // other than the switch draw as one too.
++        HStack {
++            label
++            Spacer(minLength: 8)
++            IrisSwitch(isOn: $toggleState.projecting(ToggleStateBool()), tint: tint)
++        }
++        #else
+         // FIXME
+         ResolvedToggleStyle(
+             configuration: ToggleStyleConfiguration(
+@@ -70,10 +82,24 @@ public struct Toggle<Label>: View where Label: View {
+         ).viewAlias(ToggleStyleConfiguration.Label.self) {
+             label
+         }
++        #endif
+     }
+ }
+ 
+ @available(*, unavailable)
+ extension Toggle: Sendable {}
+ 
++// Iris: Toggle with a title.
++@available(OpenSwiftUI_v1_0, *)
++extension Toggle where Label == Text {
++    public init(_ titleKey: LocalizedStringKey, isOn: Binding<Bool>) {
++        self.init(isOn: isOn) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, isOn: Binding<Bool>) where S: StringProtocol {
++        self.init(isOn: isOn) { Text(title) }
++    }
++}
++
+ // TODO: Toggle + Extension

@@ -1,0 +1,503 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 12:43:00 +0700
+Subject: [PATCH 11/22] Add DragGesture and ScrollView, and scroll List
+
+DragGesture becomes active once a touch moves its minimum distance and fails
+if the touch lifts before that, so taps still reach views underneath. Its
+value has the velocity of the last tenth of a second and predicted ends that
+decelerate at UIScrollView's normal rate.
+
+ScrollView is made of SwiftUI parts until upstream has one: the content is
+laid out at its ideal size along the scrolling axes and moved by a
+high-priority drag that only starts along those axes. It keeps moving after a
+fling, stretches past its edges and springs back. Content outside the view is
+clipped and hidden from touches, as a UIScrollView's bounds hide it. The
+state lives in an observable reference, as gesture callbacks run several
+times between updates and read @State as it was at the last one.
+
+List rows now sit in a ScrollView, and the layer renderer clips to rectangles
+and rounded rectangles.
+---
+ .../Event/Gesture/DragGesture.swift           | 176 ++++++++++++++
+ Sources/OpenSwiftUI/View/List/List.swift      |  15 +-
+ .../OpenSwiftUI/View/Scroll/ScrollView.swift  | 224 ++++++++++++++++++
+ .../DisplayListLayerRenderer.swift            |  16 +-
+ 4 files changed, 423 insertions(+), 8 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/Event/Gesture/DragGesture.swift
+ create mode 100644 Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+
+diff --git a/Sources/OpenSwiftUI/Event/Gesture/DragGesture.swift b/Sources/OpenSwiftUI/Event/Gesture/DragGesture.swift
+new file mode 100644
+index 0000000..536fa3b
+--- /dev/null
++++ b/Sources/OpenSwiftUI/Event/Gesture/DragGesture.swift
+@@ -0,0 +1,176 @@
++//
++//  DragGesture.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// MARK: - DragGesture
++
++/// A dragging motion that invokes an action as the drag-event sequence changes.
++///
++/// The gesture becomes active once the touch has moved `minimumDistance` points from where it
++/// began, and ends when the touch lifts. A touch that lifts before that fails the gesture, so
++/// taps still reach the views underneath.
++@available(OpenSwiftUI_v1_0, *)
++public struct DragGesture: PubliclyPrimitiveGesture {
++    /// The attributes of a drag gesture.
++    public struct Value: Equatable, @unchecked Sendable {
++        /// The time associated with the drag gesture's current event.
++        public var time: Date
++
++        /// The location of the drag gesture's current event.
++        public var location: CGPoint
++
++        /// The location of the drag gesture's first event.
++        public var startLocation: CGPoint
++
++        /// The current drag velocity, in points per second.
++        public var velocity: CGSize
++
++        /// The total translation from the start of the drag gesture to the current event.
++        public var translation: CGSize {
++            CGSize(width: location.x - startLocation.x, height: location.y - startLocation.y)
++        }
++
++        /// A prediction, based on the current drag velocity, of where the final location will
++        /// be if dragging stopped now.
++        public var predictedEndLocation: CGPoint {
++            CGPoint(
++                x: location.x + velocity.width * Self.projection,
++                y: location.y + velocity.height * Self.projection
++            )
++        }
++
++        /// A prediction, based on the current drag velocity, of what the final translation
++        /// will be if dragging stopped now.
++        public var predictedEndTranslation: CGSize {
++            let end = predictedEndLocation
++            return CGSize(width: end.x - startLocation.x, height: end.y - startLocation.y)
++        }
++
++        /// How far content keeps moving, in seconds of the current velocity, when it
++        /// decelerates like a scroll view at UIScrollView's normal rate (0.998 per ms).
++        static let projection = 0.998 / (1 - 0.998) / 1000
++    }
++
++    /// The minimum dragging distance before the gesture succeeds.
++    public var minimumDistance: CGFloat
++
++    /// The coordinate space in which to receive location values.
++    public var coordinateSpace: CoordinateSpace
++
++    /// Iris: the gesture fails when the touch first moves past `minimumDistance` along any other
++    /// axis, as a scroll view's pan does, so that a scroll view in another one gets the touch.
++    package var axes: Axis.Set = [.horizontal, .vertical]
++
++    /// Creates a dragging gesture with the minimum dragging distance before the gesture
++    /// succeeds and the coordinate space of the gesture's location.
++    @available(*, deprecated, message: "use overload that accepts a CoordinateSpaceProtocol instead")
++    @_disfavoredOverload
++    public init(minimumDistance: CGFloat = 10, coordinateSpace: CoordinateSpace = .local) {
++        self.minimumDistance = minimumDistance
++        self.coordinateSpace = coordinateSpace
++    }
++
++    /// Creates a dragging gesture with the minimum dragging distance before the gesture
++    /// succeeds and the coordinate space of the gesture's location.
++    @available(OpenSwiftUI_v5_0, *)
++    public init(minimumDistance: CGFloat = 10, coordinateSpace: some CoordinateSpaceProtocol = .local) {
++        self.minimumDistance = minimumDistance
++        self.coordinateSpace = coordinateSpace.coordinateSpace
++    }
++
++    /// A drag that starts only along `axes`, for scroll views.
++    package init(scrolling axes: Axis.Set) {
++        self.init(minimumDistance: 10, coordinateSpace: .global)
++        self.axes = axes
++    }
++
++    package var internalBody: some Gesture<Value> {
++        let minimumDistance = minimumDistance
++        let axes = axes
++        return DragState.gesture(
++            content: EventListener<SpatialEvent>().coordinateSpace(coordinateSpace)
++        ) { state, phase in
++            switch phase {
++            case .possible:
++                return .possible(nil)
++            case let .active(event):
++                state.track(event)
++                guard state.hasMoved(minimumDistance) else {
++                    return .possible(nil)
++                }
++                return state.isAlong(axes) ? .active(state.value) : .failed
++            case let .ended(event):
++                state.track(event)
++                guard state.hasMoved(minimumDistance), state.isAlong(axes) else {
++                    return .failed
++                }
++                return .ended(state.value)
++            case .failed:
++                return .failed
++            }
++        }
++    }
++
++    public typealias Body = Never
++}
++
++@available(*, unavailable)
++extension DragGesture: Sendable {}
++
++// MARK: - DragState
++
++/// The touch so far: where it began, how far it got, and its last moments for the velocity.
++private struct DragState: GestureStateProtocol {
++    private var start: CGPoint?
++    private var maxDistance: CGFloat = 0
++    /// The events of the last tenth of a second.
++    private var recent: [(time: Time, location: CGPoint)] = []
++
++    init() {}
++
++    mutating func track(_ event: SpatialEvent) {
++        let start = start ?? event.location
++        self.start = start
++        maxDistance = max(maxDistance, distance(start, event.location))
++        recent.append((event.timestamp, event.location))
++        recent.removeAll { event.timestamp.seconds - $0.time.seconds > 0.1 }
++    }
++
++    /// The axis of the first move past the minimum distance, which decides the drag.
++    private var axis: Axis?
++
++    func hasMoved(_ minimumDistance: CGFloat) -> Bool {
++        maxDistance >= minimumDistance
++    }
++
++    mutating func isAlong(_ axes: Axis.Set) -> Bool {
++        if axis == nil, let start, let location = recent.last?.location {
++            axis = abs(location.x - start.x) > abs(location.y - start.y) ? .horizontal : .vertical
++        }
++        return axes.contains(axis == .horizontal ? .horizontal : .vertical)
++    }
++
++    var value: DragGesture.Value {
++        let last = recent.last!
++        var velocity = CGSize.zero
++        if let first = recent.first, last.time.seconds > first.time.seconds {
++            let interval = last.time.seconds - first.time.seconds
++            velocity = CGSize(
++                width: (last.location.x - first.location.x) / interval,
++                height: (last.location.y - first.location.y) / interval
++            )
++        }
++        return DragGesture.Value(
++            time: Date(timeIntervalSinceNow: last.time.seconds - Time.systemUptime.seconds),
++            location: last.location,
++            startLocation: start!,
++            velocity: velocity
++        )
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/List/List.swift b/Sources/OpenSwiftUI/View/List/List.swift
+index 74f449f..3a72206 100644
+--- a/Sources/OpenSwiftUI/View/List/List.swift
++++ b/Sources/OpenSwiftUI/View/List/List.swift
+@@ -6,7 +6,7 @@
+ 
+ public import OpenSwiftUICore
+ 
+-// Iris: rows in a plain stack until upstream has List: no scrolling, separators,
++// Iris: rows in a plain stack in a scroll view until upstream has List: no separators,
+ // selection or list styles yet.
+ public struct List<SelectionValue, Content>: View where SelectionValue: Hashable, Content: View {
+     private var content: Content
+@@ -24,13 +24,14 @@ public struct List<SelectionValue, Content>: View where SelectionValue: Hashable
+ 
+ private struct ListRows: _VariadicView_UnaryViewRoot {
+     func body(children: _VariadicView.Children) -> some View {
+-        VStack(alignment: .leading, spacing: 0) {
+-            ForEach(children) { row in
+-                row
+-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+-                    .padding(.horizontal, 16)
++        ScrollView {
++            VStack(alignment: .leading, spacing: 0) {
++                ForEach(children) { row in
++                    row
++                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++                        .padding(.horizontal, 16)
++                }
+             }
+         }
+-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+     }
+ }
+diff --git a/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift b/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+new file mode 100644
+index 0000000..bb157d3
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+@@ -0,0 +1,224 @@
++//
++//  ScrollView.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++import OpenAttributeGraphShims
++
++// MARK: - ScrollView
++
++/// A scrollable view.
++///
++/// Iris: made of SwiftUI parts until upstream has one. The content is laid out at its ideal size
++/// along the scrolling axes and moved by a drag. Like UIScrollView, it keeps moving after a
++/// fling, stretches past its edges and springs back, and taps reach the content unless the touch
++/// moved far enough to scroll. No indicators, paging, scroll targets or zooming yet; a touch
++/// during a fling does not stop it where it shows.
++@available(OpenSwiftUI_v1_0, *)
++public struct ScrollView<Content>: View where Content: View {
++    /// The scroll view's content.
++    public var content: Content
++
++    /// The scrollable axes of the scroll view.
++    public var axes: Axis.Set
++
++    /// A value that indicates whether the scroll view displays the scrollable component of the
++    /// content offset, in a way that's suitable for the platform.
++    public var showsIndicators: Bool
++
++    // A reference: gesture callbacks run several times between updates, and @State reads in
++    // them return the value of the last update.
++    @State private var scroll = ScrollState()
++
++    /// Creates a new instance that's scrollable in the direction of the given axis and can
++    /// show indicators while scrolling.
++    public init(_ axes: Axis.Set = .vertical, showsIndicators: Bool = true, @ViewBuilder content: () -> Content) {
++        self.axes = axes
++        self.showsIndicators = showsIndicators
++        self.content = content()
++    }
++
++    public var body: some View {
++        GeometryReader { viewport in
++            content
++                .fixedSize(horizontal: axes.contains(.horizontal), vertical: axes.contains(.vertical))
++                // The content's own size: a frame would cap it at the size the view offers.
++                .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
++                    scroll.contentSize = size
++                    // Content that shrank pulls the offset back within it.
++                    let offset = clamped(scroll.offset, viewport: viewport.size)
++                    if scroll.dragStart == nil, offset != scroll.offset {
++                        scroll.offset = offset
++                    }
++                }
++                .frame(minWidth: viewport.size.width, minHeight: viewport.size.height, alignment: contentAlignment)
++                .offset(x: -scroll.offset.x, y: -scroll.offset.y)
++                .frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
++                .clipped()
++                .modifier(HitTestClip())
++                // Drags anywhere in the view scroll it, not only on the content.
++                .contentShape(Rectangle())
++                .highPriorityGesture(scrollGesture(viewport: viewport.size))
++        }
++    }
++
++    /// Content shorter than the view sits at its top, narrower content in its middle, as in
++    /// SwiftUI.
++    private var contentAlignment: Alignment {
++        switch (axes.contains(.horizontal), axes.contains(.vertical)) {
++        case (true, true): .topLeading
++        case (true, false): .leading
++        default: .top
++        }
++    }
++
++    private func scrollGesture(viewport: CGSize) -> some Gesture {
++        DragGesture(scrolling: axes)
++            .onChanged { drag in
++                let start = scroll.dragStart ?? scroll.offset
++                scroll.dragStart = start
++                let wanted = CGPoint(x: start.x - drag.translation.width, y: start.y - drag.translation.height)
++                scroll.offset = stretched(wanted, viewport: viewport)
++            }
++            .onEnded { drag in
++                scroll.dragStart = nil
++                let offset = scroll.offset
++                let isPastEdge = offset != clamped(offset, viewport: viewport)
++                // Where a fling decelerates to, within the content.
++                let target = clamped(
++                    CGPoint(
++                        x: offset.x - (drag.predictedEndLocation.x - drag.location.x),
++                        y: offset.y - (drag.predictedEndLocation.y - drag.location.y)
++                    ),
++                    viewport: viewport
++                )
++                guard target != offset else {
++                    return
++                }
++                let speed = max(abs(drag.velocity.width), abs(drag.velocity.height))
++                withAnimation(isPastEdge ? .spring(duration: 0.4, bounce: 0) : .easeOut(duration: min(max(speed / 2000, 0.3), 1.2))) {
++                    scroll.offset = target
++                }
++            }
++    }
++
++    private func maximumOffset(viewport: CGSize) -> CGPoint {
++        let content = scroll.contentSize
++        return CGPoint(
++            x: axes.contains(.horizontal) ? max(content.width - viewport.width, 0) : 0,
++            y: axes.contains(.vertical) ? max(content.height - viewport.height, 0) : 0
++        )
++    }
++
++    private func clamped(_ point: CGPoint, viewport: CGSize) -> CGPoint {
++        let limit = maximumOffset(viewport: viewport)
++        return CGPoint(x: min(max(point.x, 0), limit.x), y: min(max(point.y, 0), limit.y))
++    }
++
++    /// Past an edge, content follows the finger less and less, as UIScrollView's does.
++    private func stretched(_ point: CGPoint, viewport: CGSize) -> CGPoint {
++        let edge = clamped(point, viewport: viewport)
++        func stretch(_ overshoot: CGFloat, _ dimension: CGFloat) -> CGFloat {
++            guard dimension > 0 else { return 0 }
++            let sign: CGFloat = overshoot < 0 ? -1 : 1
++            return sign * (1 - 1 / (abs(overshoot) * 0.55 / dimension + 1)) * dimension
++        }
++        return CGPoint(
++            x: axes.contains(.horizontal) ? edge.x + stretch(point.x - edge.x, viewport.width) : 0,
++            y: axes.contains(.vertical) ? edge.y + stretch(point.y - edge.y, viewport.height) : 0
++        )
++    }
++}
++
++@available(*, unavailable)
++extension ScrollView: Sendable {}
++
++/// Iris: where a scroll view is. Views observe the offset; the rest only gestures read.
++private final class ScrollState: Observable {
++    private let registrar = ObservationRegistrar()
++    private var _offset = CGPoint.zero
++
++    /// How far the content is scrolled: the point of it at the top-left corner of the view.
++    var offset: CGPoint {
++        get {
++            registrar.access(self, keyPath: \.offset)
++            return _offset
++        }
++        set {
++            guard newValue != _offset else { return }
++            registrar.withMutation(of: self, keyPath: \.offset) { _offset = newValue }
++        }
++    }
++
++    /// The offset when the current drag began.
++    var dragStart: CGPoint?
++    var contentSize = CGSize.zero
++}
++
++// MARK: - HitTestClip
++
++/// Iris: hides the content outside the view from touches too, as the bounds of a UIScrollView
++/// do; `clipped()` only stops drawing it.
++private struct HitTestClip: MultiViewModifier, PrimitiveViewModifier {
++    nonisolated static func _makeView(
++        modifier: _GraphValue<Self>,
++        inputs: _ViewInputs,
++        body: @escaping (_Graph, _ViewInputs) -> _ViewOutputs
++    ) -> _ViewOutputs {
++        var outputs = body(_Graph(), inputs)
++        guard inputs.preferences.requiresViewResponders else {
++            return outputs
++        }
++        outputs.preferences.viewResponders = Attribute(HitTestClipFilter(
++            position: inputs.animatedPosition(),
++            size: inputs.animatedSize(),
++            transform: inputs.transform,
++            children: outputs.viewResponders(),
++            responder: HitTestClipResponder(inputs: inputs)
++        ))
++        return outputs
++    }
++}
++
++private final class HitTestClipResponder: DefaultLayoutViewResponder {
++    var helper = ContentResponderHelper<TrivialContentResponder>()
++
++    override func containsGlobalPoints(
++        _ points: [PlatformPoint],
++        cacheKey: UInt32?,
++        options: ContainsPointsOptions
++    ) -> ContainsPointsResult {
++        var result = super.containsGlobalPoints(points, cacheKey: cacheKey, options: options)
++        let inside = helper.containsGlobalPoints(points, cacheKey: cacheKey, options: options, children: [])
++        result.mask.formIntersection(inside.mask)
++        return result
++    }
++}
++
++private struct HitTestClipFilter: StatefulRule {
++    @Attribute var position: CGPoint
++    @Attribute var size: ViewSize
++    @Attribute var transform: ViewTransform
++    @Attribute var children: [ViewResponder]
++    let responder: HitTestClipResponder
++
++    typealias Value = [ViewResponder]
++
++    mutating func updateValue() {
++        responder.helper.update(
++            data: (TrivialContentResponder(), false),
++            size: $size.changedValue(),
++            position: $position.changedValue(),
++            transform: $transform.changedValue(),
++            parent: responder
++        )
++        responder.updateChildren($children.changedValue())
++        if !hasValue {
++            value = [responder]
++        }
++    }
++}
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index 393c6cc..44a73c5 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -177,8 +177,22 @@ extension IrisRender.Scene {
+                 transform.a, transform.b, transform.c, transform.d,
+                 translation.x - center.x, translation.y - center.y,
+             ].map { Float($0) }
++        case let .clip(path, _, _):
++            // ponytail: rectangles and rounded rectangles clip; other paths, masks, filters and
++            // other transforms draw their content as is.
++            guard let shape = path.irisRoundedRect else {
++                add(list, to: parent, at: frame.origin)
++                return
++            }
++            let clip = shape.rect.offsetBy(dx: frame.minX, dy: frame.minY)
++            group = Layer(in: self)
++            group.frame = Rect(clip)
++            group.masksToBounds = true
++            group.cornerRadius = Float(min(shape.cornerSize.width, shape.cornerSize.height))
++            parent.addSublayer(group)
++            add(list, to: group, at: CGPoint(x: frame.minX - clip.minX, y: frame.minY - clip.minY))
++            return
+         default:
+-            // ponytail: clips, masks, filters and other transforms draw their content as is.
+             add(list, to: parent, at: frame.origin)
+             return
+         }

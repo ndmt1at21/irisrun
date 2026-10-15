@@ -64,6 +64,40 @@ public final class Scene {
         )
     }
 
+    /// Where the caret goes before the character at `index` of text that lays out as `measure`
+    /// lays it out, or after the last character when `index` is `text.endIndex`.
+    public func caret(in text: String, style: TextStyle, maxWidth: Float = .infinity, at index: String.Index) -> Caret {
+        caret(in: text, runs: [style.run(for: text)], paragraph: style.paragraph, maxWidth: maxWidth, at: index)
+    }
+
+    public func caret(
+        in text: String, runs: [TextRun], paragraph: ParagraphStyle = ParagraphStyle(), maxWidth: Float = .infinity,
+        at index: String.Index
+    ) -> Caret {
+        var caret = IrisCaret()
+        var paragraph = paragraph.raw
+        let runs = runs.map(\.raw)
+        let offset = text.utf8.distance(from: text.startIndex, to: index)
+        iris_scene_text_caret(raw, text, runs, runs.count, &paragraph, maxWidth, offset, &caret)
+        return Caret(x: caret.x, y: caret.y, height: caret.height)
+    }
+
+    /// The character boundary nearest to a point in text that lays out as `measure` lays it
+    /// out, for placing the caret where the text is touched.
+    public func index(in text: String, style: TextStyle, maxWidth: Float = .infinity, x: Float, y: Float) -> String.Index {
+        index(in: text, runs: [style.run(for: text)], paragraph: style.paragraph, maxWidth: maxWidth, x: x, y: y)
+    }
+
+    public func index(
+        in text: String, runs: [TextRun], paragraph: ParagraphStyle = ParagraphStyle(), maxWidth: Float = .infinity,
+        x: Float, y: Float
+    ) -> String.Index {
+        var paragraph = paragraph.raw
+        let runs = runs.map(\.raw)
+        let offset = iris_scene_text_offset_at(raw, text, runs, runs.count, &paragraph, maxWidth, x, y)
+        return text.utf8.index(text.startIndex, offsetBy: min(offset, text.utf8.count))
+    }
+
     /// The clock animations run on, in seconds. Move it with real time, or
     /// with a virtual clock in tests.
     public var time: Double = 0 {
@@ -266,6 +300,13 @@ public struct TextMetrics: Equatable, Sendable {
     public var lineCount: Int
     /// `maxLines` cut lines off.
     public var isTruncated: Bool
+}
+
+/// A caret as tall as the glyphs of its line, in points from the top-left of the text.
+public struct Caret: Equatable, Sendable {
+    public var x: Float
+    public var y: Float
+    public var height: Float
 }
 
 /// In points; the ascender is positive and the descender negative, as in `UIFont`.
@@ -581,6 +622,14 @@ public final class Layer {
     @discardableResult
     public func setImage(_ data: [UInt8], scale: Float = 1) -> Bool {
         data.withUnsafeBufferPointer { iris_layer_set_image(raw, id, $0.baseAddress, $0.count, scale) }
+    }
+
+    /// The pixel size of a PNG, JPEG, WebP, GIF or BMP image, read from its header.
+    public static func imageSize(_ data: [UInt8]) -> (width: Int, height: Int)? {
+        var width: Int32 = 0
+        var height: Int32 = 0
+        let ok = data.withUnsafeBufferPointer { iris_image_size($0.baseAddress, $0.count, &width, &height) }
+        return ok ? (Int(width), Int(height)) : nil
     }
 
     /// RGBA pixels, 8 bits a channel, rows `rowBytes` apart.

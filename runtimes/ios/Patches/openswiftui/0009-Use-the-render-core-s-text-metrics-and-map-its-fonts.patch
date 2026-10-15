@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 10:02:11 +0700
-Subject: [PATCH 9/9] Use the render core's text metrics and map its fonts
+Subject: [PATCH 09/22] Use the render core's text metrics and map its fonts
 
 Text sizes, first and last baselines, line counts and truncation now come
 from the render core's measurement, the one it draws with, instead of

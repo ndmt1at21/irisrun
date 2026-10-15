@@ -3,6 +3,7 @@
 
 pub mod android;
 pub mod device;
+pub mod ios;
 pub mod toolchain;
 
 use std::path::PathBuf;

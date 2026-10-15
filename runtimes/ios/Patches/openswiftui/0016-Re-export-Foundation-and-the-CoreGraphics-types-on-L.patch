@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 16:28:49 +0700
+Subject: [PATCH 16/22] Re-export Foundation and the CoreGraphics types on
+ Linux
+
+On Apple platforms import SwiftUI brings CoreGraphics and Foundation along, so
+apps use CGPoint, Date or UUID without importing anything else. On Linux they
+come from Foundation and OpenCoreGraphicsShims.
+---
+ Sources/OpenSwiftUI/Export.swift | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/Sources/OpenSwiftUI/Export.swift b/Sources/OpenSwiftUI/Export.swift
+index f92633a..c0e4bd1 100644
+--- a/Sources/OpenSwiftUI/Export.swift
++++ b/Sources/OpenSwiftUI/Export.swift
+@@ -18,6 +18,11 @@ package typealias UniqueID = OpenSwiftUICore.UniqueID
+ 
+ #if canImport(CoreGraphics)
+ @_exported import CoreGraphics
++#else
++// Iris: `import SwiftUI` brings Foundation and the CoreGraphics types along (CGPoint, Date,
++// UUID…), so apps that import nothing else still compile.
++@_exported public import Foundation
++@_exported public import OpenCoreGraphicsShims
+ #endif
+ 
+ #if canImport(OpenCombine)

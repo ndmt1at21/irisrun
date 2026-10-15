@@ -37,7 +37,7 @@ Mục tiêu: một lệnh chạy được app mẫu và corpus ở local, cùng 
 
 | ID | Task | Track | Cỡ | Phụ thuộc | Xong khi | Trạng thái |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1-01 | CLI `irisrun start` và `doctor`: nhận diện project Android (Gradle) và iOS (Xcode, SwiftPM), chọn tầng chạy theo kết quả Doctor | PLT | M | P0-15 | Chạy được cả 4 app mẫu trong `examples/` bằng một lệnh | Chưa làm |
+| P1-01 | CLI `irisrun start` và `doctor`: nhận diện project Android (Gradle) và iOS (Xcode, SwiftPM), chọn tầng chạy theo kết quả Doctor | PLT | M | P0-15 | Chạy được cả 4 app mẫu trong `examples/` bằng một lệnh | Một phần: `start` chạy project Gradle và project Xcode (làm cùng P1-15) |
 | P1-02 | Bộ tải toolchain bản chính thức: ma trận phiên bản, checksum, tải tiếp khi đứt mạng, proxy công ty, dọn cache | PLT | M | P0-03 | Máy sạch lên app đầu tiên không cần thao tác tay | Chưa làm |
 | P1-03 | Server local (axum): nhúng Device UI, cầu nối WebSocket với runtime qua stdio | PLT | M | P0-02 | Device UI nhận frame từ cả runtime Android lẫn iOS | Chưa làm |
 | P1-04 | Hot reload: theo dõi file → build incremental → khởi động lại runtime | PLT | M | P1-03 | Sửa code là thấy kết quả, không cần chạy lại lệnh; có số đo | Chưa làm |
@@ -49,9 +49,9 @@ Mục tiêu: một lệnh chạy được app mẫu và corpus ở local, cùng 
 | P1-10 | ActivityManager giả: back stack, `startActivityForResult`, router intent ngầm (mở URL, chia sẻ, camera) | AND | M | P1-08 | Luồng nhiều màn hình và kết quả trả về hoạt động | Chưa làm |
 | P1-11 | Adapter Android: lưu trữ (giữ dữ liệu, AndroidKeyStore giả), camera intent, Play Billing, quyền, vị trí, push, sinh trắc | AND | L | P1-10, P1-29 | Mỗi adapter có app mẫu chạy qua | Chưa làm |
 | P1-12 | Pipeline build iOS: đọc `.pbxproj` (target, file, resource, gói SPM), sinh SwiftPM, bỏ `#Preview`, `-module-alias`, Assets.xcassets, `.xcstrings` | IOS | L | P0-05 | App mẫu SwiftUI và UIKit build được, không sửa code | Xong phần pipeline; app mẫu SwiftUI build qua `.xcodeproj`; app mẫu UIKit chờ P1-16, P1-33 |
-| P1-13 | Fork OpenSwiftUI: nối backend Linux với render core; làm các API SwiftUI dùng nhiều nhất theo bảng xếp hạng corpus | IOS | XL | P0-06, P0-08 | Đạt mục tiêu cổng 1 về tỉ lệ corpus chạy được | Chưa làm |
+| P1-13 | Fork OpenSwiftUI: nối backend Linux với render core; làm các API SwiftUI dùng nhiều nhất theo bảng xếp hạng corpus | IOS | XL | P0-06, P0-08 | Đạt mục tiêu cổng 1 về tỉ lệ corpus chạy được | Đang làm: host IrisProtocol, ScrollView, TextField (ở P1-15); đợt 1 xong: path, nét viền, clip, chữ nhiều kiểu, gradient, bóng đổ, ảnh asset catalog ([báo cáo](reports/p1-13-openswiftui.md)) |
 | P1-14 | Render core v1: chữ bằng SkParagraph với font dự phòng (Việt, CJK), ảnh, clip, bóng, animation cơ bản, hit-test | IOS | L | P0-06 | Ảnh so với simulator thật đạt ngưỡng chốt ở cổng 0 | Xong phần code; còn so ảnh với simulator (chưa có ảnh tham chiếu, ngưỡng chờ cổng 0) |
-| P1-15 | Input iOS: chạm thành gesture (tap, kéo, cuộn); nhập chữ cho TextField và TextEditor qua IME | IOS | M | P1-14 | Form đăng nhập mẫu dùng được với bàn phím tiếng Việt | Chưa làm |
+| P1-15 | Input iOS: chạm thành gesture (tap, kéo, cuộn); nhập chữ cho TextField và TextEditor qua IME | IOS | M | P1-14 | Form đăng nhập mẫu dùng được với bàn phím tiếng Việt | Xong: thử trong Device UI bằng sự kiện IME của Chromium; chưa thử bộ gõ thật của hệ điều hành |
 | P1-16 | UIKit cơ bản: UIView, UIViewController, UINavigationController, UILabel, UIButton, UIImageView, UIStackView, UIScrollView, UITableView, Auto Layout (Cassowary), UIViewRepresentable, nạp storyboard/XIB | IOS | XL | P1-14 | App UIKit mẫu chạy được | Chưa làm |
 | P1-17 | Framework iOS đợt 1: Combine, StoreKit 2 (đọc `.storekit`), PhotosPicker, UserDefaults/@AppStorage/FileManager, Keychain, CoreLocation, UserNotifications, LocalAuthentication | IOS | L | P1-13, P1-29 | Mỗi framework có app mẫu chạy qua adapter | Chưa làm |
 | P1-18 | Sinh stub API ("compile mọi app") và báo API thiếu khi chạy | IOS | L | P0-13, P1-12 | Corpus compile được; Device UI liệt kê API thiếu | Chưa làm |

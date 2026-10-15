@@ -6,6 +6,7 @@ final class Book: Identifiable {
     let id = UUID()
     var title: String
     var isFavorite = false
+    var notes = ""
 
     init(title: String) {
         self.title = title

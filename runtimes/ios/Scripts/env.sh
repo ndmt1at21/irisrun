@@ -11,6 +11,9 @@ export OPENSWIFTUI_RENDER_GTK=0
 # The Swift package of Iris's render core, which OpenSwiftUI measures and draws text with on Linux.
 OPENSWIFTUI_IRIS_RENDER_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../crates/render/swift" && pwd)"
 export OPENSWIFTUI_IRIS_RENDER_PATH
+# This package, for the Device Protocol (IrisProtocol) that apps speak on stdio for irisrun.
+OPENSWIFTUI_IRIS_RUNTIME_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export OPENSWIFTUI_IRIS_RUNTIME_PATH
 # Toolchain headers (CoreFoundation, SwiftShims) for the C targets.
 if [ -z "${OPENSWIFTUI_LIB_SWIFT_PATH:-}" ] && command -v swift > /dev/null; then
     OPENSWIFTUI_LIB_SWIFT_PATH="$(dirname "$(dirname "$(readlink -f "$(command -v swift)")")")/lib/swift"

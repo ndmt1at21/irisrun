@@ -71,6 +71,12 @@ typedef struct {
   bool truncated;  // max_lines cut lines off
 } IrisTextMetrics;
 
+// A caret as tall as the glyphs of its line, in points from the top-left of
+// the text.
+typedef struct {
+  float x, y, height;
+} IrisCaret;
+
 // In points, signed as in UIFont: the ascender is positive, the descender
 // negative.
 typedef struct {
@@ -203,6 +209,20 @@ bool iris_scene_measure_text(const IrisScene *scene, const char *utf8, const Iri
                              size_t run_count, const IrisParagraphStyle *paragraph,
                              float max_width, IrisTextMetrics *metrics);
 
+// Where the caret goes before the byte `offset` of text laid out as
+// iris_scene_measure_text lays it out (or after the last character): on the
+// line of that character, which at a soft line break is the next line. An
+// offset inside a character goes back to its start.
+bool iris_scene_text_caret(const IrisScene *scene, const char *utf8, const IrisTextRun *runs,
+                           size_t run_count, const IrisParagraphStyle *paragraph,
+                           float max_width, size_t offset, IrisCaret *caret);
+// The byte offset of the character boundary nearest to a point in that text,
+// for placing the caret where the text is touched.
+size_t iris_scene_text_offset_at(const IrisScene *scene, const char *utf8,
+                                 const IrisTextRun *runs, size_t run_count,
+                                 const IrisParagraphStyle *paragraph, float max_width, float x,
+                                 float y);
+
 // The scene's clock in seconds, which animations run on. Callers move it,
 // with real time or a virtual clock.
 void iris_scene_set_time(IrisScene *scene, double seconds);
@@ -274,6 +294,8 @@ bool iris_layer_set_text(IrisScene *scene, IrisLayer layer, const char *utf8, co
 // A PNG, JPEG, WebP, GIF or BMP with scale pixels per point; false if it
 // cannot be decoded.
 bool iris_layer_set_image(IrisScene *scene, IrisLayer layer, const uint8_t *data, size_t len, float scale);
+// The pixel size of an encoded image, read from its header; false if it is not one.
+bool iris_image_size(const uint8_t *data, size_t len, int32_t *width, int32_t *height);
 // RGBA pixels, 8 bits a channel, rows row_bytes apart.
 bool iris_layer_set_image_pixels(IrisScene *scene, IrisLayer layer, int32_t width, int32_t height,
                                  const uint8_t *rgba, size_t row_bytes, bool premultiplied, float scale);

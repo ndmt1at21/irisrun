@@ -1,0 +1,1379 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 12:43:00 +0700
+Subject: [PATCH 12/22] Add TextField, SecureField and TextEditor for Linux
+
+Without UIKit, text controls are drawn by SwiftUI itself: the text or its
+placeholder, the input method's marked text underlined, and a caret where the
+render core lays it out. Edits count UTF-16 code units, as input methods and
+the Device Protocol do: committing text, setting the marked text, deleting
+around the caret, and the keys Backspace, Delete, arrows, Home, End and
+Return. Return in a single-line field ends editing and runs onSubmit; in a
+TextEditor it starts a line. A tap focuses a field and puts the caret at the
+nearest character boundary; a single-line field scrolls sideways to keep the
+caret in view.
+
+On Linux FocusState keeps its value in an observable reference, and
+focused(_:equals:) hands text fields a target to keep in step with, since
+upstream's focus system relies on UIKit and AppKit responders. onSubmit,
+textFieldStyle (plain and rounded border), submitLabel,
+textInputAutocapitalization, autocorrectionDisabled, keyboardType and
+textContentType are there for forms to compile; the hints are ignored.
+NavigationLink takes a title.
+
+The stdout app takes the input as commands, with DeviceInput delivering it as
+UIKit would: drag, fling, compose, type, delete and key besides tap. The host
+also renders again for changes made while it renders, such as by onAppear.
+---
+ .../App/App/Stdout/DeviceInput.swift          | 102 ++++
+ .../App/App/Stdout/StdoutApp.swift            |  74 +++
+ .../Focus/EvaluateDefaultFocusAction.swift    |   8 +-
+ .../OpenSwiftUI/Event/Focus/FocusState.swift  | 117 +++++
+ .../View/Navigation/NavigationStack.swift     |  11 +
+ .../View/TextField/TextEditing.swift          | 222 +++++++++
+ .../View/TextField/TextField.swift            | 449 ++++++++++++++++++
+ .../View/TextField/TextInputModifiers.swift   | 213 +++++++++
+ .../DisplayListLayerRenderer.swift            |   2 +-
+ .../DisplayList/StdoutRendererHost.swift      |   6 +
+ 10 files changed, 1202 insertions(+), 2 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/App/App/Stdout/DeviceInput.swift
+ create mode 100644 Sources/OpenSwiftUI/View/TextField/TextEditing.swift
+ create mode 100644 Sources/OpenSwiftUI/View/TextField/TextField.swift
+ create mode 100644 Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift
+
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/DeviceInput.swift b/Sources/OpenSwiftUI/App/App/Stdout/DeviceInput.swift
+new file mode 100644
+index 0000000..5742f46
+--- /dev/null
++++ b/Sources/OpenSwiftUI/App/App/Stdout/DeviceInput.swift
+@@ -0,0 +1,102 @@
++//
++//  DeviceInput.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++import OpenSwiftUICore
++
++/// Iris: delivers a phone's input to the app as UIKit would: touches go through the gesture
++/// system, and typed text and editing keys go to the text field that has the keyboard. Used on
++/// the main thread.
++final class DeviceInput {
++    enum Phase {
++        case began, moved, stationary, ended, cancelled
++    }
++
++    struct Touch {
++        var id: UInt32
++        var phase: Phase
++        /// In points from the top-left corner of the screen.
++        var location: CGPoint
++    }
++
++    private let manager: EventBindingManager
++    /// The event serial of each finger on the screen, by the host's touch id.
++    private var fingers: [UInt32: Int] = [:]
++    private var serial = 0
++
++    init(manager: EventBindingManager) {
++        self.manager = manager
++    }
++
++    /// Every touch on the screen after a change, as the Device Protocol sends them.
++    func touch(_ touches: [Touch], at time: Time = .systemUptime) {
++        var events: [EventID: any EventType] = [:]
++        for touch in touches {
++            let phase: EventPhase
++            switch touch.phase {
++            case .began:
++                serial += 1
++                fingers[touch.id] = serial
++                phase = .began
++            case .moved, .stationary:
++                phase = .active
++            case .ended:
++                phase = .ended
++            case .cancelled:
++                phase = .failed
++            }
++            // Touches that began before the app did are not the app's.
++            guard let serial = fingers[touch.id] else { continue }
++            if phase.isTerminal {
++                fingers[touch.id] = nil
++            }
++            events[EventID(type: TouchEvent.self, serial: serial)] = TouchEvent(
++                timestamp: time,
++                phase: phase,
++                location: touch.location,
++                globalLocation: touch.location,
++                radius: 1,
++                force: 0,
++                maximumPossibleForce: 0,
++                modifiers: [],
++                altitude: .zero,
++                azimuth: .zero,
++                touchType: .direct
++            )
++        }
++        guard !events.isEmpty else { return }
++        manager.send(events)
++        // Once every finger has lifted, the next touch starts from a fresh gesture graph, as
++        // EventBindingBridge does for UIKit and AppKit hosts.
++        if fingers.isEmpty {
++            manager.reset()
++        }
++    }
++
++    /// Text from the input method: inserted at the caret in place of the marked text.
++    func commit(_ text: String) {
++        TextInputFocus.shared.session?.edit { $0.commit(text) }
++    }
++
++    /// The text the input method is composing, shown at the caret until it commits.
++    func compose(_ text: String) {
++        TextInputFocus.shared.session?.edit { $0.compose(text) }
++    }
++
++    /// Deletes UTF-16 code units around the caret, as an input method's correction does.
++    func deleteSurrounding(before: Int, after: Int) {
++        TextInputFocus.shared.session?.edit { $0.deleteSurrounding(before: before, after: after) }
++    }
++
++    /// A key pressed on a hardware keyboard, by W3C `KeyboardEvent.code`; `command` is the
++    /// Command key of a Mac keyboard on iPad.
++    func press(_ code: String, command: Bool = false) {
++        _ = TextInputFocus.shared.session?.press(code, command: command)
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index e9619e0..6cd1477 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -58,6 +58,7 @@ func runStdoutApp(
+             options: options
+         )
+         #if !canImport(Darwin)
++        let input = DeviceInput(manager: host.eventBindingManager)
+         var frame = 0
+         if frames != nil {
+             // The default renderer, which is the render core on Linux.
+@@ -69,7 +70,11 @@ func runStdoutApp(
+         return { command in
+             let start = ContinuousClock.now
+             if let command {
++                #if canImport(Darwin)
+                 run(command, in: host)
++                #else
++                run(command, in: host, input: input)
++                #endif
+             } else {
+                 host.renderOnce()
+             }
+@@ -103,6 +108,7 @@ func runStdoutApp(
+ 
+ // MARK: - Commands
+ 
++#if canImport(Darwin)
+ private var touchSerial = 0
+ 
+ /// `tap <x> <y>` touches a point of the surface; `tap <text>` touches the middle of the
+@@ -145,6 +151,74 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+     host.eventBindingManager.reset()
+     host.render(targetTimestamp: nil)
+ }
++#else
++/// Iris: one command of a script, as a phone's input. Points are in points from the top-left
++/// corner of the screen.
++///
++///     tap <text>                  touches the middle of the first text that reads <text>
++///     tap <x> <y>                 touches a point
++///     drag <x1> <y1> <x2> <y2>    moves a finger between two points and holds it before lifting
++///     fling <x1> <y1> <x2> <y2>   the same, lifting while moving, so scrolling keeps going
++///     type <text>                 commits text from the input method at the caret
++///     compose [<text>]            sets the input method's marked text; no text clears it
++///     delete <before> <after>     deletes UTF-16 code units around the caret
++///     key <code>                  presses a key by KeyboardEvent.code: Backspace, Enter, ArrowLeft…
++private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Content>, input: DeviceInput) {
++    let parts = command.split(separator: " ", maxSplits: 1)
++    let name = parts[0]
++    let argument = parts.count > 1 ? String(parts[1]) : ""
++    let numbers = argument.split(separator: " ").compactMap { Double($0) }
++    switch name {
++    case "tap":
++        let point: CGPoint
++        if numbers.count == 2 {
++            point = CGPoint(x: numbers[0], y: numbers[1])
++        } else if let frame = Update.ensure({ host.viewGraph.displayList().0 }).stdoutFrame(ofText: argument) {
++            point = CGPoint(x: frame.midX, y: frame.midY)
++        } else {
++            print("no text \"\(argument)\" on screen")
++            return
++        }
++        input.touch([.init(id: 0, phase: .began, location: point)])
++        input.touch([.init(id: 0, phase: .ended, location: point)])
++    case "drag", "fling":
++        guard numbers.count == 4 else {
++            print("usage: \(name) <x1> <y1> <x2> <y2>")
++            return
++        }
++        let from = CGPoint(x: numbers[0], y: numbers[1])
++        let to = CGPoint(x: numbers[2], y: numbers[3])
++        // Ten moves a frame apart, on a clock of its own so that velocities do not depend on
++        // how fast this machine runs.
++        var time = Time.systemUptime
++        input.touch([.init(id: 0, phase: .began, location: from)], at: time)
++        for step in 1 ... 10 {
++            time += 1.0 / 60
++            let progress = Double(step) / 10
++            let point = CGPoint(x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress)
++            input.touch([.init(id: 0, phase: .moved, location: point)], at: time)
++        }
++        if name == "drag" {
++            time += 0.25
++            input.touch([.init(id: 0, phase: .stationary, location: to)], at: time)
++        }
++        time += 1.0 / 60
++        input.touch([.init(id: 0, phase: .ended, location: to)], at: time)
++    case "type":
++        input.commit(argument)
++    case "compose":
++        input.compose(argument)
++    case "delete" where numbers.count == 2:
++        input.deleteSurrounding(before: Int(numbers[0]), after: Int(numbers[1]))
++    case "key" where !argument.isEmpty:
++        input.press(argument)
++    default:
++        print("unknown command: \(command)")
++        return
++    }
++    host.render(targetTimestamp: nil)
++}
++#endif
+ 
+ // MARK: - Frames
+ 
+diff --git a/Sources/OpenSwiftUI/Event/Focus/EvaluateDefaultFocusAction.swift b/Sources/OpenSwiftUI/Event/Focus/EvaluateDefaultFocusAction.swift
+index 19b78e6..23ce07f 100644
+--- a/Sources/OpenSwiftUI/Event/Focus/EvaluateDefaultFocusAction.swift
++++ b/Sources/OpenSwiftUI/Event/Focus/EvaluateDefaultFocusAction.swift
+@@ -43,7 +43,13 @@ struct DefaultFocusStateModifier<A>: ViewModifier where A: Hashable {
+         content.environment(\.evaluateDefaultFocus, EvaluateDefaultFocusAction(
+             namespace: namespace,
+             priority: priority,
+-            onEvaluate: { binding.location.findEntry(with: value)?.responder }
++            onEvaluate: {
++                #if canImport(Darwin)
++                binding.location.findEntry(with: value)?.responder
++                #else
++                nil // Iris: no focus responders on Linux.
++                #endif
++            }
+         ))
+     }
+ }
+diff --git a/Sources/OpenSwiftUI/Event/Focus/FocusState.swift b/Sources/OpenSwiftUI/Event/Focus/FocusState.swift
+index e76967f..4060420 100644
+--- a/Sources/OpenSwiftUI/Event/Focus/FocusState.swift
++++ b/Sources/OpenSwiftUI/Event/Focus/FocusState.swift
+@@ -11,6 +11,7 @@ import OpenAttributeGraphShims
+ @_spi(ForOpenSwiftUIOnly)
+ public import OpenSwiftUICore
+ 
++#if canImport(Darwin)
+ // MARK: - FocusState
+ 
+ /// A property wrapper type that can read and write a value that OpenSwiftUI updates
+@@ -296,12 +297,104 @@ public struct FocusState<Value>: DynamicProperty where Value: Hashable {
+     }
+ }
+ 
++#else
++
++// Iris: on Linux, focus is a value the view keeps, like @State. `focused(_:equals:)` hands the
++// text fields under it a target to keep in step with: setting the value focuses the matching
++// field, and a field that gains or loses the keyboard sets the value.
++@available(OpenSwiftUI_v3_0, *)
++@propertyWrapper
++public struct FocusState<Value>: DynamicProperty where Value: Hashable {
++    @propertyWrapper
++    public struct Binding {
++        let box: FocusBox<Value>
++
++        public var wrappedValue: Value {
++            get { box.value }
++            nonmutating set { box.value = newValue }
++        }
++
++        public var projectedValue: FocusState<Value>.Binding {
++            self
++        }
++
++        var propertyID: ObjectIdentifier {
++            ObjectIdentifier(box)
++        }
++    }
++
++    // A reference, not the value: actions that run during an update read a Binding's value as
++    // it was when the view drew, and focus changes there, as when Return moves to the next field.
++    @State private var box: FocusBox<Value>
++
++    public var wrappedValue: Value {
++        get { box.value }
++        nonmutating set { box.value = newValue }
++    }
++
++    public var projectedValue: FocusState<Value>.Binding {
++        Binding(box: box)
++    }
++
++    public init() where Value == Bool {
++        _box = State(initialValue: FocusBox(false))
++    }
++
++    public init<T>() where Value == T?, T: Hashable {
++        _box = State(initialValue: FocusBox(nil))
++    }
++}
++
++/// Iris: the value of a `FocusState`, which views observe.
++final class FocusBox<Value>: Observable where Value: Hashable {
++    private let registrar = ObservationRegistrar()
++    private var _value: Value
++    /// The value when nothing in the scope has focus.
++    let resetValue: Value
++
++    init(_ resetValue: Value) {
++        _value = resetValue
++        self.resetValue = resetValue
++    }
++
++    var value: Value {
++        get {
++            registrar.access(self, keyPath: \.value)
++            return _value
++        }
++        set {
++            guard newValue != _value else { return }
++            registrar.withMutation(of: self, keyPath: \.value) { _value = newValue }
++        }
++    }
++}
++
++/// Iris: what `focused(_:equals:)` tells the text fields under it.
++struct IrisFocusTarget {
++    var isFocused: Bool
++    var focus: () -> Void
++    var blur: () -> Void
++}
++
++extension EnvironmentValues {
++    var irisFocusTarget: IrisFocusTarget? {
++        get { self[IrisFocusTargetKey.self] }
++        set { self[IrisFocusTargetKey.self] = newValue }
++    }
++}
++
++private struct IrisFocusTargetKey: EnvironmentKey {
++    static var defaultValue: IrisFocusTarget? { nil }
++}
++#endif
++
+ @available(*, unavailable)
+ extension FocusState: Sendable {}
+ 
+ @available(*, unavailable)
+ extension FocusState.Binding: Sendable {}
+ 
++#if canImport(Darwin)
+ // MARK: - View + Focus State
+ 
+ @available(OpenSwiftUI_v3_0, *)
+@@ -422,6 +515,30 @@ extension View {
+     }
+ }
+ 
++#else
++@available(OpenSwiftUI_v3_0, *)
++extension View {
++    nonisolated public func focused<Value>(
++        _ binding: FocusState<Value>.Binding,
++        equals value: Value
++    ) -> some View where Value: Hashable {
++        environment(\.irisFocusTarget, IrisFocusTarget(
++            isFocused: binding.wrappedValue == value,
++            focus: { binding.wrappedValue = value },
++            blur: {
++                if binding.wrappedValue == value {
++                    binding.wrappedValue = binding.box.resetValue
++                }
++            }
++        ))
++    }
++
++    nonisolated public func focused(_ condition: FocusState<Bool>.Binding) -> some View {
++        focused(condition, equals: true)
++    }
++}
++#endif
++
+ // MARK: - FocusStateBindingResponder [WIP]
+ 
+ class FocusStateBindingResponder: DefaultLayoutViewResponder, BaseFocusResponder {
+diff --git a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+index 272fcea..22fac47 100644
+--- a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
++++ b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+@@ -64,6 +64,17 @@ public struct NavigationLink<Label, Destination>: View where Label: View, Destin
+     }
+ }
+ 
++extension NavigationLink where Label == Text {
++    public init(_ titleKey: LocalizedStringKey, @ViewBuilder destination: () -> Destination) {
++        self.init(destination: destination) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, @ViewBuilder destination: () -> Destination) where S: StringProtocol {
++        self.init(destination: destination) { Text(title) }
++    }
++}
++
+ extension View {
+     public func navigationTitle(_ title: Text) -> some View {
+         preference(key: NavigationTitleKey.self, value: NavigationTitleStorage(title: title))
+diff --git a/Sources/OpenSwiftUI/View/TextField/TextEditing.swift b/Sources/OpenSwiftUI/View/TextField/TextEditing.swift
+new file mode 100644
+index 0000000..f929f1a
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/TextField/TextEditing.swift
+@@ -0,0 +1,222 @@
++//
++//  TextEditing.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++import OpenSwiftUICore
++
++// MARK: - TextEditingState
++
++/// Iris: text being edited, the caret in it, and the text an input method is composing at the
++/// caret (marked text), which joins the text only when the input method commits it. Offsets
++/// count UTF-16 code units, as input methods and the Device Protocol do.
++struct TextEditingState: Equatable {
++    var text: String
++    /// From 0 to the length of `text`.
++    var cursor: Int
++    var marked = ""
++
++    init(text: String, cursor: Int? = nil) {
++        self.text = text
++        self.cursor = cursor ?? text.utf16.count
++    }
++
++    /// Inserts `string` at the caret in place of the marked text.
++    mutating func commit(_ string: String) {
++        text.insert(contentsOf: string, at: index(cursor))
++        cursor += string.utf16.count
++        marked = ""
++    }
++
++    /// Replaces the marked text; an empty string removes it.
++    mutating func compose(_ string: String) {
++        marked = string
++    }
++
++    /// Deletes code units before and after the caret, outside the marked text. A range that
++    /// ends inside a character takes the whole character.
++    mutating func deleteSurrounding(before: Int, after: Int) {
++        let start = index(cursor - before)
++        var end = index(cursor + after)
++        if end < text.endIndex, offset(end) < cursor + after {
++            end = text.index(after: end)
++        }
++        cursor = offset(start)
++        text.removeSubrange(start ..< end)
++    }
++
++    /// Backspace: deletes the character before the caret.
++    mutating func deleteBackward() {
++        let end = index(cursor)
++        guard end > text.startIndex else { return }
++        let start = text.index(before: end)
++        cursor -= text.utf16.distance(from: start, to: end)
++        text.removeSubrange(start ..< end)
++    }
++
++    /// Delete: deletes the character after the caret.
++    mutating func deleteForward() {
++        let start = index(cursor)
++        guard start < text.endIndex else { return }
++        text.removeSubrange(start ... start)
++    }
++
++    mutating func moveLeft() {
++        let index = index(cursor)
++        guard index > text.startIndex else { return }
++        cursor = offset(text.index(before: index))
++    }
++
++    mutating func moveRight() {
++        let index = index(cursor)
++        guard index < text.endIndex else { return }
++        cursor = offset(text.index(after: index))
++    }
++
++    /// To the start of the line, or of the text with `wholeText`.
++    mutating func moveToStart(wholeText: Bool) {
++        cursor = wholeText ? 0 : offset(lineStart(index(cursor)))
++    }
++
++    mutating func moveToEnd(wholeText: Bool) {
++        cursor = wholeText ? text.utf16.count : offset(lineEnd(index(cursor)))
++    }
++
++    /// To the same character of the line above or below, or the end of a shorter line.
++    mutating func moveLine(by step: Int) {
++        let caret = index(cursor)
++        let start = lineStart(caret)
++        let column = text.distance(from: start, to: caret)
++        let target: String.Index
++        if step < 0 {
++            guard start > text.startIndex else { return moveToStart(wholeText: true) }
++            target = lineStart(text.index(before: start))
++        } else {
++            let end = lineEnd(caret)
++            guard end < text.endIndex else { return moveToEnd(wholeText: true) }
++            target = text.index(after: end)
++        }
++        let length = text.distance(from: target, to: lineEnd(target))
++        cursor = offset(text.index(target, offsetBy: min(column, length)))
++    }
++
++    /// The character boundary at or before a UTF-16 offset.
++    func index(_ offset: Int) -> String.Index {
++        let target = text.utf16.index(text.startIndex, offsetBy: min(max(offset, 0), text.utf16.count))
++        var index = text.startIndex
++        while index < target {
++            let next = text.index(after: index)
++            guard next <= target else { break }
++            index = next
++        }
++        return index
++    }
++
++    private func offset(_ index: String.Index) -> Int {
++        text.utf16.distance(from: text.startIndex, to: index)
++    }
++
++    private func lineStart(_ index: String.Index) -> String.Index {
++        text[..<index].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
++    }
++
++    private func lineEnd(_ index: String.Index) -> String.Index {
++        text[index...].firstIndex(of: "\n") ?? text.endIndex
++    }
++}
++
++// MARK: - TextEditingSession
++
++/// Iris: the editing state of one text field. The text belongs to the field's binding; the
++/// session keeps the caret and the marked text while the field has the keyboard, and the
++/// actions an editing key runs. Used on the main thread.
++final class TextEditingSession: Observable {
++    private let registrar = ObservationRegistrar()
++    private var _state = TextEditingState(text: "")
++
++    var state: TextEditingState {
++        get {
++            registrar.access(self, keyPath: \.state)
++            return _state
++        }
++        set {
++            registrar.withMutation(of: self, keyPath: \.state) { _state = newValue }
++        }
++    }
++
++    // The field updates these whenever it updates.
++    var binding: Binding<String>?
++    var isMultiline = false
++    var submit: () -> Void = {}
++
++    /// The state for the field's current text. Text that changed some other way, such as by
++    /// the app, puts the caret at its end, as setting a UITextField's text does.
++    func state(for text: String) -> TextEditingState {
++        let state = state
++        return state.text == text ? state : TextEditingState(text: text)
++    }
++
++    /// Applies an edit and writes the text back to the binding.
++    func edit(_ body: (inout TextEditingState) -> Void) {
++        guard let binding else { return }
++        var state = state(for: binding.wrappedValue)
++        body(&state)
++        self.state = state
++        if binding.wrappedValue != state.text {
++            binding.wrappedValue = state.text
++        }
++    }
++
++    /// Handles a key from a hardware keyboard, a W3C `KeyboardEvent.code` such as "Backspace";
++    /// false when the key does nothing in a text field.
++    func press(_ code: String, command: Bool) -> Bool {
++        switch code {
++        case "Backspace": edit { $0.deleteBackward() }
++        case "Delete": edit { $0.deleteForward() }
++        case "ArrowLeft": edit { command ? $0.moveToStart(wholeText: false) : $0.moveLeft() }
++        case "ArrowRight": edit { command ? $0.moveToEnd(wholeText: false) : $0.moveRight() }
++        case "ArrowUp": edit { isMultiline && !command ? $0.moveLine(by: -1) : $0.moveToStart(wholeText: true) }
++        case "ArrowDown": edit { isMultiline && !command ? $0.moveLine(by: 1) : $0.moveToEnd(wholeText: true) }
++        case "Home": edit { $0.moveToStart(wholeText: command) }
++        case "End": edit { $0.moveToEnd(wholeText: command) }
++        case "Enter", "NumpadEnter":
++            if isMultiline {
++                edit { $0.commit("\n") }
++            } else {
++                // Return ends editing, then runs onSubmit, which may focus the next field.
++                TextInputFocus.shared.session = nil
++                submit()
++            }
++        default:
++            return false
++        }
++        return true
++    }
++}
++
++// MARK: - TextInputFocus
++
++/// Iris: the text field that has the keyboard. The host sends typed text and editing keys to
++/// its session. Used on the main thread.
++final class TextInputFocus: Observable {
++    static let shared = TextInputFocus()
++
++    private let registrar = ObservationRegistrar()
++    private var _session: TextEditingSession?
++
++    var session: TextEditingSession? {
++        get {
++            registrar.access(self, keyPath: \.session)
++            return _session
++        }
++        set {
++            guard newValue !== _session else { return }
++            registrar.withMutation(of: self, keyPath: \.session) { _session = newValue }
++        }
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/View/TextField/TextField.swift b/Sources/OpenSwiftUI/View/TextField/TextField.swift
+new file mode 100644
+index 0000000..f4ccbd3
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/TextField/TextField.swift
+@@ -0,0 +1,449 @@
++//
++//  TextField.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !canImport(Darwin)
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++import IrisRender
++
++// Iris: on Linux, text fields are drawn by SwiftUI itself, as there is no UITextField. They take
++// text from the host's input method, marked text included, and editing keys from a hardware
++// keyboard: Backspace, Delete, arrows, Home, End and Return. No selection, copy and paste,
++// formatters, custom styles, blinking caret or software keyboard yet.
++
++// MARK: - TextField
++
++/// A control that displays an editable text interface.
++public struct TextField<Label>: View where Label: View {
++    private var text: Binding<String>
++    private var prompt: Text?
++    private var label: Label
++    private var axis: Axis
++    private var onEditingChanged: (Bool) -> Void = { _ in }
++    private var onCommit: () -> Void = {}
++
++    /// Creates a text field with a prompt and a label. On iOS the prompt is the placeholder
++    /// and the label is not shown.
++    public init(text: Binding<String>, prompt: Text? = nil, @ViewBuilder label: () -> Label) {
++        self.text = text
++        self.prompt = prompt
++        self.label = label()
++        self.axis = .horizontal
++    }
++
++    /// Creates a text field that grows to more lines along `axis` when it is vertical.
++    public init(text: Binding<String>, prompt: Text? = nil, axis: Axis, @ViewBuilder label: () -> Label) {
++        self.init(text: text, prompt: prompt, label: label)
++        self.axis = axis
++    }
++
++    public var body: some View {
++        EditableText(
++            text: text,
++            prompt: prompt,
++            kind: axis == .vertical ? .growing : .field,
++            onEditingChanged: onEditingChanged,
++            onCommit: onCommit
++        )
++    }
++}
++
++extension TextField where Label == Text {
++    /// Creates a text field with a title, which is also its placeholder.
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>) {
++        self.init(text: text, prompt: Text(titleKey)) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>) where S: StringProtocol {
++        self.init(text: text, prompt: Text(title)) { Text(title) }
++    }
++
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>, prompt: Text?) {
++        self.init(text: text, prompt: prompt ?? Text(titleKey)) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>, prompt: Text?) where S: StringProtocol {
++        self.init(text: text, prompt: prompt ?? Text(title)) { Text(title) }
++    }
++
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>, axis: Axis) {
++        self.init(text: text, prompt: Text(titleKey), axis: axis) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>, axis: Axis) where S: StringProtocol {
++        self.init(text: text, prompt: Text(title), axis: axis) { Text(title) }
++    }
++
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>, prompt: Text?, axis: Axis) {
++        self.init(text: text, prompt: prompt ?? Text(titleKey), axis: axis) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>, prompt: Text?, axis: Axis) where S: StringProtocol {
++        self.init(text: text, prompt: prompt ?? Text(title), axis: axis) { Text(title) }
++    }
++
++    @available(*, deprecated, message: "Use FocusState<T> and View.focused(_:equals) for onEditingChanged, and View.onSubmit(of:_:) for onCommit")
++    public init(
++        _ titleKey: LocalizedStringKey,
++        text: Binding<String>,
++        onEditingChanged: @escaping (Bool) -> Void = { _ in },
++        onCommit: @escaping () -> Void = {}
++    ) {
++        self.init(titleKey, text: text)
++        self.onEditingChanged = onEditingChanged
++        self.onCommit = onCommit
++    }
++
++    @available(*, deprecated, message: "Use FocusState<T> and View.focused(_:equals) for onEditingChanged, and View.onSubmit(of:_:) for onCommit")
++    @_disfavoredOverload
++    public init<S>(
++        _ title: S,
++        text: Binding<String>,
++        onEditingChanged: @escaping (Bool) -> Void = { _ in },
++        onCommit: @escaping () -> Void = {}
++    ) where S: StringProtocol {
++        self.init(title, text: text)
++        self.onEditingChanged = onEditingChanged
++        self.onCommit = onCommit
++    }
++}
++
++// MARK: - SecureField
++
++/// A control into which people securely enter private text.
++public struct SecureField<Label>: View where Label: View {
++    private var text: Binding<String>
++    private var prompt: Text?
++    private var label: Label
++    private var onCommit: () -> Void = {}
++
++    public init(text: Binding<String>, prompt: Text? = nil, @ViewBuilder label: () -> Label) {
++        self.text = text
++        self.prompt = prompt
++        self.label = label()
++    }
++
++    public var body: some View {
++        EditableText(text: text, prompt: prompt, kind: .secure, onCommit: onCommit)
++    }
++}
++
++extension SecureField where Label == Text {
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>) {
++        self.init(text: text, prompt: Text(titleKey)) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>) where S: StringProtocol {
++        self.init(text: text, prompt: Text(title)) { Text(title) }
++    }
++
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>, prompt: Text?) {
++        self.init(text: text, prompt: prompt ?? Text(titleKey)) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>, prompt: Text?) where S: StringProtocol {
++        self.init(text: text, prompt: prompt ?? Text(title)) { Text(title) }
++    }
++
++    @available(*, deprecated, message: "Use View.onSubmit(of:_:) for onCommit")
++    public init(_ titleKey: LocalizedStringKey, text: Binding<String>, onCommit: @escaping () -> Void) {
++        self.init(titleKey, text: text)
++        self.onCommit = onCommit
++    }
++
++    @available(*, deprecated, message: "Use View.onSubmit(of:_:) for onCommit")
++    @_disfavoredOverload
++    public init<S>(_ title: S, text: Binding<String>, onCommit: @escaping () -> Void) where S: StringProtocol {
++        self.init(title, text: text)
++        self.onCommit = onCommit
++    }
++}
++
++// MARK: - TextEditor
++
++/// A view that can display and edit long-form text. It fills the space it is offered.
++public struct TextEditor: View {
++    private var text: Binding<String>
++
++    public init(text: Binding<String>) {
++        self.text = text
++    }
++
++    public var body: some View {
++        EditableText(text: text, prompt: nil, kind: .editor)
++    }
++}
++
++// MARK: - EditableText
++
++/// Iris: what the text controls draw: the text or its placeholder, the marked text underlined,
++/// and a caret where the render core lays it out, while the field has the keyboard.
++struct EditableText: View {
++    enum Kind {
++        /// One line that scrolls sideways to keep the caret in view.
++        case field
++        /// A field that shows a bullet for each character.
++        case secure
++        /// Lines that wrap, as tall as the text.
++        case growing
++        /// Lines that wrap in all the space offered, with UITextView's insets.
++        case editor
++    }
++
++    var text: Binding<String>
++    var prompt: Text?
++    var kind: Kind
++    var onEditingChanged: (Bool) -> Void = { _ in }
++    var onCommit: () -> Void = {}
++
++    @State private var session = TextEditingSession()
++    @Environment(\.self) private var environment
++    @Environment(\.irisFocusTarget) private var focusTarget
++    @Environment(\.irisSubmitActions) private var submitActions
++    @Environment(\.irisRoundedBorderTextFields) private var roundedBorder
++    @Environment(\.isEnabled) private var isEnabled
++
++    /// UIColor.placeholderText.
++    private static let placeholderColor = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.3)
++
++    private var isMultiline: Bool {
++        kind == .growing || kind == .editor
++    }
++
++    var body: some View {
++        let isFocused = TextInputFocus.shared.session === session
++        let value = text.wrappedValue
++        let state = isFocused ? session.state(for: value) : TextEditingState(text: value)
++        // The session runs keys with the field's latest binding and actions.
++        session.binding = text
++        session.isMultiline = isMultiline
++        session.submit = { [submitActions, onCommit] in
++            for action in submitActions {
++                action()
++            }
++            onCommit()
++        }
++        return Group {
++            if isMultiline {
++                lines(Shown(state, secure: false), isFocused: isFocused)
++            } else {
++                line(Shown(state, secure: kind == .secure), isFocused: isFocused)
++            }
++        }
++        .modifier(RoundedBorder(isOn: roundedBorder && kind != .editor))
++        // Touches beside the text, as in the border or below the last line, focus the field
++        // and keep the caret where it is.
++        .contentShape(Rectangle())
++        .onTapGesture {
++            guard isEnabled else { return }
++            focus()
++            focusTarget?.focus()
++        }
++        .onChange(of: focusTarget?.isFocused ?? false, initial: true) { _, wantsFocus in
++            if wantsFocus {
++                focus()
++            } else if TextInputFocus.shared.session === session {
++                TextInputFocus.shared.session = nil
++            }
++        }
++        .onChange(of: isFocused) { _, isFocused in
++            onEditingChanged(isFocused)
++            if !isFocused {
++                focusTarget?.blur()
++            }
++        }
++        .onDisappear {
++            if TextInputFocus.shared.session === session {
++                TextInputFocus.shared.session = nil
++            }
++        }
++    }
++
++    // MARK: Layout
++
++    /// One line, as tall as the font's line, that scrolls sideways to keep the caret in view.
++    private func line(_ shown: Shown, isFocused: Bool) -> some View {
++        let style = textStyle(shown.string)
++        let caret = irisScene.caret(in: shown.string, style: style, at: shown.caret)
++        return Text(verbatim: " ")
++            .frame(maxWidth: .infinity, alignment: .leading)
++            .hidden()
++            .overlay {
++                GeometryReader { field in
++                    let scroll = max(0, CGFloat(caret.x) + 2 - field.size.width)
++                    ZStack(alignment: .topLeading) {
++                        Color.clear
++                        Group {
++                            decorations(shown, style: style, maxWidth: .infinity, caret: caret, isFocused: isFocused)
++                        }
++                        .offset(x: -scroll)
++                    }
++                    .contentShape(Rectangle())
++                    .onTapGesture(coordinateSpace: .local) { location in
++                        tap(x: location.x + scroll, y: location.y, maxWidth: .infinity)
++                    }
++                }
++            }
++            .clipped()
++    }
++
++    /// Lines that wrap at the width offered.
++    private func lines(_ shown: Shown, isFocused: Bool) -> some View {
++        let style = textStyle(shown.string)
++        let insets = kind == .editor ? EdgeInsets(top: 8, leading: 5, bottom: 8, trailing: 5) : EdgeInsets()
++        return Text(verbatim: shown.string.isEmpty ? " " : shown.string)
++            .frame(maxWidth: .infinity, alignment: .topLeading)
++            .hidden()
++            .overlay {
++                GeometryReader { box in
++                    let width = Float(box.size.width)
++                    let caret = irisScene.caret(in: shown.string, style: style, maxWidth: width, at: shown.caret)
++                    ZStack(alignment: .topLeading) {
++                        Color.clear
++                        decorations(shown, style: style, maxWidth: width, caret: caret, isFocused: isFocused)
++                    }
++                    .contentShape(Rectangle())
++                    .onTapGesture(coordinateSpace: .local) { location in
++                        tap(x: location.x, y: location.y, maxWidth: width)
++                    }
++                }
++            }
++            .padding(insets)
++            .frame(maxHeight: kind == .editor ? .infinity : nil, alignment: .top)
++    }
++
++    /// The text or the placeholder, the marked text's underline and the caret, from the top-left
++    /// corner of the text.
++    @ViewBuilder
++    private func decorations(
++        _ shown: Shown,
++        style: IrisRender.TextStyle,
++        maxWidth: Float,
++        caret: IrisRender.Caret,
++        isFocused: Bool
++    ) -> some View {
++        if shown.string.isEmpty, let prompt {
++            prompt
++                .foregroundStyle(Self.placeholderColor)
++                .lineLimit(isMultiline ? nil : 1)
++                .fixedSize(horizontal: !isMultiline, vertical: true)
++        }
++        Text(verbatim: shown.string)
++            .foregroundStyle(isEnabled ? Color.primary : Self.placeholderColor)
++            .fixedSize(horizontal: !isMultiline, vertical: true)
++            .frame(width: isMultiline ? CGFloat(maxWidth) : nil, alignment: .topLeading)
++        if !shown.marked.isEmpty {
++            // ponytail: one underline from the start of the marked text to the caret; marked
++            // text that wraps onto another line is underlined on the caret's line only.
++            let start = irisScene.caret(in: shown.string, style: style, maxWidth: maxWidth, at: shown.marked.lowerBound)
++            let startX = start.y == caret.y ? CGFloat(start.x) : 0
++            Rectangle()
++                .fill(Color.primary)
++                .frame(width: max(CGFloat(caret.x) - startX, 1), height: 1)
++                .offset(x: startX, y: CGFloat(caret.y + caret.height) - 1)
++        }
++        if isFocused {
++            Rectangle()
++                .fill(Color.accentColor)
++                .frame(width: 2, height: CGFloat(caret.height))
++                .offset(x: CGFloat(caret.x) - 1, y: CGFloat(caret.y))
++        }
++    }
++
++    /// How the render core draws `string` in this field's environment, as Text would.
++    private func textStyle(_ string: String) -> IrisRender.TextStyle {
++        // One character to resolve the style with, as empty text has no attributes.
++        let sample = Text(verbatim: string.isEmpty ? " " : string)
++        return sample.resolveAttributedString(in: environment)?.irisTextStyle(lineLimit: nil) ?? IrisRender.TextStyle()
++    }
++
++    // MARK: Focus
++
++    private func focus() {
++        guard TextInputFocus.shared.session !== session else { return }
++        session.state = TextEditingState(text: text.wrappedValue)
++        TextInputFocus.shared.session = session
++    }
++
++    /// A tap gives the field the keyboard and puts the caret at the nearest character boundary.
++    private func tap(x: CGFloat, y: CGFloat, maxWidth: Float) {
++        guard isEnabled else { return }
++        focus()
++        focusTarget?.focus()
++        let value = text.wrappedValue
++        let drawn = kind == .secure ? Shown.bullets(value) : value
++        let index = irisScene.index(in: drawn, style: textStyle(drawn), maxWidth: maxWidth, x: Float(x), y: Float(y))
++        // Bullets stand one for each character, so characters count the same in both.
++        let characters = drawn.distance(from: drawn.startIndex, to: index)
++        let cursor = value.utf16.distance(from: value.startIndex, to: value.index(value.startIndex, offsetBy: characters))
++        session.edit { state in
++            state.marked = ""
++            state.cursor = cursor
++        }
++    }
++}
++
++// MARK: - Shown
++
++/// The text as drawn: with the marked text at the caret, in bullets for a secure field.
++private struct Shown {
++    var string: String
++    var caret: String.Index
++    var marked: Range<String.Index>
++
++    init(_ state: TextEditingState, secure: Bool) {
++        let index = state.index(state.cursor)
++        var before = String(state.text[..<index])
++        var after = String(state.text[index...])
++        var marked = state.marked
++        if secure {
++            before = Self.bullets(before)
++            after = Self.bullets(after)
++            marked = Self.bullets(marked)
++        }
++        string = before + marked + after
++        let start = string.utf8.index(string.startIndex, offsetBy: before.utf8.count)
++        // The caret stays at the end of the marked text, where the input method types.
++        caret = string.utf8.index(start, offsetBy: marked.utf8.count)
++        self.marked = start ..< caret
++    }
++
++    static func bullets(_ text: String) -> String {
++        String(repeating: "•", count: text.count)
++    }
++}
++
++// MARK: - RoundedBorder
++
++/// RoundedBorderTextFieldStyle: UITextField's rounded rectangle, with its insets.
++private struct RoundedBorder: ViewModifier {
++    var isOn: Bool
++
++    func body(content: Content) -> some View {
++        if isOn {
++            content
++                .padding(.horizontal, 7)
++                .padding(.vertical, 6)
++                .background {
++                    // ponytail: a border of two fills; the layer renderer draws no stroked paths.
++                    ZStack {
++                        RoundedRectangle(cornerRadius: 5).fill(Color(red: 0.8, green: 0.8, blue: 0.82))
++                        RoundedRectangle(cornerRadius: 4.5).fill(Color.white).padding(0.5)
++                    }
++                }
++        } else {
++            content
++        }
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift b/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift
+new file mode 100644
+index 0000000..0bafbbb
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift
+@@ -0,0 +1,213 @@
++//
++//  TextInputModifiers.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !canImport(Darwin)
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// MARK: - Submit
++
++/// A type that defines various triggers that result in the firing of a submission action.
++public struct SubmitTriggers: OptionSet, Sendable {
++    public let rawValue: UInt
++
++    public init(rawValue: UInt) {
++        self.rawValue = rawValue
++    }
++
++    /// Defines triggers originating from text input controls like `TextField` and `SecureField`.
++    public static let text = SubmitTriggers(rawValue: 1 << 0)
++
++    /// Defines triggers originating from search fields constructed from searchable modifiers.
++    public static let search = SubmitTriggers(rawValue: 1 << 1)
++}
++
++extension View {
++    /// Adds an action to perform when the user submits a value to this view, such as by
++    /// pressing Return in a text field.
++    public func onSubmit(of triggers: SubmitTriggers = .text, _ action: @escaping () -> Void) -> some View {
++        transformEnvironment(\.irisSubmitActions) { actions in
++            if triggers.contains(.text) {
++                actions.insert(action, at: 0)
++            }
++        }
++    }
++}
++
++/// A semantic label describing the label of submission within a view hierarchy.
++///
++/// Iris: accepted and ignored; Return keys have no label on the Device UI's keyboard.
++public struct SubmitLabel: Sendable {
++    private var name: String
++
++    public static var done: SubmitLabel { SubmitLabel(name: "done") }
++    public static var go: SubmitLabel { SubmitLabel(name: "go") }
++    public static var send: SubmitLabel { SubmitLabel(name: "send") }
++    public static var join: SubmitLabel { SubmitLabel(name: "join") }
++    public static var route: SubmitLabel { SubmitLabel(name: "route") }
++    public static var search: SubmitLabel { SubmitLabel(name: "search") }
++    public static var `return`: SubmitLabel { SubmitLabel(name: "return") }
++    public static var next: SubmitLabel { SubmitLabel(name: "next") }
++    public static var `continue`: SubmitLabel { SubmitLabel(name: "continue") }
++}
++
++extension View {
++    public func submitLabel(_ submitLabel: SubmitLabel) -> some View {
++        self
++    }
++}
++
++extension EnvironmentValues {
++    /// Iris: the actions `onSubmit` added around a view, innermost first.
++    var irisSubmitActions: [() -> Void] {
++        get { self[SubmitActionsKey.self] }
++        set { self[SubmitActionsKey.self] = newValue }
++    }
++}
++
++private struct SubmitActionsKey: EnvironmentKey {
++    static var defaultValue: [() -> Void] { [] }
++}
++
++// MARK: - Keyboard hints
++
++// Iris: what the software keyboard of a phone would adapt to. The Device UI types with the
++// computer's keyboard, so these are accepted and ignored.
++
++/// The kind of capitalization applied to text as it's typed.
++public struct TextInputAutocapitalization: Sendable {
++    private var name: String
++
++    public static var never: TextInputAutocapitalization { .init(name: "never") }
++    public static var words: TextInputAutocapitalization { .init(name: "words") }
++    public static var sentences: TextInputAutocapitalization { .init(name: "sentences") }
++    public static var characters: TextInputAutocapitalization { .init(name: "characters") }
++}
++
++extension View {
++    public func textInputAutocapitalization(_ autocapitalization: TextInputAutocapitalization?) -> some View {
++        self
++    }
++
++    public func autocorrectionDisabled(_ disable: Bool = true) -> some View {
++        self
++    }
++
++    @available(*, deprecated, renamed: "autocorrectionDisabled(_:)")
++    public func disableAutocorrection(_ disable: Bool?) -> some View {
++        self
++    }
++}
++
++// ponytail: UIKit's types live here until OpenKit has UIKit (P1-16); move them there then, and
++// re-export UIKit from SwiftUI as Apple's does.
++
++/// The type of keyboard to display for a given text-based view.
++public enum UIKeyboardType: Int, Sendable {
++    case `default`
++    case asciiCapable
++    case numbersAndPunctuation
++    case URL
++    case numberPad
++    case phonePad
++    case namePhonePad
++    case emailAddress
++    case decimalPad
++    case twitter
++    case webSearch
++    case asciiCapableNumberPad
++
++    public static var alphabet: UIKeyboardType { .asciiCapable }
++}
++
++/// The semantic meaning for a text-entry area.
++public struct UITextContentType: RawRepresentable, Hashable, Sendable {
++    public var rawValue: String
++
++    public init(rawValue: String) {
++        self.rawValue = rawValue
++    }
++
++    public static let name = UITextContentType(rawValue: "name")
++    public static let givenName = UITextContentType(rawValue: "given-name")
++    public static let familyName = UITextContentType(rawValue: "family-name")
++    public static let nickname = UITextContentType(rawValue: "nickname")
++    public static let organizationName = UITextContentType(rawValue: "organization")
++    public static let fullStreetAddress = UITextContentType(rawValue: "street-address")
++    public static let addressCity = UITextContentType(rawValue: "address-level2")
++    public static let postalCode = UITextContentType(rawValue: "postal-code")
++    public static let countryName = UITextContentType(rawValue: "country-name")
++    public static let telephoneNumber = UITextContentType(rawValue: "tel")
++    public static let emailAddress = UITextContentType(rawValue: "email")
++    public static let URL = UITextContentType(rawValue: "url")
++    public static let username = UITextContentType(rawValue: "username")
++    public static let password = UITextContentType(rawValue: "password")
++    public static let newPassword = UITextContentType(rawValue: "new-password")
++    public static let oneTimeCode = UITextContentType(rawValue: "one-time-code")
++}
++
++extension View {
++    public func keyboardType(_ type: UIKeyboardType) -> some View {
++        self
++    }
++
++    public func textContentType(_ textContentType: UITextContentType?) -> some View {
++        self
++    }
++}
++
++// MARK: - TextFieldStyle
++
++/// A specification for the appearance and interaction of a text field.
++///
++/// Iris: the system styles only; custom styles are not supported yet.
++public protocol TextFieldStyle {}
++
++/// The default text field style, based on the text field's context: plain on iOS.
++public struct DefaultTextFieldStyle: TextFieldStyle {
++    public init() {}
++}
++
++/// A text field style with no decoration.
++public struct PlainTextFieldStyle: TextFieldStyle {
++    public init() {}
++}
++
++/// A text field style with a system-defined rounded border.
++public struct RoundedBorderTextFieldStyle: TextFieldStyle {
++    public init() {}
++}
++
++extension TextFieldStyle where Self == DefaultTextFieldStyle {
++    public static var automatic: DefaultTextFieldStyle { .init() }
++}
++
++extension TextFieldStyle where Self == PlainTextFieldStyle {
++    public static var plain: PlainTextFieldStyle { .init() }
++}
++
++extension TextFieldStyle where Self == RoundedBorderTextFieldStyle {
++    public static var roundedBorder: RoundedBorderTextFieldStyle { .init() }
++}
++
++extension View {
++    public func textFieldStyle<S>(_ style: S) -> some View where S: TextFieldStyle {
++        environment(\.irisRoundedBorderTextFields, style is RoundedBorderTextFieldStyle)
++    }
++}
++
++extension EnvironmentValues {
++    var irisRoundedBorderTextFields: Bool {
++        get { self[RoundedBorderKey.self] }
++        set { self[RoundedBorderKey.self] = newValue }
++    }
++}
++
++private struct RoundedBorderKey: EnvironmentKey {
++    static var defaultValue: Bool { false }
++}
++#endif
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index 44a73c5..cc860fe 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -229,7 +229,7 @@ extension Path {
+ extension NSAttributedString {
+     /// How the render core draws this text. It takes one style per text, so the font and
+     /// color of the first run apply to all of it.
+-    func irisTextStyle(lineLimit: Int?, alignment: TextAlignment = .leading) -> IrisRender.TextStyle {
++    package func irisTextStyle(lineLimit: Int?, alignment: TextAlignment = .leading) -> IrisRender.TextStyle {
+         let font = length > 0 ? attribute(.kitFont, at: 0, effectiveRange: nil) as? CTFont : nil
+         let color = length > 0 ? attribute(.kitForegroundColor, at: 0, effectiveRange: nil) as? NDColor : nil
+         let textAlignment: IrisRender.TextStyle.Alignment = switch alignment {
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+index 30d039f..ec230f4 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+@@ -99,6 +99,12 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+         requestedUpdate = min(requestedUpdate ?? delay, delay)
+     }
+ 
++    /// Iris: also while rendering. A change made then, such as by an onAppear action, still
++    /// needs a frame of its own, so the app renders again after this one.
++    package func graphDidChange() {
++        requestUpdate(after: .zero)
++    }
++
+     package var renderingRootView: AnyObject {
+         self
+     }

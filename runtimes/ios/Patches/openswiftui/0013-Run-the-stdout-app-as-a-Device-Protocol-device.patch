@@ -1,0 +1,362 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 13:07:02 +0700
+Subject: [PATCH 13/22] Run the stdout app as a Device Protocol device
+
+With IRISRUN_DEVICE=stdio the app speaks Iris's Device Protocol on stdio, as
+irisrun start runs it: size-delimited HostMessage envelopes come in on stdin
+and DeviceMessage envelopes go out on stdout, and what the app prints moves to
+stderr. It sends its device info and app status, then a JPEG frame whenever a
+new display list reaches the render core, drawn at 2x by default and encoded
+on another thread, skipping frames the encoder fell behind on.
+
+Touches (in pixels), input method edits and key presses go through
+DeviceInput. The main thread runs its run loop, so transactions, timers and
+the main queue work, and renders when the view graph asks, at most 60 times
+a second, on the clock touch events carry. Input first brings the view
+graph's clock up to now: gestures inside views time touches with it, and a
+clock left at the last frame, then moved on by a frame in the middle of a
+tap, made the tap seem held too long.
+
+OpenSwiftUI depends on Iris's runtimes/ios package for IrisProtocol, through
+OPENSWIFTUI_IRIS_RUNTIME_PATH.
+---
+ Package.swift                                 |   6 +
+ .../App/App/Stdout/IrisDevice.swift           | 240 ++++++++++++++++++
+ .../App/App/Stdout/StdoutApp.swift            |  11 +-
+ .../DisplayListLayerRenderer.swift            |   4 +
+ .../DisplayList/StdoutRendererHost.swift      |   4 +
+ 5 files changed, 264 insertions(+), 1 deletion(-)
+ create mode 100644 Sources/OpenSwiftUI/App/App/Stdout/IrisDevice.swift
+
+diff --git a/Package.swift b/Package.swift
+index 8b1546c..a13f7d2 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -994,6 +994,12 @@ if !buildForDarwinPlatform {
+     for target in [openSwiftUICoreTarget, openSwiftUITarget] {
+         target.dependencies.append(.product(name: "IrisRender", package: "swift"))
+     }
++    // The Device Protocol, which the stdout app speaks on stdio for irisrun: Iris's runtimes/ios.
++    guard let irisRuntimePath = envStringValue("IRIS_RUNTIME_PATH") else {
++        fatalError("set OPENSWIFTUI_IRIS_RUNTIME_PATH to Iris's runtimes/ios")
++    }
++    package.dependencies.append(.package(path: irisRuntimePath))
++    openSwiftUITarget.dependencies.append(.product(name: "IrisProtocol", package: "ios"))
+ }
+ 
+ #if TUIST
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/IrisDevice.swift b/Sources/OpenSwiftUI/App/App/Stdout/IrisDevice.swift
+new file mode 100644
+index 0000000..aed847d
+--- /dev/null
++++ b/Sources/OpenSwiftUI/App/App/Stdout/IrisDevice.swift
+@@ -0,0 +1,240 @@
++//
++//  IrisDevice.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++@_spi(StdoutRenderer)
++import OpenSwiftUICore
++import IrisProtocol
++import IrisRender
++
++/// Iris: keeps stdout for the Device Protocol and sends what the app prints to stderr instead,
++/// where irisrun shows it as logs. Call it before anything prints.
++func takeStandardOutput() -> FileHandle {
++    fflush(stdout)
++    let protocolOutput = dup(STDOUT_FILENO)
++    dup2(STDERR_FILENO, STDOUT_FILENO)
++    return FileHandle(fileDescriptor: protocolOutput, closeOnDealloc: true)
++}
++
++/// Iris: runs the app as a device of the Device Protocol on stdio, as `irisrun start` runs it:
++/// size-delimited HostMessage envelopes come in on stdin and DeviceMessage envelopes go out on
++/// stdout. Input is handled on the main run loop; frames are drawn by the render core when the
++/// display list changes and encoded as JPEG on another thread.
++final class IrisDevice<Content> where Content: View {
++    private let host: StdoutRendererHost<Content>
++    private let input: DeviceInput
++    private let scale: Float
++    private let output: FileHandle
++    /// Encodes and writes, in order, everything sent to the host.
++    private let writer = DispatchQueue(label: "dev.irisrun.device.writer")
++    private let lock = NSLock()
++    private var newestFrame: UInt64 = 0
++    private var sequence: UInt64 = 0
++    private var shownVersion = -1
++    private var nextRender: DispatchTime?
++
++    /// `output` is what `takeStandardOutput()` returns.
++    init(host: StdoutRendererHost<Content>, input: DeviceInput, scale: Float, output: FileHandle) {
++        self.host = host
++        self.input = input
++        self.scale = scale
++        self.output = output
++    }
++
++    func run() -> Never {
++        let size = host.options.surface
++        send(.with {
++            $0.deviceInfo = .with {
++                $0.platform = .ios
++                $0.kind = .localRuntime
++                $0.model = "iPhone 14"
++                $0.osVersion = "18.0"
++                $0.display = .with {
++                    $0.widthPx = UInt32((Float(size.width) * scale).rounded())
++                    $0.heightPx = UInt32((Float(size.height) * scale).rounded())
++                    $0.scale = scale
++                }
++            }
++        })
++        send(status(.launching))
++        host.onRequestUpdate = { [unowned self] delay in
++            scheduleRender(after: delay)
++        }
++        render()
++        send(status(.foreground))
++        Thread.detachNewThread { [self] in
++            readHostMessages()
++        }
++        // A timer keeps the run loop running while nothing else is scheduled.
++        RunLoop.main.add(Timer(timeInterval: 3600, repeats: true) { _ in }, forMode: .default)
++        while true {
++            RunLoop.main.run(mode: .default, before: .distantFuture)
++        }
++    }
++
++    // MARK: Host messages
++
++    private func readHostMessages() {
++        while let envelope = Self.readEnvelope() {
++            guard let message = try? IrisHostMessage(serializedBytes: envelope) else {
++                fputs("irisrun: dropped an envelope that is not a HostMessage\n", stderr)
++                continue
++            }
++            DispatchQueue.main.async { [self] in
++                handle(message)
++            }
++        }
++        // The host closed stdin: it has gone, and so does the app.
++        exit(0)
++    }
++
++    private func handle(_ message: IrisHostMessage) {
++        guard case let .input(event)? = message.payload else {
++            // ponytail: display configuration and adapters come with P1-28 and P1-17.
++            return
++        }
++        // Gestures inside views time touches with the view graph's clock, so bring it up to
++        // now first: a clock left at the last frame, then moved on by a frame in the middle
++        // of a tap, makes the tap seem held too long.
++        render()
++        switch event.event {
++        case let .touch(touch)?:
++            input.touch(touch.touches.map { point in
++                DeviceInput.Touch(
++                    id: point.id,
++                    phase: Self.phase(point.phase),
++                    location: CGPoint(x: CGFloat(point.x / scale), y: CGFloat(point.y / scale))
++                )
++            })
++        case let .text(edit)?:
++            switch edit.edit {
++            case let .commitText(text)?:
++                input.commit(text)
++            case let .setComposingText(text)?:
++                input.compose(text)
++            case let .deleteSurroundingText(range)?:
++                input.deleteSurrounding(before: Int(range.beforeLength), after: Int(range.afterLength))
++            case nil:
++                break
++            }
++        case let .key(key)? where key.action == .down:
++            input.press(key.code, command: key.meta)
++        default:
++            return
++        }
++        // Answer input at once rather than at the next requested update.
++        render()
++    }
++
++    private static func phase(_ phase: IrisTouchPhase) -> DeviceInput.Phase {
++        switch phase {
++        case .began: .began
++        case .moved: .moved
++        case .ended: .ended
++        case .cancelled: .cancelled
++        default: .stationary
++        }
++    }
++
++    // MARK: Frames
++
++    /// Renders on the main run loop after `delay` seconds, at most 60 times a second.
++    private func scheduleRender(after delay: Double) {
++        let time = DispatchTime.now() + max(delay, 1.0 / 60)
++        if let nextRender, nextRender <= time {
++            return
++        }
++        nextRender = time
++        DispatchQueue.main.asyncAfter(deadline: time) { [self] in
++            guard let nextRender, nextRender <= .now() else { return }
++            render()
++        }
++    }
++
++    private func render() {
++        nextRender = nil
++        // The view graph runs on the clock touch events carry, as UIKit hosts' do.
++        host.render(interval: max(Time.systemUptime - host.currentTimestamp, 0), targetTimestamp: nil)
++        guard irisSceneVersion != shownVersion else { return }
++        shownVersion = irisSceneVersion
++        sequence += 1
++        let sequence = sequence
++        let frame = irisScene.render()
++        lock.withLock { newestFrame = sequence }
++        writer.async { [self] in
++            // Frames the encoder fell behind on are skipped: the newest shows everything.
++            guard lock.withLock({ newestFrame == sequence }), let jpeg = frame.encode(.jpeg, quality: 85) else {
++                return
++            }
++            write(.with {
++                $0.frame = .with {
++                    $0.sequence = sequence
++                    $0.format = .jpeg
++                    $0.data = Data(jpeg)
++                }
++            })
++        }
++    }
++
++    // MARK: Envelopes
++
++    private func status(_ state: IrisAppState) -> IrisDeviceMessage {
++        .with {
++            $0.appStatus = .with {
++                $0.state = state
++                $0.appID = Bundle.main.bundleIdentifier ?? ProcessInfo.processInfo.processName
++            }
++        }
++    }
++
++    private func send(_ message: IrisDeviceMessage) {
++        writer.async { [self] in
++            write(message)
++        }
++    }
++
++    /// On the writer queue.
++    private func write(_ message: IrisDeviceMessage) {
++        guard let payload: [UInt8] = try? message.serializedBytes() else { return }
++        var envelope: [UInt8] = []
++        var length = UInt64(payload.count)
++        repeat {
++            envelope.append(UInt8(length & 0x7F) | (length > 0x7F ? 0x80 : 0))
++            length >>= 7
++        } while length > 0
++        envelope += payload
++        output.write(Data(envelope))
++    }
++
++    /// The next size-delimited envelope on stdin, or nil once it ends.
++    private static func readEnvelope() -> [UInt8]? {
++        var length: UInt64 = 0
++        for shift in stride(from: 0, to: 64, by: 7) {
++            guard let byte = readExactly(1)?.first else { return nil }
++            length |= UInt64(byte & 0x7F) << shift
++            if byte & 0x80 == 0 {
++                return readExactly(Int(length))
++            }
++        }
++        return nil
++    }
++
++    private static func readExactly(_ count: Int) -> [UInt8]? {
++        var bytes = [UInt8](repeating: 0, count: count)
++        var done = 0
++        while done < count {
++            let read = bytes.withUnsafeMutableBytes { buffer in
++                Glibc.read(STDIN_FILENO, buffer.baseAddress! + done, count - done)
++            }
++            guard read > 0 else { return nil }
++            done += read
++        }
++        return bytes
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index 6cd1477..49d67e1 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -30,7 +30,11 @@ func runStdoutApp(
+     // with its fonts, and with IRISRUN_FRAMES=<dir> the app draws into it and writes a PNG
+     // of each step to <dir>.
+     let environment = ProcessInfo.processInfo.environment
+-    irisScene = .window(size: options.surface, scale: environment["IRISRUN_SCALE"].flatMap { Float($0) } ?? 3)
++    // With IRISRUN_DEVICE=stdio the app is a device of the Device Protocol (IrisDevice), 2x by
++    // default, which is enough for the Device UI.
++    let deviceOutput = environment["IRISRUN_DEVICE"] == "stdio" ? takeStandardOutput() : nil
++    let scale = environment["IRISRUN_SCALE"].flatMap { Float($0) } ?? (deviceOutput != nil ? 2 : 3)
++    irisScene = .window(size: options.surface, scale: scale)
+     let frames = environment["IRISRUN_FRAMES"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+     if let frames {
+         try? FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
+@@ -59,6 +63,11 @@ func runStdoutApp(
+         )
+         #if !canImport(Darwin)
+         let input = DeviceInput(manager: host.eventBindingManager)
++        if let deviceOutput {
++            host.renderer.configuration = .init()
++            let device = IrisDevice(host: host, input: input, scale: scale, output: deviceOutput)
++            return { _ in device.run() }
++        }
+         var frame = 0
+         if frames != nil {
+             // The default renderer, which is the render core on Linux.
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index cc860fe..c136e22 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -15,6 +15,9 @@ package import IrisRender
+ /// the layer renderer draws.
+ package var irisScene: IrisRender.Scene!
+ 
++/// Iris: counts the display lists shown in `irisScene`, so hosts know when a frame changed.
++package var irisSceneVersion = 0
++
+ extension IrisRender.Scene {
+     /// A white window with the fonts in `${IRISRUN_HOME:-~/.irisrun}/fonts`, which Iris's
+     /// crates/render/fetch-fonts.sh downloads.
+@@ -66,6 +69,7 @@ final class LayerRenderer: ViewRendererBase {
+         }
+         seed = nextSeed
+         irisScene.show(list)
++        irisSceneVersion += 1
+         if let host, let observer = host.as(ViewGraphRenderObserver.self) {
+             observer.didRender()
+         }
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+index ec230f4..7db05af 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+@@ -95,8 +95,12 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+     /// frame loop.
+     package var requestedUpdate: Double?
+ 
++    /// Iris: called for each update the view graph asks for, by hosts with a real clock.
++    package var onRequestUpdate: ((Double) -> Void)?
++
+     package func requestUpdate(after delay: Double) {
+         requestedUpdate = min(requestedUpdate ?? delay, delay)
++        onRequestUpdate?(delay)
+     }
+ 
+     /// Iris: also while rendering. A change made then, such as by an onAppear action, still

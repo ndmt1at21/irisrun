@@ -1,0 +1,862 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 16:28:49 +0700
+Subject: [PATCH 14/22] Build, stroke and trim paths in Swift
+
+Path's move(to:), addLine(to:), curves, arcs, rectangles, ellipses and
+rounded rectangles were unimplemented on every platform, and so were
+strokedPath and forEach on Linux: any Path built by hand or shape with
+.stroke() crashed. OpenRenderBox cannot hold paths on Linux yet, so paths
+keep their elements in Swift, in a new Storage case. Arcs follow CoreGraphics,
+whose clockwise is in y-up coordinates, as cubic curves of a quarter turn at
+most.
+
+strokedPath keeps the line and the stroke style, and trimmedPath the line and
+the fractions, so a renderer can stroke the line itself. Hit-testing fills by
+winding number, or for a stroked path, by distance to the line; curves are
+flattened into 16 segments for that, for bounds and for trimming.
+---
+ .../OpenSwiftUICore/Shape/Path+Elements.swift | 330 ++++++++++++++++++
+ Sources/OpenSwiftUICore/Shape/Path.swift      | 257 ++++++++++----
+ .../OpenSwiftUICore/Shape/ShapeLayer.swift    |   2 +-
+ 3 files changed, 525 insertions(+), 64 deletions(-)
+ create mode 100644 Sources/OpenSwiftUICore/Shape/Path+Elements.swift
+
+diff --git a/Sources/OpenSwiftUICore/Shape/Path+Elements.swift b/Sources/OpenSwiftUICore/Shape/Path+Elements.swift
+new file mode 100644
+index 0000000..ee4f9f0
+--- /dev/null
++++ b/Sources/OpenSwiftUICore/Shape/Path+Elements.swift
+@@ -0,0 +1,330 @@
++//
++//  Path+Elements.swift
++//  OpenSwiftUICore
++//
++//  Status: Iris
++
++package import Foundation
++package import OpenCoreGraphicsShims
++
++// Iris: paths as a list of elements, in Swift. Upstream builds paths with OpenRenderBox, which
++// cannot hold them on Linux yet, and leaves move(to:), addLine(to:) and the like unimplemented.
++// Curves are flattened into 16 segments wherever a point set is needed: hit-testing, bounds
++// and trimming.
++
++extension Path {
++    /// The elements of the path, with rectangles, ellipses and rounded rectangles spelled out.
++    /// A stroked path gives the line it strokes.
++    package var elements: [Element] {
++        switch storage {
++        case .empty:
++            []
++        case let .rect(rect):
++            Self.elements(rect: rect)
++        case let .ellipse(rect):
++            Self.elements(ellipseIn: rect)
++        case let .roundedRect(rounded):
++            Self.elements(roundedRect: rounded.rect, cornerSize: rounded.cornerSize)
++        case let .elements(elements):
++            elements
++        case let .stroked(stroked):
++            stroked.path.elements
++        case let .trimmed(trimmed):
++            trimmed.path.trimmedElements(from: trimmed.from, to: trimmed.to)
++        case .path:
++            // CoreGraphics or OpenRenderBox paths, which Linux does not make.
++            []
++        }
++    }
++
++    /// Appends elements, turning the path into a list of elements first.
++    package mutating func append(_ newElements: [Element]) {
++        if case var .elements(elements) = storage {
++            // Let go of the storage first so the array grows in place.
++            storage = .empty
++            elements.append(contentsOf: newElements)
++            storage = .elements(elements)
++        } else {
++            storage = .elements(elements + newElements)
++        }
++    }
++
++    /// The point the next element starts from: after closeSubpath, the subpath's start.
++    package var lastPoint: CGPoint? {
++        var start: CGPoint?
++        var last: CGPoint?
++        for element in elements {
++            switch element {
++            case let .move(point):
++                start = point
++                last = point
++            case let .line(point), let .quadCurve(point, _), let .curve(point, _, _):
++                last = point
++            case .closeSubpath:
++                last = start
++            }
++        }
++        return last
++    }
++
++    // MARK: Shapes as elements
++
++    package static func elements(rect: CGRect) -> [Element] {
++        guard !rect.isNull else { return [] }
++        let r = rect.standardized
++        return [
++            .move(to: CGPoint(x: r.minX, y: r.minY)),
++            .line(to: CGPoint(x: r.maxX, y: r.minY)),
++            .line(to: CGPoint(x: r.maxX, y: r.maxY)),
++            .line(to: CGPoint(x: r.minX, y: r.maxY)),
++            .closeSubpath,
++        ]
++    }
++
++    package static func elements(ellipseIn rect: CGRect) -> [Element] {
++        guard !rect.isNull else { return [] }
++        let r = rect.standardized
++        return elements(roundedRect: r, cornerSize: CGSize(width: r.width / 2, height: r.height / 2))
++    }
++
++    /// Continuous corners count as circular ones.
++    package static func elements(roundedRect rect: CGRect, cornerSize: CGSize) -> [Element] {
++        let radius = cornerSize
++        return elements(roundedRect: rect, radii: (radius, radius, radius, radius))
++    }
++
++    /// Corners in the order top-left, top-right, bottom-right, bottom-left.
++    package static func elements(
++        roundedRect rect: CGRect,
++        radii: (CGSize, CGSize, CGSize, CGSize)
++    ) -> [Element] {
++        guard !rect.isNull else { return [] }
++        let r = rect.standardized
++        func clamp(_ size: CGSize) -> CGSize {
++            CGSize(width: min(max(size.width, 0), r.width / 2), height: min(max(size.height, 0), r.height / 2))
++        }
++        let (tl, tr, br, bl) = (clamp(radii.0), clamp(radii.1), clamp(radii.2), clamp(radii.3))
++        // How far along a tangent the control points of a quarter ellipse sit.
++        let k = 0.5522847498
++        return [
++            .move(to: CGPoint(x: r.minX + tl.width, y: r.minY)),
++            .line(to: CGPoint(x: r.maxX - tr.width, y: r.minY)),
++            .curve(
++                to: CGPoint(x: r.maxX, y: r.minY + tr.height),
++                control1: CGPoint(x: r.maxX - tr.width + k * tr.width, y: r.minY),
++                control2: CGPoint(x: r.maxX, y: r.minY + tr.height - k * tr.height)
++            ),
++            .line(to: CGPoint(x: r.maxX, y: r.maxY - br.height)),
++            .curve(
++                to: CGPoint(x: r.maxX - br.width, y: r.maxY),
++                control1: CGPoint(x: r.maxX, y: r.maxY - br.height + k * br.height),
++                control2: CGPoint(x: r.maxX - br.width + k * br.width, y: r.maxY)
++            ),
++            .line(to: CGPoint(x: r.minX + bl.width, y: r.maxY)),
++            .curve(
++                to: CGPoint(x: r.minX, y: r.maxY - bl.height),
++                control1: CGPoint(x: r.minX + bl.width - k * bl.width, y: r.maxY),
++                control2: CGPoint(x: r.minX, y: r.maxY - bl.height + k * bl.height)
++            ),
++            .line(to: CGPoint(x: r.minX, y: r.minY + tl.height)),
++            .curve(
++                to: CGPoint(x: r.minX + tl.width, y: r.minY),
++                control1: CGPoint(x: r.minX, y: r.minY + tl.height - k * tl.height),
++                control2: CGPoint(x: r.minX + tl.width - k * tl.width, y: r.minY)
++            ),
++            .closeSubpath,
++        ]
++    }
++
++    /// An arc of a circle as cubic curves of at most a quarter turn each, from `start` turning
++    /// by `delta` radians; positive turns clockwise on screen, y pointing down.
++    package static func arcElements(center: CGPoint, radius: CGFloat, start: Double, delta: Double) -> [Element] {
++        let pieces = max(Int((abs(delta) / (.pi / 2)).rounded(.up)), 1)
++        let step = delta / Double(pieces)
++        let k = 4.0 / 3.0 * tan(step / 4)
++        var elements: [Element] = []
++        var angle = start
++        for _ in 0 ..< pieces {
++            let next = angle + step
++            let p0 = CGPoint(x: center.x + radius * cos(angle), y: center.y + radius * sin(angle))
++            let p3 = CGPoint(x: center.x + radius * cos(next), y: center.y + radius * sin(next))
++            elements.append(.curve(
++                to: p3,
++                control1: CGPoint(x: p0.x - k * radius * sin(angle), y: p0.y + k * radius * cos(angle)),
++                control2: CGPoint(x: p3.x + k * radius * sin(next), y: p3.y - k * radius * cos(next))
++            ))
++            angle = next
++        }
++        return elements
++    }
++
++    // MARK: Points
++
++    /// The path as polylines, one per subpath, and whether each is closed.
++    package var polylines: [(points: [CGPoint], isClosed: Bool)] {
++        var result: [(points: [CGPoint], isClosed: Bool)] = []
++        var points: [CGPoint] = []
++        func finish(closed: Bool) {
++            if !points.isEmpty {
++                result.append((points, closed))
++            }
++            points = []
++        }
++        for element in elements {
++            switch element {
++            case let .move(point):
++                finish(closed: false)
++                points = [point]
++            case let .line(point):
++                points.append(point)
++            case let .quadCurve(point, control):
++                let start = points.last ?? point
++                for i in 1 ... 16 {
++                    let t = CGFloat(i) / 16
++                    let a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t
++                    points.append(CGPoint(
++                        x: a * start.x + b * control.x + c * point.x,
++                        y: a * start.y + b * control.y + c * point.y
++                    ))
++                }
++            case let .curve(point, control1, control2):
++                let start = points.last ?? point
++                for i in 1 ... 16 {
++                    let t = CGFloat(i) / 16
++                    let u = 1 - t
++                    let a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t
++                    points.append(CGPoint(
++                        x: a * start.x + b * control1.x + c * control2.x + d * point.x,
++                        y: a * start.y + b * control1.y + c * control2.y + d * point.y
++                    ))
++                }
++            case .closeSubpath:
++                let start = points.first
++                finish(closed: true)
++                // A subpath closed without a move starts where the last one started.
++                if let start {
++                    points = [start]
++                }
++            }
++        }
++        finish(closed: false)
++        return result.filter { $0.points.count > 1 || $0.isClosed }
++    }
++
++    package var elementsBoundingRect: CGRect {
++        let points = polylines.flatMap(\.points)
++        guard let first = points.first else { return .null }
++        var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
++        for point in points {
++            minX = min(minX, point.x)
++            maxX = max(maxX, point.x)
++            minY = min(minY, point.y)
++            maxY = max(maxY, point.y)
++        }
++        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
++    }
++
++    /// Whether the area the path fills holds the point, by its winding number.
++    package func elementsContain(_ point: CGPoint, eoFill: Bool) -> Bool {
++        var winding = 0
++        for polyline in polylines {
++            let points = polyline.points
++            for (index, a) in points.enumerated() {
++                // Fills close every subpath.
++                let b = points[(index + 1) % points.count]
++                if a.y <= point.y {
++                    if b.y > point.y, cross(a, b, point) > 0 {
++                        winding += 1
++                    }
++                } else if b.y <= point.y, cross(a, b, point) < 0 {
++                    winding -= 1
++                }
++            }
++        }
++        return eoFill ? winding % 2 != 0 : winding != 0
++    }
++
++    /// Whether the point is within `distance` of the path's line.
++    package func lineContains(_ point: CGPoint, within distance: CGFloat) -> Bool {
++        for polyline in polylines {
++            var points = polyline.points
++            if polyline.isClosed, let first = points.first {
++                points.append(first)
++            }
++            for index in points.indices.dropLast() {
++                if distanceToSegment(point, points[index], points[index + 1]) <= distance {
++                    return true
++                }
++            }
++        }
++        return false
++    }
++
++    /// The part of the path from `from` to `to`, as fractions of its length, in line segments.
++    package func trimmedElements(from: CGFloat, to: CGFloat) -> [Element] {
++        var segments: [(CGPoint, CGPoint)] = []
++        for polyline in polylines {
++            var points = polyline.points
++            if polyline.isClosed, let first = points.first {
++                points.append(first)
++            }
++            for index in points.indices.dropLast() {
++                segments.append((points[index], points[index + 1]))
++            }
++        }
++        let lengths = segments.map { hypot($0.1.x - $0.0.x, $0.1.y - $0.0.y) }
++        let total = lengths.reduce(0, +)
++        guard total > 0, to > from else { return [] }
++        let start = max(from, 0) * total
++        let end = min(to, 1) * total
++        var result: [Element] = []
++        var walked: CGFloat = 0
++        var last: CGPoint?
++        for (segment, length) in zip(segments, lengths) {
++            defer { walked += length }
++            guard walked + length > start, walked < end, length > 0 else { continue }
++            let a = interpolate(segment, (max(start, walked) - walked) / length)
++            let b = interpolate(segment, (min(end, walked + length) - walked) / length)
++            if last != a {
++                result.append(.move(to: a))
++            }
++            result.append(.line(to: b))
++            last = b
++        }
++        return result
++    }
++
++    /// The elements with every point mapped by `transform`.
++    package func elementsApplying(_ transform: CGAffineTransform) -> [Element] {
++        elements.map { element in
++            switch element {
++            case let .move(point): .move(to: point.applying(transform))
++            case let .line(point): .line(to: point.applying(transform))
++            case let .quadCurve(point, control):
++                .quadCurve(to: point.applying(transform), control: control.applying(transform))
++            case let .curve(point, control1, control2):
++                .curve(
++                    to: point.applying(transform),
++                    control1: control1.applying(transform),
++                    control2: control2.applying(transform)
++                )
++            case .closeSubpath: .closeSubpath
++            }
++        }
++    }
++}
++
++private func cross(_ a: CGPoint, _ b: CGPoint, _ p: CGPoint) -> CGFloat {
++    (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
++}
++
++private func distanceToSegment(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
++    let dx = b.x - a.x, dy = b.y - a.y
++    let lengthSquared = dx * dx + dy * dy
++    let t = lengthSquared > 0 ? min(max(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared, 0), 1) : 0
++    return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
++}
++
++private func interpolate(_ segment: (CGPoint, CGPoint), _ t: CGFloat) -> CGPoint {
++    CGPoint(x: segment.0.x + (segment.1.x - segment.0.x) * t, y: segment.0.y + (segment.1.y - segment.0.y) * t)
++}
+diff --git a/Sources/OpenSwiftUICore/Shape/Path.swift b/Sources/OpenSwiftUICore/Shape/Path.swift
+index d2aca02..f26e02d 100644
+--- a/Sources/OpenSwiftUICore/Shape/Path.swift
++++ b/Sources/OpenSwiftUICore/Shape/Path.swift
+@@ -222,11 +222,14 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+         case rect(CGRect)
+         case ellipse(CGRect)
+         indirect case roundedRect(FixedRoundedRect)
+-        @available(*, deprecated, message: "obsolete")
++        /// Iris: a path with the stroke that outlines it, which the renderer strokes itself.
+         indirect case stroked(StrokedPath)
+-        @available(*, deprecated, message: "obsolete")
++        /// Iris: part of a path.
+         indirect case trimmed(TrimmedPath)
+         case path(PathBox)
++        /// Iris: elements in Swift (Path+Elements.swift), as OpenRenderBox holds no paths on
++        /// Linux yet.
++        case elements([Element])
+     }
+ 
+     package var storage: Path.Storage
+@@ -362,8 +365,8 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             storage = .empty
+             return
+         }
+-        // TODO: addRoundedRect
+-        _openSwiftUIUnimplementedFailure()
++        storage = .empty
++        addRoundedRect(in: rect, cornerRadii: cornerRadii, style: style)
+     }
+ 
+     /// Creates a path as an ellipse within the given rectangle.
+@@ -434,7 +437,19 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+         #if canImport(Darwin)
+         _CGPathCopyDescription(cgPath, 0.0)
+         #else
+-        _openSwiftUIPlatformUnimplementedFailure()
++        // Iris: CoreGraphics' format, points first and then the operator.
++        func format(_ points: CGPoint...) -> String {
++            points.map { "\($0.x) \($0.y)" }.joined(separator: " ")
++        }
++        return elements.map { element in
++            switch element {
++            case let .move(point): format(point) + " m"
++            case let .line(point): format(point) + " l"
++            case let .quadCurve(point, control): format(control, point) + " q"
++            case let .curve(point, control1, control2): format(control1, control2, point) + " c"
++            case .closeSubpath: "h"
++            }
++        }.joined(separator: " ")
+         #endif
+     }
+ 
+@@ -451,8 +466,15 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             CGPath(ellipseIn: rect, transform: nil)
+         case let .roundedRect(fixedRoundedRect):
+             fixedRoundedRect.cgPath
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
++        case let .stroked(stroked):
++            stroked.path.cgPath.copy(
++                strokingWithWidth: stroked.style.lineWidth,
++                lineCap: stroked.style.lineCap,
++                lineJoin: stroked.style.lineJoin,
++                miterLimit: stroked.style.miterLimit
++            )
++        case .trimmed, .elements:
++            Self.cgPath(of: elements)
+         case let .path(pathBox):
+             pathBox.cgPath
+         }
+@@ -478,8 +500,9 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+                 style: fixedRoundedRect.style == .circular ? .circular : .continuous,
+                 transform: nil
+             )
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
++        case .stroked, .trimmed, .elements:
++            // ponytail: no OpenRenderBox path for these; Linux draws them with Iris's render core.
++            ORBPath.empty
+         case let .path(pathBox):
+             pathBox.retainRBPath()
+         }
+@@ -500,8 +523,12 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             rect.isNull
+         case let .roundedRect(fixedRoundedRect):
+             fixedRoundedRect.rect.isNull
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
++        case let .stroked(stroked):
++            stroked.path.isEmpty
++        case .trimmed:
++            elements.isEmpty
++        case let .elements(elements):
++            !elements.contains { if case .move = $0 { false } else { true } }
+         case let .path(pathBox):
+             pathBox.rbPath.isEmpty
+         }
+@@ -522,8 +549,10 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             rect
+         case let .roundedRect(fixedRoundedRect):
+             fixedRoundedRect.rect
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
++        case let .stroked(stroked):
++            stroked.path.boundingRect.insetBy(dx: -stroked.style.lineWidth / 2, dy: -stroked.style.lineWidth / 2)
++        case .trimmed, .elements:
++            elementsBoundingRect
+         case let .path(pathBox):
+             pathBox.boundingRect
+         }
+@@ -563,8 +592,10 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             let dy = (p.y - centerY) / radiusY
+             return dx * dx + dy * dy <= 1
+             #endif
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
++        case let .stroked(stroked):
++            return stroked.path.lineContains(p, within: stroked.style.lineWidth / 2)
++        case .trimmed, .elements:
++            return elementsContain(p, eoFill: eoFill)
+         case let .path(box):
+             let path = box.retainRBPath()
+             // TBA
+@@ -648,14 +679,17 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             }
+         }
+         #else
+-        _openSwiftUIPlatformUnimplementedFailure()
++        // Iris: a stroked path gives the line it strokes, not its outline.
++        elements.forEach(body)
+         #endif
+     }
+ 
+     /// Returns a stroked copy of the path using `style` to define how the
+     /// stroked outline is created.
++    ///
++    /// Iris: the copy keeps the line and the style, and renderers stroke the line.
+     public func strokedPath(_ style: StrokeStyle) -> Path {
+-        _openSwiftUIUnimplementedFailure()
++        Path(storage: .stroked(StrokedPath(path: self, style: style)))
+     }
+ 
+     /// Returns a partial copy of the path.
+@@ -673,9 +707,7 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+         guard to > from else {
+             return Path()
+         }
+-        // let retainedPath = retainRBPath()
+-        _openSwiftUIUnimplementedWarning()
+-        return self
++        return Path(storage: .trimmed(TrimmedPath(path: self, from: from, to: to)))
+     }
+ 
+     package func rect() -> CGRect? {
+@@ -739,14 +771,15 @@ extension Path: ProtobufMessage {
+ 
+ // MARK: - StrokedPath
+ 
+-@available(*, deprecated, message: "obsolete")
+ @usableFromInline
+ package struct StrokedPath: Equatable {
+-    public init(path: Path, style: StrokeStyle) {}
++    /// Iris: the line that is stroked, and how.
++    package var path: Path
++    package var style: StrokeStyle
+ 
+-    @usableFromInline
+-    package static func == (a: StrokedPath, b: StrokedPath) -> Bool {
+-        true
++    public init(path: Path, style: StrokeStyle) {
++        self.path = path
++        self.style = style
+     }
+ }
+ 
+@@ -755,13 +788,12 @@ extension StrokedPath: Sendable {}
+ 
+ // MARK: - TrimmedPath
+ 
+-@available(*, deprecated, message: "obsolete")
+ @usableFromInline
+ package struct TrimmedPath: Equatable {
+-    @usableFromInline
+-    package static func == (a: TrimmedPath, b: TrimmedPath) -> Swift.Bool {
+-        true
+-    }
++    /// Iris: the part of `path` from `from` to `to`, as fractions of its length.
++    package var path: Path
++    package var from: CGFloat
++    package var to: CGFloat
+ }
+ 
+ @available(*, unavailable)
+@@ -772,18 +804,18 @@ extension TrimmedPath: Sendable {}
+ @available(OpenSwiftUI_v1_0, *)
+ extension Path {
+     public mutating func move(to end: CGPoint) {
+-        _openSwiftUIUnimplementedFailure()
++        append([.move(to: end)])
+     }
+ 
+     public mutating func addLine(to end: CGPoint) {
+-        _openSwiftUIUnimplementedFailure()
++        append([.line(to: end)])
+     }
+ 
+     public mutating func addQuadCurve(
+         to end: CGPoint,
+         control: CGPoint
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        append([.quadCurve(to: end, control: control)])
+     }
+ 
+     public mutating func addCurve(
+@@ -791,18 +823,18 @@ extension Path {
+         control1: CGPoint,
+         control2: CGPoint
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        append([.curve(to: end, control1: control1, control2: control2)])
+     }
+ 
+     public mutating func closeSubpath() {
+-        _openSwiftUIUnimplementedFailure()
++        append([.closeSubpath])
+     }
+ 
+     public mutating func addRect(
+         _ rect: CGRect,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        addPath(Path(storage: .elements(Self.elements(rect: rect))), transform: transform)
+     }
+ 
+     public mutating func addRoundedRect(
+@@ -811,7 +843,7 @@ extension Path {
+         style: RoundedCornerStyle = .continuous,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        addPath(Path(storage: .elements(Self.elements(roundedRect: rect, cornerSize: cornerSize))), transform: transform)
+     }
+ 
+     @available(OpenSwiftUI_v4_0, *)
+@@ -821,25 +853,33 @@ extension Path {
+         style: RoundedCornerStyle = .continuous,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        func size(_ radius: CGFloat) -> CGSize { CGSize(width: radius, height: radius) }
++        let elements = Self.elements(roundedRect: rect, radii: (
++            size(cornerRadii.topLeft), size(cornerRadii.topRight),
++            size(cornerRadii.bottomRight), size(cornerRadii.bottomLeft)
++        ))
++        addPath(Path(storage: .elements(elements)), transform: transform)
+     }
+ 
+     public mutating func addEllipse(
+         in rect: CGRect,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        addPath(Path(storage: .elements(Self.elements(ellipseIn: rect))), transform: transform)
+     }
+ 
+     public mutating func addRects(
+         _ rects: [CGRect],
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        for rect in rects {
++            addRect(rect, transform: transform)
++        }
+     }
+ 
+     public mutating func addLines(_ lines: [CGPoint]) {
+-        _openSwiftUIUnimplementedFailure()
++        guard let first = lines.first else { return }
++        append([.move(to: first)] + lines.dropFirst().map { .line(to: $0) })
+     }
+ 
+     public mutating func addRelativeArc(
+@@ -849,7 +889,7 @@ extension Path {
+         delta: Angle,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        addArc(center: center, radius: radius, start: startAngle.radians, delta: delta.radians, transform: transform)
+     }
+ 
+     public mutating func addArc(
+@@ -860,7 +900,15 @@ extension Path {
+         clockwise: Bool,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        // As in CoreGraphics, whose clockwise is in y-up coordinates: on screen, clockwise
++        // arcs turn counterclockwise.
++        var delta = endAngle.radians - startAngle.radians
++        if clockwise, delta > 0 {
++            delta -= 2 * .pi * (delta / (2 * .pi)).rounded(.up)
++        } else if !clockwise, delta < 0 {
++            delta += 2 * .pi * (-delta / (2 * .pi)).rounded(.up)
++        }
++        addArc(center: center, radius: radius, start: startAngle.radians, delta: delta, transform: transform)
+     }
+ 
+     public mutating func addArc(
+@@ -869,29 +917,62 @@ extension Path {
+         radius: CGFloat,
+         transform: CGAffineTransform = .identity
+     ) {
+-        _openSwiftUIUnimplementedFailure()
++        guard let current = lastPoint else {
++            move(to: tangent1End.applying(transform))
++            return
++        }
++        // The corner at tangent1End between the lines from the current point and to
++        // tangent2End, rounded by a circle that touches both.
++        func unit(_ v: CGPoint) -> CGPoint {
++            let length = hypot(v.x, v.y)
++            return length > 0 ? CGPoint(x: v.x / length, y: v.y / length) : .zero
++        }
++        let corner = tangent1End
++        let toStart = unit(CGPoint(x: current.x - corner.x, y: current.y - corner.y))
++        let toEnd = unit(CGPoint(x: tangent2End.x - corner.x, y: tangent2End.y - corner.y))
++        let angle = acos(min(max(toStart.x * toEnd.x + toStart.y * toEnd.y, -1), 1))
++        guard radius > 0, angle > 1e-6, abs(angle - .pi) > 1e-6 else {
++            append([.line(to: corner.applying(transform))])
++            return
++        }
++        let reach = radius / tan(angle / 2)
++        let bisector = unit(CGPoint(x: toStart.x + toEnd.x, y: toStart.y + toEnd.y))
++        let center = CGPoint(
++            x: corner.x + bisector.x * radius / sin(angle / 2),
++            y: corner.y + bisector.y * radius / sin(angle / 2)
++        )
++        let first = CGPoint(x: corner.x + toStart.x * reach, y: corner.y + toStart.y * reach)
++        let last = CGPoint(x: corner.x + toEnd.x * reach, y: corner.y + toEnd.y * reach)
++        let start = atan2(Double(first.y - center.y), Double(first.x - center.x))
++        var delta = atan2(Double(last.y - center.y), Double(last.x - center.x)) - start
++        if delta > .pi { delta -= 2 * .pi }
++        if delta < -.pi { delta += 2 * .pi }
++        addArc(center: center, radius: radius, start: start, delta: delta, transform: transform)
++    }
++
++    /// Iris: an arc from the angle `start` turning by `delta` radians, joined to the current
++    /// point by a line.
++    private mutating func addArc(center: CGPoint, radius: CGFloat, start: Double, delta: Double, transform: CGAffineTransform) {
++        let first = CGPoint(x: center.x + radius * cos(start), y: center.y + radius * sin(start))
++        var arc = Self.arcElements(center: center, radius: radius, start: start, delta: delta)
++        arc.insert(lastPoint == nil ? .move(to: first) : .line(to: first), at: 0)
++        append(transform.isIdentity ? arc : Path(storage: .elements(arc)).elementsApplying(transform))
+     }
+ 
+     public mutating func addPath(
+         _ path: Path,
+         transform: CGAffineTransform = .identity
+     ) {
+-        // FIXME: Use RB instead of CG
++        // Iris: as elements, which every platform holds.
+         if case .empty = storage {
+             self = path.applying(transform)
+         } else if !path.isEmpty {
+-            #if canImport(CoreGraphics)
+-            let result = cgPath.mutableCopy()!
+-            result.addPath(path.cgPath, transform: transform)
+-            self = Path(result)
+-            #else
+-            _openSwiftUIPlatformUnimplementedFailure()
+-            #endif
++            append(transform.isIdentity ? path.elements : path.elementsApplying(transform))
+         }
+     }
+ 
+     public var currentPoint: CGPoint? {
+-        get { _openSwiftUIUnimplementedFailure() }
++        lastPoint
+     }
+ 
+     @available(OpenSwiftUI_v5_0, *)
+@@ -977,16 +1058,22 @@ extension Path {
+             return Path(ellipseIn: rect.applying(transform))
+         case let .roundedRect(fixedRoundedRect) where transform.isRectilinear:
+             return Path(storage: .roundedRect(fixedRoundedRect.applying(transform)))
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
+-        default:
+-            // TBA
++        case let .stroked(stroked):
++            // The line moves and the width scales by the transform's mean scale.
++            var style = stroked.style
++            style.lineWidth *= sqrt(abs(transform.a * transform.d - transform.b * transform.c))
++            return Path(storage: .stroked(StrokedPath(path: stroked.path.applying(transform), style: style)))
++        case let .trimmed(trimmed):
++            return Path(storage: .trimmed(TrimmedPath(path: trimmed.path.applying(transform), from: trimmed.from, to: trimmed.to)))
++        case .path:
+             #if canImport(CoreGraphics)
+             var transform = transform
+             return Path(cgPath.copy(using: &transform)!)
+             #else
+-            _openSwiftUIPlatformUnimplementedFailure()
++            return self
+             #endif
++        default:
++            return Path(storage: .elements(elementsApplying(transform)))
+         }
+     }
+ 
+@@ -994,7 +1081,7 @@ extension Path {
+         dx: CGFloat,
+         dy: CGFloat
+     ) -> Path {
+-        _openSwiftUIUnimplementedFailure()
++        applying(CGAffineTransform(translationX: dx, y: dy))
+     }
+ 
+     func mapPoints(_ body: (inout [CGPoint]) -> ()) -> Path {
+@@ -1039,9 +1126,7 @@ extension Path {
+                     style: rect.style
+                 )))
+             }
+-        case .stroked, .trimmed:
+-            _openSwiftUIUnreachableCode()
+-        case .path:
++        case .stroked, .trimmed, .elements, .path:
+             break
+         }
+         #if canImport(CoreGraphics)
+@@ -1081,9 +1166,55 @@ extension Path {
+         }
+         return Path(result)
+         #else
+-        _openSwiftUIPlatformUnimplementedFailure()
++        // Iris: points of the elements, in order, then the same elements through them.
++        let elements = elements
++        var points: [CGPoint] = []
++        for element in elements {
++            switch element {
++            case let .move(point), let .line(point):
++                points.append(point)
++            case let .quadCurve(point, control):
++                points.append(contentsOf: [point, control])
++            case let .curve(point, control1, control2):
++                points.append(contentsOf: [point, control1, control2])
++            case .closeSubpath:
++                break
++            }
++        }
++        body(&points)
++        var index = 0
++        func next() -> CGPoint {
++            defer { index += 1 }
++            return points[index]
++        }
++        return Path(storage: .elements(elements.map { element in
++            switch element {
++            case .move: .move(to: next())
++            case .line: .line(to: next())
++            case .quadCurve: .quadCurve(to: next(), control: next())
++            case .curve: .curve(to: next(), control1: next(), control2: next())
++            case .closeSubpath: .closeSubpath
++            }
++        }))
+         #endif
+     }
++
++    #if canImport(CoreGraphics)
++    /// Iris: a CoreGraphics path of elements.
++    fileprivate static func cgPath(of elements: [Element]) -> CGPath {
++        let path = CGMutablePath()
++        for element in elements {
++            switch element {
++            case let .move(point): path.move(to: point)
++            case let .line(point): path.addLine(to: point)
++            case let .quadCurve(point, control): path.addQuadCurve(to: point, control: control)
++            case let .curve(point, control1, control2): path.addCurve(to: point, control1: control1, control2: control2)
++            case .closeSubpath: path.closeSubpath()
++            }
++        }
++        return path
++    }
++    #endif
+ }
+ 
+ private func ellipseContains(in rect: CGRect, contains point: CGPoint) -> Bool {
+diff --git a/Sources/OpenSwiftUICore/Shape/ShapeLayer.swift b/Sources/OpenSwiftUICore/Shape/ShapeLayer.swift
+index 21fdec3..2a8ac9f 100644
+--- a/Sources/OpenSwiftUICore/Shape/ShapeLayer.swift
++++ b/Sources/OpenSwiftUICore/Shape/ShapeLayer.swift
+@@ -410,7 +410,7 @@ enum ShapeType {
+             )
+         case .stroked, .trimmed:
+             self = .other
+-        case .path:
++        case .path, .elements:
+             // FIXME: initFromFilled
+             self = .other
+         }

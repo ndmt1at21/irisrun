@@ -4,7 +4,8 @@
 # these checkouts (OPENSWIFTUI_USE_LOCAL_DEPS=1) instead of their `main` branches.
 #
 # The SHAs are upstream OpenSwiftUI 0.23.1, the sibling revisions from its Package.resolved, and
-# Compute 0.6.0, the version OpenAttributeGraph asks for. Once github.com/irisrun/OpenSwiftUI exists,
+# Compute 0.6.0-bugfix.1: 0.6.0, the version OpenAttributeGraph asks for, with partial value
+# comparisons fixed (they read enums at the wrong offset and crashed views with `if`/`else`). Once github.com/irisrun/OpenSwiftUI exists,
 # point the OpenSwiftUI line at the fork commit that carries Patches/openswiftui and delete that
 # directory.
 #
@@ -23,7 +24,7 @@ OpenAttributeGraph https://github.com/OpenSwiftUIProject/OpenAttributeGraph 46f2
 OpenCoreGraphics   https://github.com/OpenSwiftUIProject/OpenCoreGraphics   df5ab4c4dcd0afc8fde978f6a0ad5228bb8aee17
 OpenObservation    https://github.com/OpenSwiftUIProject/OpenObservation    51c52f318eb3278b1eaa8b724f50d1af9f9f8bae
 OpenRenderBox      https://github.com/OpenSwiftUIProject/OpenRenderBox      7a85270fd79295c86aaf8cd578168895befd07da
-Compute            https://github.com/OpenSwiftUIProject/Compute            ef29bc336a16cee2091eb30b0a3aef606d2163d9
+Compute            https://github.com/OpenSwiftUIProject/Compute            212355dc880ad76731999cc27190c31629f486e9
 "
 
 # GitHub drops connections often on this network.

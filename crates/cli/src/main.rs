@@ -11,6 +11,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use irisrun_doctor::{Binary, Strategy, Tier};
 use irisrun_engine::android::{self, AndroidProject, AndroidSdk, DEFAULT_QUALIFIERS, License};
 use irisrun_engine::device;
+use irisrun_engine::ios::{self, IosProject, SwiftRunner};
 use irisrun_engine::toolchain::{Host, Progress, Tool, Toolchains};
 
 /// Run Android and iOS apps from source, without devices or SDK installs.
@@ -78,6 +79,9 @@ async fn main() -> Result<()> {
 }
 
 async fn start(project: &Path, port: u16) -> Result<()> {
+    if let Some(app) = IosProject::open(project)? {
+        return start_ios(&app, port).await;
+    }
     let home = irisrun_engine::home_dir()?;
     let toolchains = Toolchains::new(&home, Host::detect()?);
     let project = AndroidProject::open(project)?;
@@ -106,6 +110,19 @@ async fn start(project: &Path, port: u16) -> Result<()> {
         android::host_command(&java_home, &launch, DEFAULT_QUALIFIERS)
     })
     .await
+}
+
+/// Runs an Xcode project on OpenKit. The Swift toolchain comes from the
+/// machine, or the wrapper in IRISRUN_SWIFT_RUNNER, until irisrun ships OpenKit.
+async fn start_ios(app: &IosProject, port: u16) -> Result<()> {
+    let swift = SwiftRunner::from_env();
+    let started = Instant::now();
+    let executable = app.build(&swift).await?;
+    eprintln!("irisrun: built in {:.1}s", started.elapsed().as_secs_f64());
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    eprintln!("irisrun: open the Device UI at http://{addr}");
+    device::serve(addr, move || ios::host_command(&swift, &executable)).await
 }
 
 async fn install(components: Vec<Component>, accept_license: bool) -> Result<()> {

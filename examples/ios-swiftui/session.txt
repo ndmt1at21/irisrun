@@ -1,7 +1,9 @@
-# Taps for IrisSample on the stdout runtime, one command per line. `tap <text>` touches the
-# middle of the first text that reads <text>; `tap <x> <y>` touches a point. Each command
-# prints the next frame. runtimes/ios/Scripts/check-sample.sh checks every `# expect` line
-# against the frame of the command above it (the first frame for the ones on top).
+# Input for IrisSample on the stdout runtime, one command per line. `tap <text>` touches the
+# middle of the first text that reads <text>; `tap <x> <y>` touches a point; `drag` and `fling`
+# move a finger between two points; `compose`, `type` and `key` are what an input method and a
+# keyboard send. The commands are listed in OpenSwiftUI's StdoutApp.swift (patch 0011). Each
+# command prints the next frame. runtimes/ios/Scripts/check-sample.sh checks every `# expect`
+# line against the frame of the command above it (the first frame for the ones on top).
 # expect Library
 # expect Count: 0
 # expect Truyện Kiều
@@ -23,3 +25,87 @@ tap ‹ Back
 tap Book 3
 # expect Book 3
 # expect Not a favorite
+tap ‹ Back
+# Signing in. The form focuses its first field when it appears. Telex composes Vietnamese
+# before committing it, as the Device UI sends it; the marked text shows as it grows.
+tap Đăng nhập
+# expect Email hoặc tên
+compose n
+compose Nguyê
+compose Nguyễn
+# expect Nguyễn
+type Nguyễn
+# Two spaces: the text typed starts with one.
+type  Thị Ánh
+key Backspace
+# expect Nguyễn Thị Án
+type h
+# Return runs onSubmit, which moves the focus to the password.
+key Enter
+# expect Nguyễn Thị Ánh
+type matkhau
+# expect •••••••
+key Enter
+# expect Xin chào, Nguyễn Thị Ánh!
+# expect Đã đăng nhập bằng Telex
+tap ‹ Back
+# Notes in a TextEditor: Return starts a line, the arrows move the caret, and input
+# method corrections delete around it.
+tap Truyện Kiều
+tap 195 520
+type Trăm năm
+key Enter
+type trong cõi
+# expect Trăm năm\ntrong cõi
+key ArrowUp
+type  bể
+delete 1 0
+type ẻ
+# expect Trăm năm bẻ\ntrong cõi
+tap ‹ Back
+# The list scrolls once it is longer than the screen: Đăng nhập ends below it until a drag.
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+tap Add book
+# expect Book 15
+drag 195 600 195 300
+tap Đăng nhập
+# expect Email hoặc tên
+tap ‹ Back
+# A Form of controls drawn by SwiftUI on Linux: a switch flips on a tap, a slider follows a
+# drag, a stepper counts.
+drag 195 600 195 300
+tap Cài đặt
+# expect Cỡ chữ: 17
+# expect THÔNG BÁO
+tap 330 150
+drag 140 332 370 332
+# expect Cỡ chữ: 28
+tap 335 378
+# expect Số bản: 2
+# Pickers: a segmented one selects the segment touched; a menu one moves to its next option
+# until menus can be presented.
+tap Tối
+# expect Chế độ: Tối
+tap Sắp xếp
+# expect Ngày thêm
+tap ‹ Back
+# A tab view over a grid of covers: a tab is made when first selected and keeps its state.
+drag 195 600 195 300
+tap Bộ sưu tập
+# expect Bìa sách
+# expect Dế Mèn phiêu lưu ký
+tap Thống kê
+# expect 15 cuốn sách
+# expect 1 cuốn yêu thích
+tap Bìa sách
+# expect Book 15

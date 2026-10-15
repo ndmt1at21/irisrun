@@ -8,10 +8,12 @@ use skia_safe::font_arguments::variation_position::Coordinate;
 use skia_safe::font_style::{Slant, Weight, Width};
 use skia_safe::textlayout::{
     FontCollection, Paragraph, ParagraphBuilder, ParagraphStyle as SkParagraphStyle,
-    TextAlign as SkTextAlign, TextDecoration, TextHeightBehavior, TextStyle as SkTextStyle,
-    TypefaceFontProvider,
+    RectHeightStyle, RectWidthStyle, TextAlign as SkTextAlign, TextDecoration, TextHeightBehavior,
+    TextStyle as SkTextStyle, TypefaceFontProvider,
 };
-use skia_safe::{Color, Data, Font, FontArguments, FontMgr, FontStyle, FourByteTag, Typeface};
+use skia_safe::{
+    Color, Data, Font, FontArguments, FontMgr, FontStyle, FourByteTag, Point, Typeface,
+};
 
 const WEIGHT_AXIS: FourByteTag = FourByteTag::from_chars('w', 'g', 'h', 't');
 
@@ -102,6 +104,62 @@ impl TextMetrics {
             truncated: paragraph.did_exceed_max_lines(),
         }
     }
+}
+
+/// Where the caret goes in laid-out text, in points from its top-left
+/// corner: a vertical bar as tall as the glyphs of its line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Caret {
+    pub x: f32,
+    pub y: f32,
+    pub height: f32,
+}
+
+impl Caret {
+    /// Before the character at byte `offset` of `text`, or after the last
+    /// one, on the line that holds that character. At a soft line break
+    /// that is the start of the next line, as in UIKit.
+    pub(crate) fn of(paragraph: &Paragraph, text: &str, offset: usize) -> Option<Caret> {
+        let offset = floor_char_boundary(text, offset);
+        // SkParagraph counts in UTF-16.
+        let at = text[..offset].encode_utf16().count();
+        let lines = paragraph.get_line_metrics();
+        let line = lines.iter().rev().find(|line| line.start_index <= at)?;
+        let mut x = line.left as f32;
+        if at > line.start_index {
+            let before = text[..offset]
+                .chars()
+                .next_back()
+                .map_or(0, char::len_utf16);
+            let boxes = paragraph.get_rects_for_range(
+                at - before..at,
+                RectHeightStyle::Tight,
+                RectWidthStyle::Tight,
+            );
+            x = boxes
+                .last()
+                .map_or((line.left + line.width) as f32, |b| b.rect.right);
+        }
+        Some(Caret {
+            x,
+            y: (line.baseline - line.ascent) as f32,
+            height: (line.ascent + line.descent) as f32,
+        })
+    }
+}
+
+/// The byte offset of the character boundary nearest to `point` in
+/// laid-out text, for placing the caret where the text is touched.
+pub(crate) fn offset_at(paragraph: &Paragraph, text: &str, point: Point) -> usize {
+    let position = paragraph.get_glyph_position_at_coordinate(point).position;
+    let mut units = usize::try_from(position).unwrap_or(0);
+    for (offset, char) in text.char_indices() {
+        if units < char.len_utf16() {
+            return offset;
+        }
+        units -= char.len_utf16();
+    }
+    text.len()
 }
 
 /// The vertical metrics of a font, in points, signed as in `UIFont`: the
@@ -300,7 +358,7 @@ fn weight_axis(weight: u16) -> [Coordinate; 1] {
 
 /// The largest char boundary at or before `index`, which callers on the
 /// other side of the C API may get wrong.
-fn floor_char_boundary(text: &str, index: usize) -> usize {
+pub(crate) fn floor_char_boundary(text: &str, index: usize) -> usize {
     let mut index = index.min(text.len());
     while !text.is_char_boundary(index) {
         index -= 1;

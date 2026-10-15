@@ -24,6 +24,15 @@ struct ContentView: View {
                 Button("Add book") {
                     library.addBook()
                 }
+                NavigationLink("Đăng nhập") {
+                    LoginView()
+                }
+                NavigationLink("Cài đặt") {
+                    SettingsView()
+                }
+                NavigationLink("Bộ sưu tập") {
+                    CollectionView(library: library)
+                }
             }
             .navigationTitle("Library")
         }
@@ -35,6 +44,10 @@ struct BookRow: View {
 
     var body: some View {
         HStack {
+            Image("BookCover")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
             Text(book.title)
             Spacer()
             if book.isFavorite {

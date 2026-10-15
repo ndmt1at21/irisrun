@@ -51,6 +51,13 @@ pub struct IrisTextMetrics {
 }
 
 #[repr(C)]
+pub struct IrisCaret {
+    x: f32,
+    y: f32,
+    height: f32,
+}
+
+#[repr(C)]
 pub struct IrisFontMetrics {
     ascender: f32,
     descender: f32,
@@ -337,6 +344,76 @@ pub unsafe extern "C" fn iris_scene_measure_text(
         truncated: metrics.truncated,
     };
     true
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_scene_text_caret(
+    scene: *const Scene,
+    utf8: *const c_char,
+    runs: *const IrisTextRun,
+    run_count: usize,
+    paragraph: *const IrisParagraphStyle,
+    max_width: f32,
+    offset: usize,
+    caret: *mut IrisCaret,
+) -> bool {
+    let (Some(scene), Some((text, runs, paragraph)), Some(out)) = (
+        unsafe { scene.as_ref() },
+        unsafe { text(utf8, runs, run_count, paragraph) },
+        unsafe { caret.as_mut() },
+    ) else {
+        return false;
+    };
+    let caret = scene.text_caret(text, &runs, &paragraph, max_width, offset);
+    *out = IrisCaret {
+        x: caret.x,
+        y: caret.y,
+        height: caret.height,
+    };
+    true
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_scene_text_offset_at(
+    scene: *const Scene,
+    utf8: *const c_char,
+    runs: *const IrisTextRun,
+    run_count: usize,
+    paragraph: *const IrisParagraphStyle,
+    max_width: f32,
+    x: f32,
+    y: f32,
+) -> usize {
+    let (Some(scene), Some((text, runs, paragraph))) = (unsafe { scene.as_ref() }, unsafe {
+        text(utf8, runs, run_count, paragraph)
+    }) else {
+        return 0;
+    };
+    scene.text_offset_at(text, &runs, &paragraph, max_width, Point::new(x, y))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_image_size(
+    data: *const u8,
+    len: usize,
+    width: *mut i32,
+    height: *mut i32,
+) -> bool {
+    let (Some(bytes), Some(width), Some(height)) = (
+        unsafe { items(data, len) },
+        unsafe { width.as_mut() },
+        unsafe { height.as_mut() },
+    ) else {
+        return false;
+    };
+    match Scene::image_size(bytes) {
+        Some((w, h)) => {
+            *width = w;
+            *height = h;
+            true
+        }
+        None => false,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -826,6 +903,36 @@ mod tests {
             ));
             assert_eq!(metrics.line_count, 1);
             assert!(metrics.width > 0.0 && metrics.first_baseline > 0.0);
+            let mut caret = IrisCaret {
+                x: -1.0,
+                y: -1.0,
+                height: 0.0,
+            };
+            let end = text.count_bytes();
+            assert!(iris_scene_text_caret(
+                scene,
+                text.as_ptr(),
+                &run,
+                1,
+                &paragraph,
+                f32::INFINITY,
+                end,
+                &mut caret
+            ));
+            assert!((caret.x - metrics.width).abs() < 1.0 && caret.height > 0.0);
+            assert_eq!(
+                iris_scene_text_offset_at(
+                    scene,
+                    text.as_ptr(),
+                    &run,
+                    1,
+                    &paragraph,
+                    f32::INFINITY,
+                    1000.0,
+                    5.0
+                ),
+                end
+            );
             assert!(iris_layer_set_text(
                 scene,
                 layer,

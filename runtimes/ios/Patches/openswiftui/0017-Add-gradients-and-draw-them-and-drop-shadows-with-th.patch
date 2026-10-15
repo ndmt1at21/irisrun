@@ -1,0 +1,480 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 16:43:13 +0700
+Subject: [PATCH 17/22] Add gradients, and draw them and drop shadows with the
+ render core
+
+Gradient was an empty stub and no gradient style existed. Gradient now has
+stops, and LinearGradient, RadialGradient, AngularGradient and Color.gradient
+are shape styles and views, with their ShapeStyle members. They resolve to a
+paint the layer renderer hands to the render core: a gradient layer, masked
+by the shape's path unless it is the layer's own rounded bounds. Text and
+other places that take one color get the first stop's.
+
+Shapes filled with paints other than one color crashed (render(paint:) was
+unimplemented); they now fill the shape's path, with the style's opacity as
+an effect. Drop shadows draw as the shadow of a render core group layer.
+---
+ .../Graphic/Gradient/Gradients.swift          | 294 ++++++++++++++++++
+ .../Graphic/Gradient/ResolvedGradient.swift   |  12 +-
+ .../DisplayListLayerRenderer.swift            |  63 +++-
+ .../ShapeStyle/ShapeStyleRendering.swift      |  29 +-
+ 4 files changed, 385 insertions(+), 13 deletions(-)
+ create mode 100644 Sources/OpenSwiftUICore/Graphic/Gradient/Gradients.swift
+
+diff --git a/Sources/OpenSwiftUICore/Graphic/Gradient/Gradients.swift b/Sources/OpenSwiftUICore/Graphic/Gradient/Gradients.swift
+new file mode 100644
+index 0000000..b7113d2
+--- /dev/null
++++ b/Sources/OpenSwiftUICore/Graphic/Gradient/Gradients.swift
+@@ -0,0 +1,294 @@
++//
++//  Gradients.swift
++//  OpenSwiftUICore
++//
++//  Status: Iris
++
++public import Foundation
++public import OpenCoreGraphicsShims
++
++// Iris: gradients until upstream has them, as shape styles and as views. They resolve to a
++// paint that Iris's render core draws; text and other places that take one color get the
++// color of the first stop. No elliptical or mesh gradients, color spaces or animation of
++// stops yet.
++
++// MARK: - Gradient
++
++/// A color gradient represented as an array of color stops, each having a parametric location
++/// value.
++@available(OpenSwiftUI_v1_0, *)
++public struct Gradient: Equatable, Hashable, Sendable {
++    /// One color stop in the gradient.
++    public struct Stop: Equatable, Hashable, Sendable {
++        /// The color for the stop.
++        public var color: Color
++
++        /// The parametric location of the stop, from 0 to 1.
++        public var location: CGFloat
++
++        public init(color: Color, location: CGFloat) {
++            self.color = color
++            self.location = location
++        }
++    }
++
++    /// The array of color stops.
++    public var stops: [Stop]
++
++    public init(stops: [Stop]) {
++        self.stops = stops
++    }
++
++    /// Upstream's resolved gradients hold no stops yet.
++    package init(_ resolved: ResolvedGradient) {
++        self.init(stops: [])
++    }
++
++    /// Creates a gradient from colors, evenly spaced.
++    public init(colors: [Color]) {
++        let last = CGFloat(max(colors.count - 1, 1))
++        stops = colors.enumerated().map { Stop(color: $1, location: CGFloat($0) / last) }
++    }
++}
++
++// MARK: - Gradient styles
++
++/// A linear gradient.
++@available(OpenSwiftUI_v1_0, *)
++public struct LinearGradient: ShapeStyle, View, Sendable {
++    var gradient: Gradient
++    var startPoint: UnitPoint
++    var endPoint: UnitPoint
++
++    public init(gradient: Gradient, startPoint: UnitPoint, endPoint: UnitPoint) {
++        self.gradient = gradient
++        self.startPoint = startPoint
++        self.endPoint = endPoint
++    }
++
++    public init(colors: [Color], startPoint: UnitPoint, endPoint: UnitPoint) {
++        self.init(gradient: Gradient(colors: colors), startPoint: startPoint, endPoint: endPoint)
++    }
++
++    public init(stops: [Gradient.Stop], startPoint: UnitPoint, endPoint: UnitPoint) {
++        self.init(gradient: Gradient(stops: stops), startPoint: startPoint, endPoint: endPoint)
++    }
++
++    public func _apply(to shape: inout _ShapeStyle_Shape) {
++        IrisGradientPaint.apply(gradient, as: .linear(start: startPoint, end: endPoint), to: &shape)
++    }
++
++    public var body: _ShapeView<Rectangle, LinearGradient> {
++        _ShapeView(shape: Rectangle(), style: self)
++    }
++}
++
++/// A radial gradient.
++@available(OpenSwiftUI_v1_0, *)
++public struct RadialGradient: ShapeStyle, View, Sendable {
++    var gradient: Gradient
++    var center: UnitPoint
++    var startRadius: CGFloat
++    var endRadius: CGFloat
++
++    public init(gradient: Gradient, center: UnitPoint, startRadius: CGFloat, endRadius: CGFloat) {
++        self.gradient = gradient
++        self.center = center
++        self.startRadius = startRadius
++        self.endRadius = endRadius
++    }
++
++    public init(colors: [Color], center: UnitPoint, startRadius: CGFloat, endRadius: CGFloat) {
++        self.init(gradient: Gradient(colors: colors), center: center, startRadius: startRadius, endRadius: endRadius)
++    }
++
++    public init(stops: [Gradient.Stop], center: UnitPoint, startRadius: CGFloat, endRadius: CGFloat) {
++        self.init(gradient: Gradient(stops: stops), center: center, startRadius: startRadius, endRadius: endRadius)
++    }
++
++    public func _apply(to shape: inout _ShapeStyle_Shape) {
++        IrisGradientPaint.apply(gradient, as: .radial(center: center, startRadius: startRadius, endRadius: endRadius), to: &shape)
++    }
++
++    public var body: _ShapeView<Rectangle, RadialGradient> {
++        _ShapeView(shape: Rectangle(), style: self)
++    }
++}
++
++/// An angular gradient, also known as a conic gradient.
++@available(OpenSwiftUI_v1_0, *)
++public struct AngularGradient: ShapeStyle, View, Sendable {
++    var gradient: Gradient
++    var center: UnitPoint
++    var startAngle: Angle
++    var endAngle: Angle
++
++    public init(gradient: Gradient, center: UnitPoint, startAngle: Angle = .zero, endAngle: Angle = .zero) {
++        self.gradient = gradient
++        self.center = center
++        self.startAngle = startAngle
++        // Equal angles mean a whole turn, as in SwiftUI.
++        self.endAngle = endAngle == startAngle ? startAngle + .degrees(360) : endAngle
++    }
++
++    public init(colors: [Color], center: UnitPoint, startAngle: Angle, endAngle: Angle) {
++        self.init(gradient: Gradient(colors: colors), center: center, startAngle: startAngle, endAngle: endAngle)
++    }
++
++    public init(stops: [Gradient.Stop], center: UnitPoint, startAngle: Angle, endAngle: Angle) {
++        self.init(gradient: Gradient(stops: stops), center: center, startAngle: startAngle, endAngle: endAngle)
++    }
++
++    public init(gradient: Gradient, center: UnitPoint, angle: Angle = .zero) {
++        self.init(gradient: gradient, center: center, startAngle: angle, endAngle: angle + .degrees(360))
++    }
++
++    public init(colors: [Color], center: UnitPoint, angle: Angle = .zero) {
++        self.init(gradient: Gradient(colors: colors), center: center, angle: angle)
++    }
++
++    public func _apply(to shape: inout _ShapeStyle_Shape) {
++        IrisGradientPaint.apply(gradient, as: .angular(center: center, start: startAngle, end: endAngle), to: &shape)
++    }
++
++    public var body: _ShapeView<Rectangle, AngularGradient> {
++        _ShapeView(shape: Rectangle(), style: self)
++    }
++}
++
++/// A color gradient, such as `Color.blue.gradient`: from a lighter shade at the top to the
++/// color at the bottom.
++@available(OpenSwiftUI_v4_0, *)
++public struct AnyGradient: ShapeStyle, Hashable, Sendable {
++    var color: Color
++
++    public func _apply(to shape: inout _ShapeStyle_Shape) {
++        let base = color.resolve(in: shape.environment)
++        let light = Color.Resolved(
++            red: base.red + (1 - base.red) * 0.2,
++            green: base.green + (1 - base.green) * 0.2,
++            blue: base.blue + (1 - base.blue) * 0.2,
++            opacity: base.opacity
++        )
++        IrisGradientPaint.apply(colors: [light, base], locations: [0, 1], firstColor: color, as: .linear(start: .top, end: .bottom), to: &shape)
++    }
++}
++
++@available(OpenSwiftUI_v4_0, *)
++extension Color {
++    /// A standard gradient for the color.
++    public var gradient: AnyGradient {
++        AnyGradient(color: self)
++    }
++}
++
++// MARK: - ShapeStyle members
++
++@available(OpenSwiftUI_v3_0, *)
++extension ShapeStyle where Self == LinearGradient {
++    public static func linearGradient(_ gradient: Gradient, startPoint: UnitPoint, endPoint: UnitPoint) -> LinearGradient {
++        LinearGradient(gradient: gradient, startPoint: startPoint, endPoint: endPoint)
++    }
++
++    public static func linearGradient(colors: [Color], startPoint: UnitPoint, endPoint: UnitPoint) -> LinearGradient {
++        LinearGradient(colors: colors, startPoint: startPoint, endPoint: endPoint)
++    }
++
++    public static func linearGradient(stops: [Gradient.Stop], startPoint: UnitPoint, endPoint: UnitPoint) -> LinearGradient {
++        LinearGradient(stops: stops, startPoint: startPoint, endPoint: endPoint)
++    }
++}
++
++@available(OpenSwiftUI_v3_0, *)
++extension ShapeStyle where Self == RadialGradient {
++    public static func radialGradient(_ gradient: Gradient, center: UnitPoint, startRadius: CGFloat, endRadius: CGFloat) -> RadialGradient {
++        RadialGradient(gradient: gradient, center: center, startRadius: startRadius, endRadius: endRadius)
++    }
++
++    public static func radialGradient(colors: [Color], center: UnitPoint, startRadius: CGFloat, endRadius: CGFloat) -> RadialGradient {
++        RadialGradient(colors: colors, center: center, startRadius: startRadius, endRadius: endRadius)
++    }
++}
++
++@available(OpenSwiftUI_v3_0, *)
++extension ShapeStyle where Self == AngularGradient {
++    public static func angularGradient(_ gradient: Gradient, center: UnitPoint, startAngle: Angle, endAngle: Angle) -> AngularGradient {
++        AngularGradient(gradient: gradient, center: center, startAngle: startAngle, endAngle: endAngle)
++    }
++
++    public static func angularGradient(colors: [Color], center: UnitPoint, startAngle: Angle, endAngle: Angle) -> AngularGradient {
++        AngularGradient(colors: colors, center: center, startAngle: startAngle, endAngle: endAngle)
++    }
++
++    public static func conicGradient(_ gradient: Gradient, center: UnitPoint, angle: Angle = .zero) -> AngularGradient {
++        AngularGradient(gradient: gradient, center: center, angle: angle)
++    }
++}
++
++// MARK: - IrisGradientPaint
++
++/// Iris: a resolved gradient, which the layer renderer hands to the render core.
++package struct IrisGradientPaint: ResolvedPaint {
++    package enum Kind: Equatable {
++        /// Points in the unit square of the shape's bounds.
++        case linear(start: UnitPoint, end: UnitPoint)
++        case radial(center: UnitPoint, startRadius: CGFloat, endRadius: CGFloat)
++        /// Clockwise on screen from the trailing edge.
++        case angular(center: UnitPoint, start: Angle, end: Angle)
++    }
++
++    package var kind: Kind
++    package var colors: [Color.Resolved]
++    package var locations: [Float]
++
++    package func draw(path: Path, style: PathDrawingStyle, in context: GraphicsContext, bounds: CGRect?) {
++        // ponytail: canvases draw the first color.
++        context.draw(path, with: .color(colors.first ?? .clear), style: style)
++    }
++
++    package var isClear: Bool {
++        colors.allSatisfy { $0.opacity == 0 }
++    }
++
++    package var isOpaque: Bool {
++        colors.allSatisfy { $0.opacity == 1 }
++    }
++
++    package static var leafProtobufTag: CodableResolvedPaint.Tag? { nil }
++
++    package func encode(to encoder: inout ProtobufEncoder) throws {}
++
++    static func apply(_ gradient: Gradient, as kind: Kind, to shape: inout _ShapeStyle_Shape) {
++        let stops = gradient.stops.sorted { $0.location < $1.location }
++        apply(
++            colors: stops.map { $0.color.resolve(in: shape.environment) },
++            locations: stops.map { Float($0.location) },
++            firstColor: stops.first?.color ?? .clear,
++            as: kind,
++            to: &shape
++        )
++    }
++
++    static func apply(
++        colors: [Color.Resolved],
++        locations: [Float],
++        firstColor: Color,
++        as kind: Kind,
++        to shape: inout _ShapeStyle_Shape
++    ) {
++        switch shape.operation {
++        case let .prepareText(level):
++            shape.result = .preparedText(.foregroundColor(shape.applyingOpacity(at: level, to: firstColor)))
++        case let .resolveStyle(name, levels):
++            guard levels.lowerBound != levels.upperBound, !colors.isEmpty else {
++                break
++            }
++            let paint = IrisGradientPaint(kind: kind, colors: colors, locations: locations)
++            shape.stylePack[name, levels.lowerBound] = .init(.paint(_AnyResolvedPaint(paint)))
++        case let .fallbackColor(level):
++            shape.result = .color(shape.applyingOpacity(at: level, to: firstColor))
++        default:
++            break
++        }
++    }
++}
+diff --git a/Sources/OpenSwiftUICore/Graphic/Gradient/ResolvedGradient.swift b/Sources/OpenSwiftUICore/Graphic/Gradient/ResolvedGradient.swift
+index 5c8dda8..96989df 100644
+--- a/Sources/OpenSwiftUICore/Graphic/Gradient/ResolvedGradient.swift
++++ b/Sources/OpenSwiftUICore/Graphic/Gradient/ResolvedGradient.swift
+@@ -17,14 +17,4 @@ package struct ResolvedGradient: Equatable {
+     }
+ }
+ 
+-// FIXME
+-public struct Gradient {
+-    package init(_ resolved: ResolvedGradient) {
+-//        self.init(
+-//            stops: resolved.stops.map {
+-//                Stop(color: Color($0.color), location: $0.location)
+-//            }
+-//        )
+-    }
+-
+-}
++// Iris: Gradient lives in Gradients.swift.
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index 59ef4e3..b9cdc26 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -130,7 +130,27 @@ extension IrisRender.Scene {
+         case let .color(color):
+             parent.addSublayer(box(frame, color: color))
+         case let .shape(path, paint, fillStyle):
+-            // ponytail: paints of one color; gradients and images come next.
++            if let gradient = paint.irisGradient {
++                // ponytail: gradients fill; a stroked line takes its first color.
++                if case .stroked = path.storage, let first = gradient.colors.first {
++                    let layer = Layer(in: self)
++                    layer.frame = Rect(frame)
++                    layer.setShape(path.irisPath, style: path.irisShapeStyle(color: first.irisColor, eoFill: fillStyle.isEOFilled))
++                    parent.addSublayer(layer)
++                    break
++                }
++                let layer = Layer(in: self)
++                layer.frame = Rect(frame)
++                _ = layer.setGradient(gradient.irisGradient(size: frame.size))
++                if let shape = path.irisRoundedRect, shape.rect == CGRect(origin: .zero, size: frame.size) {
++                    layer.cornerRadius = Float(min(shape.cornerSize.width, shape.cornerSize.height))
++                } else {
++                    layer.mask = path.irisPath
++                }
++                parent.addSublayer(layer)
++                break
++            }
++            // ponytail: paints of one color or a gradient; images and materials come next.
+             guard let color = paint.stdoutResolvedColor else {
+                 break
+             }
+@@ -188,6 +208,13 @@ extension IrisRender.Scene {
+                 transform.a, transform.b, transform.c, transform.d,
+                 translation.x - center.x, translation.y - center.y,
+             ].map { Float($0) }
++        case let .filter(.shadow(shadow)) where !shadow.kind.contains(.inner):
++            // The shadow of everything in the group, as a CALayer's. ponytail: drop shadows
++            // only; inner shadows draw their content as is.
++            group = Layer(in: self)
++            group.shadowColor = shadow.color.irisColor
++            group.shadowOffset = IrisRender.Point(x: Float(shadow.offset.width), y: Float(shadow.offset.height))
++            group.shadowRadius = Float(shadow.radius)
+         case let .clip(path, _, _):
+             // Rectangles and rounded rectangles clip by bounds, other paths by a mask. ponytail:
+             // masks by display list, filters and other transforms draw their content as is.
+@@ -217,6 +244,40 @@ extension IrisRender.Scene {
+     }
+ }
+ 
++extension AnyResolvedPaint {
++    fileprivate var irisGradient: IrisGradientPaint? {
++        var visitor = GradientVisitor()
++        visit(&visitor)
++        return visitor.paint
++    }
++}
++
++private struct GradientVisitor: ResolvedPaintVisitor {
++    var paint: IrisGradientPaint?
++
++    mutating func visitPaint<P>(_ paint: P) where P: ResolvedPaint {
++        self.paint = paint as? IrisGradientPaint
++    }
++}
++
++extension IrisGradientPaint {
++    /// The gradient over a shape of `size` points.
++    fileprivate func irisGradient(size: CGSize) -> IrisRender.Gradient {
++        func point(_ unit: UnitPoint) -> IrisRender.Point {
++            IrisRender.Point(x: Float(unit.x * size.width), y: Float(unit.y * size.height))
++        }
++        let irisKind: IrisRender.Gradient.Kind = switch kind {
++        case let .linear(start, end):
++            .linear(start: point(start), end: point(end))
++        case let .radial(center, startRadius, endRadius):
++            .radial(center: point(center), startRadius: Float(startRadius), endRadius: Float(endRadius))
++        case let .angular(center, start, end):
++            .conic(center: point(center), startAngle: Float(start.radians), endAngle: Float(end.radians))
++        }
++        return IrisRender.Gradient(irisKind, colors: colors.map(\.irisColor), locations: locations)
++    }
++}
++
+ extension Rect {
+     init(_ rect: CGRect) {
+         self.init(x: Float(rect.minX), y: Float(rect.minY), width: Float(rect.width), height: Float(rect.height))
+diff --git a/Sources/OpenSwiftUICore/Shape/ShapeStyle/ShapeStyleRendering.swift b/Sources/OpenSwiftUICore/Shape/ShapeStyle/ShapeStyleRendering.swift
+index fe09512..0f14805 100644
+--- a/Sources/OpenSwiftUICore/Shape/ShapeStyle/ShapeStyleRendering.swift
++++ b/Sources/OpenSwiftUICore/Shape/ShapeStyle/ShapeStyleRendering.swift
+@@ -190,6 +190,8 @@ package struct _ShapeStyle_RenderedShape {
+                 opacity = 1.0
+             }
+             render(color: resolved)
++        case let .paint(paint):
++            render(paint: paint)
+         default:
+             _openSwiftUIUnimplementedFailure()
+         }
+@@ -251,8 +253,33 @@ package struct _ShapeStyle_RenderedShape {
+         }
+     }
+ 
++    /// Iris: paints other than one color, such as gradients, fill the shape's path; the
++    /// style's opacity becomes an effect.
+     private mutating func render(paint: AnyResolvedPaint) {
+-        _openSwiftUIUnimplementedFailure()
++        defer {
++            if let data = interpolatorData {
++                addEffect(.interpolatorLayer(data.group, serial: data.serial))
++                interpolatorData = nil
++            }
++        }
++        guard !paint.isClear else { return }
++        switch shape {
++        case let .path(path, fillStyle):
++            item.value = .content(DisplayList.Content(
++                .shape(path, paint, fillStyle),
++                seed: contentSeed
++            ))
++        case .text, .image, .alphaMask, .empty:
++            // ponytail: gradient text and images; they draw as nothing.
++            item.value = .content(DisplayList.Content(
++                .color(.clear),
++                seed: contentSeed
++            ))
++        }
++        if opacity != 1 {
++            addEffect(.opacity(opacity))
++            opacity = 1
++        }
+     }
+ 
+     private mutating func renderVectorGlyph(

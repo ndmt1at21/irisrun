@@ -4,8 +4,9 @@
 # package to $IRISRUN_IOS_WORK/apps/<name>: the target's Swift files without previews, its Swift
 # packages and resources, with SwiftUI aliased to OpenSwiftUI and Observation to OpenObservation.
 # A directory with no Xcode project counts as one target of all its Swift files but tests. This
-# script then builds the package. On success it prints the executable's path, or the module's
-# name when the app has no entry point; what the tool found goes to stderr.
+# script then builds the package. On success it prints the path of the executable, linked into a
+# directory with the app's resources, or the module's name when the app has no entry point; what
+# the tool found goes to stderr.
 #
 #   Scripts/compile-app.sh <app-dir> [swift build options...]
 #
@@ -42,7 +43,14 @@ case " $* " in *" release "* | *"=release "*) config=release ;; esac
 build=(swift build --package-path "$pkg" --scratch-path "$IRISRUN_IOS_WORK/build/apps-$config" -j 6 "$@")
 "${build[@]}" >&2
 if grep -q '"executable" : true' <<< "$summary"; then
-    echo "$("${build[@]}" --show-bin-path)/$module"
+    # The app runs from a directory of its own, with its resources next to the executable,
+    # where Bundle.main finds them: asset catalogs, .lproj folders and the rest.
+    run="$pkg/run"
+    rm -rf "$run"
+    mkdir -p "$run"
+    cp -R "$pkg/Resources/." "$run/"
+    ln -f "$("${build[@]}" --show-bin-path)/$module" "$run/$module"
+    echo "$run/$module"
 else
     echo "$module"
 fi

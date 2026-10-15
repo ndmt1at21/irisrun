@@ -1,0 +1,268 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 16:28:49 +0700
+Subject: [PATCH 15/22] Draw paths, strokes, path clips and styled text with
+ the render core
+
+The layer renderer draws shapes other than rectangles, rounded rectangles and
+circles as render core shape layers: filled with the fill rule, or for a
+stroked path, stroked with its width, caps, joins, miter limit and dashes.
+Clips to other paths become layer masks.
+
+Text is drawn and measured in runs: font size, weight and slant, color,
+underline, strikethrough, kerning, tracking and baseline offset per run, and
+line spacing for the paragraph. Fonts resolved without CoreText now carry
+italic.
+---
+ .../DisplayListLayerRenderer.swift            | 124 ++++++++++++++++--
+ .../Shim/FontNonDarwinShims.swift             |   6 +-
+ .../OpenSwiftUICore/View/Text/Font/Font.swift |   4 +-
+ .../View/Text/Font/ModifiedFont.swift         |   4 +
+ .../Text/Text/Text+StringDrawingContext.swift |   7 +-
+ 5 files changed, 129 insertions(+), 16 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index c136e22..59ef4e3 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -129,12 +129,19 @@ extension IrisRender.Scene {
+         switch content.value {
+         case let .color(color):
+             parent.addSublayer(box(frame, color: color))
+-        case let .shape(path, paint, _):
+-            // ponytail: rectangles, rounded rectangles and circles in one color; other paths
+-            // and paints need path drawing in the render core.
+-            if let color = paint.stdoutResolvedColor, let shape = path.irisRoundedRect {
++        case let .shape(path, paint, fillStyle):
++            // ponytail: paints of one color; gradients and images come next.
++            guard let color = paint.stdoutResolvedColor else {
++                break
++            }
++            if let shape = path.irisRoundedRect {
+                 let radius = min(shape.cornerSize.width, shape.cornerSize.height)
+                 parent.addSublayer(box(shape.rect.offsetBy(dx: frame.minX, dy: frame.minY), color: color, radius: radius))
++            } else {
++                let layer = Layer(in: self)
++                layer.frame = Rect(frame)
++                layer.setShape(path.irisPath, style: path.irisShapeStyle(color: color.irisColor, eoFill: fillStyle.isEOFilled))
++                parent.addSublayer(layer)
+             }
+         case let .text(view, _):
+             guard let storage = view.text.storage, storage.length > 0 else {
+@@ -143,7 +150,7 @@ extension IrisRender.Scene {
+             let properties = view.text.layoutProperties
+             let layer = Layer(in: self)
+             layer.frame = Rect(frame)
+-            layer.setText(storage.string, style: storage.irisTextStyle(
++            layer.setText(storage.string, runs: storage.irisTextRuns, paragraph: storage.irisParagraphStyle(
+                 lineLimit: properties.lineLimit,
+                 alignment: properties.multilineTextAlignment
+             ))
+@@ -182,10 +189,14 @@ extension IrisRender.Scene {
+                 translation.x - center.x, translation.y - center.y,
+             ].map { Float($0) }
+         case let .clip(path, _, _):
+-            // ponytail: rectangles and rounded rectangles clip; other paths, masks, filters and
+-            // other transforms draw their content as is.
++            // Rectangles and rounded rectangles clip by bounds, other paths by a mask. ponytail:
++            // masks by display list, filters and other transforms draw their content as is.
+             guard let shape = path.irisRoundedRect else {
+-                add(list, to: parent, at: frame.origin)
++                group = Layer(in: self)
++                group.frame = Rect(frame)
++                group.mask = path.irisPath
++                parent.addSublayer(group)
++                add(list, to: group, at: .zero)
+                 return
+             }
+             let clip = shape.rect.offsetBy(dx: frame.minX, dy: frame.minY)
+@@ -213,6 +224,53 @@ extension Rect {
+ }
+ 
+ extension Path {
++    /// The line or area the render core draws for the path: for a stroked path, its line.
++    fileprivate var irisPath: IrisRender.Path {
++        var path = IrisRender.Path()
++        func point(_ p: CGPoint) -> IrisRender.Point {
++            IrisRender.Point(x: Float(p.x), y: Float(p.y))
++        }
++        for element in elements {
++            switch element {
++            case let .move(p): path.move(to: point(p))
++            case let .line(p): path.addLine(to: point(p))
++            case let .quadCurve(p, control): path.addQuadCurve(to: point(p), control: point(control))
++            case let .curve(p, control1, control2):
++                path.addCurve(to: point(p), control1: point(control1), control2: point(control2))
++            case .closeSubpath: path.closeSubpath()
++            }
++        }
++        return path
++    }
++
++    /// Fills the path in `color`, or for a stroked path, strokes its line.
++    fileprivate func irisShapeStyle(color: UInt32, eoFill: Bool) -> IrisRender.ShapeStyle {
++        guard case let .stroked(stroked) = storage else {
++            return IrisRender.ShapeStyle(fill: color, isEvenOdd: eoFill)
++        }
++        let style = stroked.style
++        let cap: IrisRender.ShapeStyle.LineCap = switch style.lineCap {
++        case .round: .round
++        case .square: .square
++        default: .butt
++        }
++        let join: IrisRender.ShapeStyle.LineJoin = switch style.lineJoin {
++        case .round: .round
++        case .bevel: .bevel
++        default: .miter
++        }
++        return IrisRender.ShapeStyle(
++            fill: 0,
++            stroke: color,
++            lineWidth: Float(style.lineWidth),
++            lineCap: cap,
++            lineJoin: join,
++            miterLimit: Float(style.miterLimit),
++            dashes: style.dash.map { Float($0) },
++            dashPhase: Float(style.dashPhase)
++        )
++    }
++
+     /// The path as a rounded rectangle, if it is one.
+     fileprivate var irisRoundedRect: FixedRoundedRect? {
+         switch storage {
+@@ -231,8 +289,54 @@ extension Path {
+ // MARK: - Text and color
+ 
+ extension NSAttributedString {
+-    /// How the render core draws this text. It takes one style per text, so the font and
+-    /// color of the first run apply to all of it.
++    /// The text's runs of style for the render core, over UTF-8 bytes: font, color, slant,
++    /// underline, strikethrough, kerning and baseline offset. Underlines take the run's color.
++    package var irisTextRuns: [IrisRender.TextRun] {
++        var runs: [IrisRender.TextRun] = []
++        let string = string
++        let utf16 = string.utf16
++        enumerateAttributes(in: NSRange(location: 0, length: length)) { attributes, range, _ in
++            guard let lower = utf16.index(utf16.startIndex, offsetBy: range.location, limitedBy: utf16.endIndex),
++                  let upper = utf16.index(lower, offsetBy: range.length, limitedBy: utf16.endIndex)
++            else { return }
++            let font = attributes[.kitFont] as? CTFont
++            let color = (attributes[.kitForegroundColor] as? NDColor).map {
++                Color.Resolved(red: Float($0.red), green: Float($0.green), blue: Float($0.blue), opacity: Float($0.alpha))
++            }
++            func number(_ key: NSAttributedString.Key) -> CGFloat {
++                (attributes[key] as? CGFloat) ?? (attributes[key] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 0
++            }
++            runs.append(IrisRender.TextRun(
++                string.utf8.distance(from: string.startIndex, to: lower) ..< string.utf8.distance(from: string.startIndex, to: upper),
++                size: Float(font?.pointSize ?? 17),
++                weight: font.map { irisWeight($0.weight) } ?? 400,
++                color: color?.irisColor ?? 0xFF00_0000,
++                isItalic: font?.isItalic ?? false,
++                isUnderlined: number(.kitUnderlineStyle) != 0,
++                isStruckThrough: number(.kitStrikethroughStyle) != 0,
++                letterSpacing: Float(number(.kitKern) + number(.kitTracking)),
++                baselineOffset: Float(number(.kitBaselineOffset))
++            ))
++        }
++        return runs
++    }
++
++    /// How the render core breaks the text into lines.
++    package func irisParagraphStyle(lineLimit: Int?, alignment: TextAlignment = .leading) -> IrisRender.ParagraphStyle {
++        let lineSpacing = length > 0 ? (attribute(.kitParagraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.lineSpacing : nil
++        let textAlignment: IrisRender.TextAlignment = switch alignment {
++        case .leading: .leading
++        case .center: .center
++        case .trailing: .trailing
++        }
++        return IrisRender.ParagraphStyle(
++            alignment: textAlignment,
++            maxLines: UInt32(max(lineLimit ?? 0, 0)),
++            lineSpacing: Float(lineSpacing ?? 0)
++        )
++    }
++
++    /// The style of the first run, for text in one style.
+     package func irisTextStyle(lineLimit: Int?, alignment: TextAlignment = .leading) -> IrisRender.TextStyle {
+         let font = length > 0 ? attribute(.kitFont, at: 0, effectiveRange: nil) as? CTFont : nil
+         let color = length > 0 ? attribute(.kitForegroundColor, at: 0, effectiveRange: nil) as? NDColor : nil
+diff --git a/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift b/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift
+index f7e3cf1..48559d0 100644
+--- a/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift
++++ b/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift
+@@ -8,14 +8,16 @@ public import Foundation
+ // Placeholder for CoreText when not available.
+ public class CTFontDescriptor: CFCompatObject {}
+ 
+-// Iris: keeps the resolved size and weight so text can be measured until the render core can.
++// Iris: keeps the resolved size, weight and slant, which the render core draws text with.
+ public class CTFont: CFCompatObject {
+     package let pointSize: CGFloat
+     package let weight: CGFloat
++    package let isItalic: Bool
+ 
+-    package init(pointSize: CGFloat, weight: CGFloat) {
++    package init(pointSize: CGFloat, weight: CGFloat, isItalic: Bool = false) {
+         self.pointSize = pointSize
+         self.weight = weight
++        self.isItalic = isItalic
+         super.init()
+     }
+ }
+diff --git a/Sources/OpenSwiftUICore/View/Text/Font/Font.swift b/Sources/OpenSwiftUICore/View/Text/Font/Font.swift
+index 22d461f..f07582b 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Font/Font.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Font/Font.swift
+@@ -48,6 +48,8 @@ public struct Font: Hashable, Sendable {
+         var pointSize: CGFloat
+         var weight: CGFloat
+         var width: CGFloat?
++        /// Iris: italic, for fonts resolved without CoreText.
++        var isItalic = false
+ 
+         public init(pointSize: CGFloat, weight: CGFloat) {
+             self.pointSize = pointSize
+@@ -401,7 +403,7 @@ extension Font {
+             for modifier in resolved.modifiers {
+                 modifier.modify(traits: &traits)
+             }
+-            return CTFont(pointSize: traits.pointSize, weight: traits.weight)
++            return CTFont(pointSize: traits.pointSize, weight: traits.weight, isItalic: traits.isItalic)
+             #endif
+         }
+         return cache
+diff --git a/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift b/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift
+index f308ea4..6e52cfb 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift
+@@ -368,6 +368,10 @@ extension Font {
+             _openSwiftUIPlatformUnimplementedWarning()
+             #endif
+         }
++
++        package static func modify(traits: inout Font.ResolvedTraits) {
++            traits.isItalic = true
++        }
+     }
+ 
+     package struct MonospacedModifier: StaticFontModifier {
+diff --git a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+index ab7b334..ca3d8ae 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+@@ -256,10 +256,11 @@ extension NSAttributedString {
+             #else
+             // Iris: measured by the render core with the fonts it draws with. The text on one
+             // line comes first: it is the size when nothing wraps.
+-            let style = irisTextStyle(lineLimit: lineLimit)
+-            let line = irisScene.measure(string, style: style)
++            let runs = irisTextRuns
++            let paragraph = irisParagraphStyle(lineLimit: lineLimit)
++            let line = irisScene.measure(string, runs: runs, paragraph: paragraph)
+             let fits = CGFloat(line.width) <= requestedSize.width
+-            let text = fits ? line : irisScene.measure(string, style: style, maxWidth: Float(requestedSize.width))
++            let text = fits ? line : irisScene.measure(string, runs: runs, paragraph: paragraph, maxWidth: Float(requestedSize.width))
+             return Metrics(
+                 size: CGSize(
+                     width: widthIsFlexible ? requestedSize.width : CGFloat(text.width),

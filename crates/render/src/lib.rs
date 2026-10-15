@@ -25,7 +25,7 @@ use skia_safe::{
 use animation::Running;
 pub use animation::{Animation, Timing, Value};
 use text::Fonts;
-pub use text::{FontMetrics, ParagraphStyle, Run, RunStyle, TextAlign, TextMetrics};
+pub use text::{Caret, FontMetrics, ParagraphStyle, Run, RunStyle, TextAlign, TextMetrics};
 
 /// Identifies a layer in its scene. Ids of destroyed layers are never valid
 /// again, so a stale id is an error, not another layer.
@@ -395,8 +395,68 @@ impl Scene {
         style: &ParagraphStyle,
         max_width: f32,
     ) -> TextMetrics {
+        TextMetrics::of(&self.layout_text(text, runs, style, max_width))
+    }
+
+    /// Where the caret goes before byte `offset` of text that lays out as
+    /// `measure_text` lays it out, or after the last character.
+    pub fn text_caret(
+        &self,
+        text: &str,
+        runs: &[Run],
+        style: &ParagraphStyle,
+        max_width: f32,
+        offset: usize,
+    ) -> Caret {
+        let offset = text::floor_char_boundary(text, offset);
+        // Empty text, and the empty line after a final newline, have no
+        // glyph to put the caret by: a zero-width space in the style of the
+        // run that ends the text gives them one.
+        if offset == text.len() && (text.is_empty() || text.ends_with('\n')) {
+            let padded = format!("{text}\u{200B}");
+            let runs: Vec<Run> = runs
+                .iter()
+                .map(|run| match run.range.end >= text.len() {
+                    true => Run {
+                        range: run.range.start..padded.len(),
+                        ..run.clone()
+                    },
+                    false => run.clone(),
+                })
+                .collect();
+            return self.text_caret(&padded, &runs, style, max_width, offset);
+        }
+        let paragraph = self.layout_text(text, runs, style, max_width);
+        Caret::of(&paragraph, text, offset).unwrap_or(Caret {
+            x: 0.0,
+            y: 0.0,
+            height: paragraph.height(),
+        })
+    }
+
+    /// The byte offset of the character boundary nearest to a point in text
+    /// that lays out as `measure_text` lays it out, for placing the caret
+    /// where the text is touched.
+    pub fn text_offset_at(
+        &self,
+        text: &str,
+        runs: &[Run],
+        style: &ParagraphStyle,
+        max_width: f32,
+        point: Point,
+    ) -> usize {
+        text::offset_at(&self.layout_text(text, runs, style, max_width), text, point)
+    }
+
+    fn layout_text(
+        &self,
+        text: &str,
+        runs: &[Run],
+        style: &ParagraphStyle,
+        max_width: f32,
+    ) -> Paragraph {
         // SkParagraph forms no lines when it must center or right-align them
-        // in unbounded width. Alignment changes no metric, so measure leading.
+        // in unbounded width. Lines then start at 0 anyway, so lay out leading.
         let leading;
         let style = if max_width.is_finite() || style.align == TextAlign::Leading {
             style
@@ -409,7 +469,14 @@ impl Scene {
         };
         let mut paragraph = self.fonts.paragraph(text, runs, style);
         paragraph.layout(max_width);
-        TextMetrics::of(&paragraph)
+        paragraph
+    }
+
+    /// The pixel size of a PNG, JPEG, WebP, GIF or BMP image, from its
+    /// header, for layout before anything is drawn.
+    pub fn image_size(encoded: &[u8]) -> Option<(i32, i32)> {
+        let image = Image::from_encoded(Data::new_copy(encoded))?;
+        Some((image.width(), image.height()))
     }
 
     /// Shows a PNG, JPEG, WebP, GIF or BMP image that has `scale` pixels per

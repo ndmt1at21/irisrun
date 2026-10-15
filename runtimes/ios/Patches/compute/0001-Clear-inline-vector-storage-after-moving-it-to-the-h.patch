@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 12:28:15 +0700
+Subject: [PATCH] Clear inline vector storage after moving it to the heap
+
+IAG::vector keeps its inline elements in an array of T. When it grows past
+them, realloc_vector copies them to the heap bit for bit and leaves the
+originals in place, and the array destroys them again with the vector. For a
+cf_ptr that releases the object a second time: Subgraph::update crashed in
+~stack once a subgraph had more than 32 dirty children, as a List with about
+16 rows does.
+---
+ Sources/ComputeCxx/Vector/Vector.h | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Sources/ComputeCxx/Vector/Vector.h b/Sources/ComputeCxx/Vector/Vector.h
+index fb1c0a9..1175c9a 100644
+--- a/Sources/ComputeCxx/Vector/Vector.h
++++ b/Sources/ComputeCxx/Vector/Vector.h
+@@ -210,9 +210,16 @@ vector<T, _inline_capacity, size_type> &vector<T, _inline_capacity, size_type>::
+ template <typename T, unsigned int _inline_capacity, typename size_type>
+     requires std::unsigned_integral<size_type>
+ void vector<T, _inline_capacity, size_type>::reserve_slow(size_type new_cap) {
++    bool was_inline = _buffer == nullptr;
+     size_type effective_new_cap = std::max(capacity() * 1.5, new_cap * 1.0);
+     _buffer = reinterpret_cast<T *>(details::realloc_vector<size_type, sizeof(T)>(
+         (void *)_buffer, (void *)_inline_buffer, _inline_capacity, &_capacity, effective_new_cap));
++    // The elements moved to the heap bit for bit, but their inline copies are still objects of
++    // the array, destroyed again with the vector: a cf_ptr would release its object twice. Zero
++    // bits are an empty value of the types kept inline here.
++    if (was_inline && _buffer) {
++        memset((void *)_inline_buffer, 0, sizeof(_inline_buffer));
++    }
+ }
+ 
+ template <typename T, unsigned int _inline_capacity, typename size_type>

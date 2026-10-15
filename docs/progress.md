@@ -1,6 +1,6 @@
 # Tiến độ triển khai
 
-Cập nhật 15/10/2026 chiều, cuối session thứ tư. File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
+Cập nhật 15/10/2026, session thứ năm (P1-15 xong, P1-13 đợt 1 xong). File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
 
 ## Tổng quan
 
@@ -18,6 +18,8 @@ Cập nhật 15/10/2026 chiều, cuối session thứ tư. File này để sessi
 | P0-06 Render core | Xong | `crates/render`: cây layer kiểu CALayer, C ABI, lớp bọc Swift. OpenSwiftUI đo và vẽ chữ qua render core (patch 0006–0008): app mẫu ra 8 frame PNG, `check-sample.sh` đạt 14 điểm ở cả chế độ stdout và frame (kiểm lại ở session thứ tư). 2x: 32–55 fps từ display list ra JPEG. Xem [reports/p0-06-render-core.md](reports/p0-06-render-core.md) |
 | P0-10 cloud Android | Xong ở local | Emulator Android 16 trong container trên KVM → scrcpy-server → `irisrun-gateway` (str0m) → WebRTC → Chromium; chạm, kéo, phím, chữ (cả tiếng Việt), Back đều chạy. Còn đo từ VN tới host Singapore. Xem [reports/p0-10-cloud-android.md](reports/p0-10-cloud-android.md) |
 | P1-14 Render core v1 | Xong phần code | Chữ nhiều kiểu, metric chữ thật, bóng đổ, path, gradient, mask, ảnh theo `contentMode`, animation, hit-test, frame mã hoá ở luồng khác; OpenSwiftUI dùng metric thật (patch 0009). Còn so ảnh với simulator. Xem [reports/p1-14-render-core-v1.md](reports/p1-14-render-core-v1.md) |
+| P1-15 Input iOS | Xong | Form đăng nhập mẫu gõ Telex được trong Device UI (sự kiện IME của Chromium). `DragGesture`, `ScrollView`, `List` cuộn; `TextField`/`SecureField`/`TextEditor` vẽ bằng SwiftUI, caret theo render core; `@FocusState`/`onSubmit` bản Iris; app chạy như thiết bị IrisProtocol qua stdio; `irisrun start` nhận project Xcode. Input → frame trung vị 17 ms. Compute nâng 0.6.0-bugfix.1 kèm patch. Chưa thử bộ gõ thật của hệ điều hành. Xem [reports/p1-15-ios-input.md](reports/p1-15-ios-input.md) |
+| P1-13 Mở rộng OpenSwiftUI | Đang làm | Đợt 1 xong: path, nét viền, clip theo path, chữ nhiều kiểu, gradient, bóng đổ, ảnh từ asset catalog, `import SwiftUI` kéo theo Foundation (patch 0014–0018). Đợt 2 đang làm (patch 0019–0020: Toggle, Slider, ProgressView, Label, Section, Form, Stepper, lazy stack, NavigationView). Xem [reports/p1-13-openswiftui.md](reports/p1-13-openswiftui.md) |
 | P1-12 Pipeline build iOS | Xong phần pipeline | `irisrun-ios-build` (Swift, chỉ Foundation) đọc `.pbxproj` kể cả thư mục đồng bộ của Xcode 16, chọn target iOS, gom source/resource/gói SPM, bỏ preview, `.xcstrings` → `.strings`, sinh SwiftPM; 65/65 app corpus đọc được; app mẫu build qua `IrisSample.xcodeproj`. Nửa UIKit chờ P1-16, P1-33. Xem [reports/p1-12-ios-build-pipeline.md](reports/p1-12-ios-build-pipeline.md) |
 | P0-11 cloud iOS | Hoãn | Tầng dự phòng chạy simulator thật, cần Mac thuê (EC2 Mac hoặc MacStadium). Đường iOS chính (OpenKit trên Linux) không phụ thuộc nó. Người dùng chọn hoãn ngày 15/10 |
 | P0-13, P0-14, P0-15, P0-16 | Không phải việc code | Pháp lý, đối tác, họp cổng 0, giữ chỗ tên |
@@ -33,9 +35,20 @@ P0-05, P0-07 và P0-08 do subagent làm trong session thứ hai, mỗi task ch�
 3. Player WebRTC cho Device UI đã xong (session thứ ba); session UI giữ phần còn lại của `apps/web`, chỉ chạm `LiveDevicePage`, `Screen`, `connection`, `input`, `useDevice`, `webrtc`, `VideoScreen` khi cần.
 4. **Quyết định của người dùng ngày 15/10 (session thứ tư):** vào Phase 1 trước khi họp cổng 0, ưu tiên iOS không cần Mac theo thứ tự P1-14 render core v1 → P1-12 pipeline build iOS → P1-15 input iOS → P1-13 mở rộng OpenSwiftUI → P1-16 UIKit cơ bản; Android và server local (P1-03, P1-07, P1-08) làm xen khi iOS chờ build. P0-11 hoãn tới khi có Mac. `docs/tasks.md` là bản chuẩn của trạng thái task, không đồng bộ sang tab "Tasks" của Claude Docs.
 5. Job `render` và job `rust` (gói fontconfig/freetype, font) trong CI chưa chạy trên GitHub.
-6. **Tiếp theo: P1-15** (input iOS: chạm thành gesture, nhập chữ cho `TextField`/`TextEditor` qua IME), rồi P1-13 (mở rộng OpenSwiftUI: host IrisProtocol thật chạy RunLoop, nối ảnh/gradient/shape/clip/shadow/chữ nhiều kiểu vào render core, style iOS cho List/Button) và P1-16 (UIKit cơ bản). P1-14 và P1-12 đã xong phần code (xem bảng trên). Build công cụ: `cd runtimes/ios && swiftenv swift build --scratch-path ~/.cache/irisrun/ios-runtime-build`; `compile-app.sh` tự build nó vào `$IRISRUN_IOS_WORK/build/tool`.
+6. **P1-15 xong (session thứ năm),** xem báo cáo. Patch `openswiftui/0010`–`0013` và `compute/0001`; Compute ghim ở 0.6.0-bugfix.1. Chạy app iOS trong Device UI: `IRISRUN_SWIFT_RUNNER=swiftenv target/debug/irisrun start examples/ios-swiftui`, rồi mở `/#/live`. **Tiếp theo: P1-13** (mở rộng OpenSwiftUI). Host IrisProtocol đã làm ở P1-15; còn nối ảnh, gradient, shape, clip tuỳ ý, bóng đổ, chữ nhiều kiểu vào render core, style iOS cho `List`/`Button`, các control theo bảng xếp hạng P0-08, dựng sẵn OpenKit, `check-sample.sh` vào CI. Rồi P1-16 (UIKit cơ bản); P1-03, P1-07, P1-08 làm xen khi iOS chờ build.
 
 Emulator và gateway của P0-10 chạy lại theo mục "Chạy lại" của báo cáo. Image `irisrun-emulator:36` (4,6 GB) còn trong Docker. Gateway bị dừng bằng PID: `pkill -x` không khớp vì tên process bị cắt còn 15 ký tự (`irisrun-gateway`).
+
+## Kế hoạch P1-13 (task XL, chia đợt)
+
+Thứ tự theo bảng xếp hạng API của P0-08 (mục "Ý nghĩa với thứ tự làm P1-13"). Mỗi đợt là một hoặc vài patch OpenSwiftUI, có thêm bước vào `session.txt` hoặc app mẫu, và ảnh PNG để xem.
+
+1. **Vẽ nốt display list bằng render core** (`DisplayListLayerRenderer.swift`): path tuỳ ý và nét viền (`Path`, `Capsule`, `.stroke`, `.strokeBorder`, nét đứt), `clipShape` theo path (mask), chữ nhiều kiểu (`Text + Text`, `.italic`, `.underline`, `.strikethrough`, `.kerning`, `.baselineOffset`), `.shadow`, gradient, ảnh từ `Assets.xcassets` (`Image("tên")`, `.resizable`, `.scaledToFit`/`Fill`), `Image(systemName:)` tạm bằng ô trống có kích thước đúng. Upstream 0.23.1: `StrokedPath` là stub rỗng (mất path và kiểu nét), `Gradient`/`LinearGradient`… chưa có (chỉ `Color.Resolved` là paint), `ORBPath(roundedRect:)` chưa làm trên Linux.
+   **Xong (session thứ năm):** patch 0014–0018 và `compile-app.sh` chạy app từ thư mục có resource; xem [reports/p1-13-openswiftui.md](reports/p1-13-openswiftui.md). `session.txt` 25 điểm.
+2. **Control và container:** đang làm. Xong: patch 0019 (`Toggle` có tiêu đề, công tắc, `Slider`, `ProgressView` vẽ bằng SwiftUI trên Linux; trước đó Toggle và ProgressView crash, Slider trống), patch 0020 (`Label`, `Section`, `Form` kiểu inset grouped, `Stepper`, `LazyVStack`/`LazyHStack`, `NavigationView`, `NavigationLink(destination:)`); màn "Cài đặt" của app mẫu là một `Form`; `session.txt` 29 điểm. Còn: lưới (`LazyVGrid`, `GridItem`), `TabView`, `Picker`, `Menu` (cần lớp trình bày của đợt 3), `ScrollViewReader`. Danh sách đầy đủ ban đầu: `Toggle`, `Picker`, `Section`/`Form`, `Divider`, `Label`, `ProgressView`, `Menu`, `LazyVStack`/`LazyVGrid`, `TabView`, `NavigationView`, `Link`, `Slider`, `Stepper`, `ScrollViewReader`.
+3. **Trình bày:** `.sheet`, `.fullScreenCover`, `.alert`, `.confirmationDialog`, `.toolbar`, `.contextMenu`, `\.dismiss`, `\.openURL`.
+4. **Style iOS:** `Button` (tint, trạng thái nhấn, disabled, `.bordered`, `.borderedProminent`), `List`/`Form` inset grouped (nền, đường kẻ), thanh điều hướng (tiêu đề lớn/inline, toolbar), màu dark mode.
+5. **Hạ tầng:** dựng sẵn OpenKit theo phiên bản Swift, `check-sample.sh` vào CI, đo lại corpus.
 
 ## Môi trường máy dev (WSL2, Ubuntu 20.04, mạng chậm và chập chờn)
 
@@ -83,6 +96,16 @@ Session thứ hai:
 - App mẫu Compose dùng `compileSdk = 37` (Compose BOM 2026.09.00 đòi vậy), vẫn giữ `targetSdk = 36`. List có 20 mục để cuộn được.
 - Render core chỉ dùng font được nạp vào scene, không dùng font của máy: Inter (Latin, tiếng Việt) và Noto Sans SC (Trung, kana Nhật), đều OFL. Font biến thiên lấy độ đậm từ trục `wght`.
 - Id layer trong C ABI có số thế hệ, nên id của layer đã huỷ không bao giờ trỏ nhầm sang layer mới.
+
+Session thứ năm (P1-15):
+
+- **Compute nâng lên 0.6.0-bugfix.1** (`212355dc`): bản 0.6.0 so sánh một phần giá trị ở sai offset (`find_partial`), đọc nhầm case của enum và crash khi body có `if`/`else`. Thêm `Patches/compute/0001`: `IAG::vector` giữ phần tử inline trong mảng `T`, khi lớn quá 32 phần tử thì chép ra heap bằng `memcpy` mà vẫn huỷ bản cũ, nên `cf_ptr` bị release hai lần (crash khi `List` khoảng 16 hàng). Upstream chưa sửa lỗi thứ hai.
+- **Đọc `@State` hay `Binding` trong action/callback trả giá trị của lần update trước** khi nhiều sự kiện xử lý giữa hai lần render (callback của gesture, `blur` của focus). Trạng thái mà callback đọc lại phải nằm trong một reference Observable (`ScrollState`, `FocusBox`, `TextEditingSession`), không trong `@State` giá trị.
+- `.frame(minHeight:)` bị chặn bởi kích thước được đề xuất (đúng ngữ nghĩa SwiftUI), nên ScrollView đo nội dung bằng `onGeometryChange` *trước* frame đó. Preference từ `GeometryReader` trong `.background` không tới `onPreferenceChange` bên ngoài `GeometryReader` cha.
+- `@FocusState` của upstream lấy giá trị từ responder đang focus của UIKit/AppKit; trên Linux Iris thay bằng `FocusBox` (giữ `#if canImport(Darwin)` cho bản upstream). `TextInputFocus.shared.session` là field đang nhận bàn phím.
+- `Path.contains` cho hình bo góc gọi OpenRenderBox (chưa có trên Linux) và crash: patch 0010 tính bằng hình học.
+- Host stdout render lại cả khi graph đổi trong lúc đang render (`graphDidChange`), vì thay đổi trong `onAppear` trước đó bị bỏ qua.
+- Checkout OpenSwiftUI và Compute có `git config user.name irisrun`, `user.email irisrun@localhost` để commit patch; nhớ ghi lại stamp `.git/irisrun-patches` sau khi `format-patch`.
 
 Session thứ tư:
 

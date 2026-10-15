@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 17:58:44 +0700
+Subject: [PATCH 21/22] Fix slicing layout subviews and replacing view list
+ children
+
+LayoutSubviews[range] returned every subview instead of the range, so a
+custom layout that slices its subviews placed the first ones again.
+
+A view list child shown in place of another at the same index kept the
+old child on screen, and one shown again reset its state, as the
+placeholder tested the ids for equality instead of inequality.
+---
+ Sources/OpenSwiftUICore/Layout/Layout.swift              | 2 +-
+ Sources/OpenSwiftUICore/View/Input/ViewListContent.swift | 4 +++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Layout/Layout.swift b/Sources/OpenSwiftUICore/Layout/Layout.swift
+index f26d05a..669af60 100644
+--- a/Sources/OpenSwiftUICore/Layout/Layout.swift
++++ b/Sources/OpenSwiftUICore/Layout/Layout.swift
+@@ -1472,7 +1472,7 @@ public struct LayoutSubviews: Equatable, RandomAccessCollection, Sendable {
+ 
+     /// Gets the subview proxies in the specified range.
+     public subscript(bounds: Range<Int>) -> LayoutSubviews {
+-        selecting(indices: indices)
++        selecting(indices: bounds)
+     }
+ 
+     /// Gets the subview proxies with the specified indicies.
+diff --git a/Sources/OpenSwiftUICore/View/Input/ViewListContent.swift b/Sources/OpenSwiftUICore/View/Input/ViewListContent.swift
+index e6077dc..d70910c 100644
+--- a/Sources/OpenSwiftUICore/View/Input/ViewListContent.swift
++++ b/Sources/OpenSwiftUICore/View/Input/ViewListContent.swift
+@@ -326,7 +326,9 @@ private struct PlaceholderInfo: StatefulRule, ObservedAttribute, AsyncAttribute
+             value = makeItem(placeholder: placeholder, seed: 0)
+             return
+         }
+-        if value.index != placeholder.index || value.id == placeholder.id {
++        // Iris: upstream tests `value.id == placeholder.id`, which reset the state of a child
++        // shown again and left a child replaced by another at the same index on screen.
++        if value.index != placeholder.index || value.id != placeholder.id {
+             let newValue: Value
+             if reuseItem(info: &value, placeholder: placeholder) {
+                 newValue = value

@@ -1,0 +1,543 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 17:58:44 +0700
+Subject: [PATCH 22/22] Add grids, TabView and Picker for Linux
+
+LazyVGrid and LazyHGrid with fixed, flexible and adaptive GridItems lay
+out as a custom Layout. TabView shows its children's tabItem labels in an
+iPhone tab bar, selects by tag or index, makes a tab when first selected
+and keeps it. Picker draws the segmented, inline and menu styles; a menu
+picker moves to its next option until menus can be presented.
+---
+ .../View/Container/IrisContainers.swift       |   7 +
+ .../View/Container/IrisGridsTabsPickers.swift | 496 ++++++++++++++++++
+ 2 files changed, 503 insertions(+)
+ create mode 100644 Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+index 7338d7c..684667d 100644
+--- a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
++++ b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+@@ -42,6 +42,11 @@ public struct Label<Title, Icon>: View where Title: View, Icon: View {
+                 icon
+                 title
+             }
++        case .tabItem:
++            VStack(spacing: 2) {
++                icon
++                title
++            }
+         }
+     }
+ }
+@@ -106,6 +111,8 @@ extension View {
+ 
+ enum IrisLabelStyle {
+     case automatic, titleOnly, iconOnly, titleAndIcon
++    /// The icon above the title, in a tab bar.
++    case tabItem
+ }
+ 
+ private struct IrisLabelStyleKey: EnvironmentKey {
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift b/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
+new file mode 100644
+index 0000000..22da299
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
+@@ -0,0 +1,496 @@
++//
++//  IrisGridsTabsPickers.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: grids, tab views and pickers, which upstream does not have yet, made of SwiftUI parts
++// with iOS's default look. Custom picker styles are not supported; menus need presentation,
++// which comes later, so a menu picker moves to its next option on a tap meanwhile.
++
++/// systemBlue.
++private let tint = Color(red: 0, green: 122 / 255, blue: 1)
++/// systemGray.
++private let inactive = Color(red: 142 / 255, green: 142 / 255, blue: 147 / 255)
++
++// MARK: - GridItem
++
++/// A description of a row or a column in a lazy grid.
++public struct GridItem: Sendable {
++    public enum Size: Sendable {
++        case fixed(CGFloat)
++        case flexible(minimum: CGFloat = 10, maximum: CGFloat = .infinity)
++        case adaptive(minimum: CGFloat, maximum: CGFloat = .infinity)
++    }
++
++    public var size: Size
++    public var spacing: CGFloat?
++    public var alignment: Alignment?
++
++    public init(_ size: Size = .flexible(), spacing: CGFloat? = nil, alignment: Alignment? = nil) {
++        self.size = size
++        self.spacing = spacing
++        self.alignment = alignment
++    }
++}
++
++/// Columns (or rows) of a grid in `length` points: fixed ones keep their size, adaptive ones
++/// repeat as often as their minimum fits, flexible ones share what is left.
++private func tracks(_ items: [GridItem], in length: CGFloat?) -> [(size: CGFloat, spacing: CGFloat, alignment: Alignment?)] {
++    var resolved: [(size: CGFloat?, minimum: CGFloat, maximum: CGFloat, spacing: CGFloat, alignment: Alignment?)] = []
++    var fixed: CGFloat = 0
++    for item in items {
++        let spacing = item.spacing ?? 8
++        switch item.size {
++        case let .fixed(size):
++            resolved.append((size, size, size, spacing, item.alignment))
++            fixed += size + spacing
++        case let .flexible(minimum, maximum):
++            resolved.append((nil, minimum, maximum, spacing, item.alignment))
++            fixed += spacing
++        case let .adaptive(minimum, maximum):
++            let room = max((length ?? minimum) - fixed, minimum)
++            let count = max(Int(((room + spacing) / (minimum + spacing)).rounded(.down)), 1)
++            for _ in 0 ..< count {
++                resolved.append((nil, minimum, maximum, spacing, item.alignment))
++            }
++            fixed += CGFloat(count) * spacing
++        }
++    }
++    let flexible = resolved.filter { $0.size == nil }.count
++    let share = flexible > 0 ? max(((length ?? 0) - fixed + (resolved.last?.spacing ?? 0)) / CGFloat(flexible), 0) : 0
++    return resolved.map { track in
++        let size = track.size ?? (length == nil ? track.minimum : min(max(share, track.minimum), track.maximum))
++        return (size, track.spacing, track.alignment)
++    }
++}
++
++/// A grid of `tracks` along one axis, filled line by line.
++private struct GridLayout: Layout {
++    var items: [GridItem]
++    var isVertical: Bool
++    var spacing: CGFloat?
++    var alignment: Alignment
++
++    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
++        let (across, along) = measure(proposal: proposal, subviews: subviews)
++        return isVertical ? CGSize(width: across, height: along) : CGSize(width: along, height: across)
++    }
++
++    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
++        let lines = layout(proposal: proposal, subviews: subviews)
++        var offset: CGFloat = 0
++        for line in lines {
++            var position: CGFloat = 0
++            for (index, track) in line.tracks.enumerated() {
++                guard index < line.subviews.count else { break }
++                let cell = isVertical
++                    ? CGRect(x: bounds.minX + position, y: bounds.minY + offset, width: track.size, height: line.thickness)
++                    : CGRect(x: bounds.minX + offset, y: bounds.minY + position, width: line.thickness, height: track.size)
++                let anchor = track.alignment ?? alignment
++                let point = CGPoint(
++                    x: cell.minX + cell.width * anchor.horizontal.fraction,
++                    y: cell.minY + cell.height * anchor.vertical.fraction
++                )
++                line.subviews[index].place(
++                    at: point,
++                    anchor: UnitPoint(x: anchor.horizontal.fraction, y: anchor.vertical.fraction),
++                    proposal: isVertical ? ProposedViewSize(width: track.size, height: nil) : ProposedViewSize(width: nil, height: track.size)
++                )
++                position += track.size + track.spacing
++            }
++            offset += line.thickness + (spacing ?? 8)
++        }
++    }
++
++    private struct Line {
++        var subviews: [LayoutSubview]
++        var tracks: [(size: CGFloat, spacing: CGFloat, alignment: Alignment?)]
++        var thickness: CGFloat
++    }
++
++    private func layout(proposal: ProposedViewSize, subviews: Subviews) -> [Line] {
++        let length = isVertical ? proposal.width : proposal.height
++        let resolved = tracks(items, in: length)
++        guard !resolved.isEmpty else { return [] }
++        var lines: [Line] = []
++        var start = subviews.startIndex
++        while start < subviews.endIndex {
++            let end = min(start + resolved.count, subviews.endIndex)
++            let members = Array(subviews[start ..< end])
++            var thickness: CGFloat = 0
++            for (subview, track) in zip(members, resolved) {
++                let size = subview.sizeThatFits(isVertical
++                    ? ProposedViewSize(width: track.size, height: nil)
++                    : ProposedViewSize(width: nil, height: track.size))
++                thickness = max(thickness, isVertical ? size.height : size.width)
++            }
++            lines.append(Line(subviews: members, tracks: resolved, thickness: thickness))
++            start = end
++        }
++        return lines
++    }
++
++    private func measure(proposal: ProposedViewSize, subviews: Subviews) -> (CGFloat, CGFloat) {
++        let lines = layout(proposal: proposal, subviews: subviews)
++        let resolved = tracks(items, in: isVertical ? proposal.width : proposal.height)
++        let across = resolved.reduce(0) { $0 + $1.size + $1.spacing } - (resolved.last?.spacing ?? 0)
++        let along = lines.reduce(0) { $0 + $1.thickness } + CGFloat(max(lines.count - 1, 0)) * (spacing ?? 8)
++        return (max(across, 0), along)
++    }
++}
++
++/// A container view that arranges its child views in a grid that grows vertically. Iris: all
++/// children are made at once.
++public struct LazyVGrid<Content>: View where Content: View {
++    var columns: [GridItem]
++    var alignment: HorizontalAlignment
++    var spacing: CGFloat?
++    var content: Content
++
++    public init(
++        columns: [GridItem],
++        alignment: HorizontalAlignment = .center,
++        spacing: CGFloat? = nil,
++        pinnedViews: PinnedScrollableViews = .init(),
++        @ViewBuilder content: () -> Content
++    ) {
++        self.columns = columns
++        self.alignment = alignment
++        self.spacing = spacing
++        self.content = content()
++    }
++
++    public var body: some View {
++        GridLayout(items: columns, isVertical: true, spacing: spacing, alignment: Alignment(horizontal: alignment, vertical: .center)) {
++            content
++        }
++    }
++}
++
++/// A container view that arranges its child views in a grid that grows horizontally.
++public struct LazyHGrid<Content>: View where Content: View {
++    var rows: [GridItem]
++    var alignment: VerticalAlignment
++    var spacing: CGFloat?
++    var content: Content
++
++    public init(
++        rows: [GridItem],
++        alignment: VerticalAlignment = .center,
++        spacing: CGFloat? = nil,
++        pinnedViews: PinnedScrollableViews = .init(),
++        @ViewBuilder content: () -> Content
++    ) {
++        self.rows = rows
++        self.alignment = alignment
++        self.spacing = spacing
++        self.content = content()
++    }
++
++    public var body: some View {
++        GridLayout(items: rows, isVertical: false, spacing: spacing, alignment: Alignment(horizontal: .center, vertical: alignment)) {
++            content
++        }
++    }
++}
++
++// MARK: - TabView
++
++/// A view that switches between multiple child views using interactive user interface
++/// elements: the iPhone tab bar, 49 points high, with each child's `tabItem` label.
++public struct TabView<SelectionValue, Content>: View where SelectionValue: Hashable, Content: View {
++    /// The selection, nil without a binding: a binding, not an optional one, so that a change
++    /// updates the view.
++    @Binding var selection: SelectionValue?
++    var content: Content
++    @State private var selectedIndex = 0
++    @State private var opened = OpenedTabs()
++
++    public init(selection: Binding<SelectionValue>?, @ViewBuilder content: () -> Content) {
++        _selection = selection.map(Binding.init) ?? .constant(nil)
++        self.content = content()
++    }
++
++    public var body: some View {
++        _VariadicView.Tree(TabRoot(selection: $selection, selectedIndex: $selectedIndex, opened: opened)) {
++            content
++        }
++    }
++}
++
++extension TabView where SelectionValue == Int {
++    public init(@ViewBuilder content: () -> Content) {
++        self.init(selection: nil, content: content)
++    }
++}
++
++/// The tabs shown so far: like UIKit, a tab is made when first selected, and keeps its state
++/// while another one is selected.
++private final class OpenedTabs {
++    var ids: Set<AnyHashable> = []
++}
++
++private struct TabRoot<SelectionValue>: _VariadicView_UnaryViewRoot where SelectionValue: Hashable {
++    @Binding var selection: SelectionValue?
++    @Binding var selectedIndex: Int
++    var opened: OpenedTabs
++
++    func body(children: _VariadicView.Children) -> some View {
++        let selected = selectedChild(in: children)
++        if children.indices.contains(selected) {
++            opened.ids.insert(children[selected].id)
++        }
++        return VStack(spacing: 0) {
++            ZStack {
++                ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
++                    if opened.ids.contains(child.id) {
++                        // Hit-testing skips a transparent view.
++                        child.opacity(index == selected ? 1 : 0)
++                    }
++                }
++            }
++            .frame(maxWidth: .infinity, maxHeight: .infinity)
++            Color(red: 0, green: 0, blue: 0, opacity: 0.3).frame(height: 0.33)
++            HStack(spacing: 0) {
++                ForEach(Array(children.enumerated()), id: \.element.id) { index, child in
++                    (child[TabItemTrait.self] ?? AnyView(EmptyView()))
++                        .environment(\.irisLabelStyle, .tabItem)
++                        .font(.system(size: 10, weight: .medium))
++                        .foregroundStyle(index == selected ? tint : inactive)
++                        .frame(maxWidth: .infinity, maxHeight: .infinity)
++                        .contentShape(Rectangle())
++                        .onTapGesture {
++                            if selection != nil, case let .tagged(tag) = child[TagValueTraitKey<SelectionValue>.self] {
++                                selection = tag
++                            } else {
++                                selectedIndex = index
++                            }
++                        }
++                }
++            }
++            .frame(height: 49)
++            .background(Color(red: 249 / 255, green: 249 / 255, blue: 249 / 255))
++        }
++    }
++
++    private func selectedChild(in children: _VariadicView.Children) -> Int {
++        guard let selection else { return selectedIndex }
++        return children.firstIndex { child in
++            if case let .tagged(tag) = child[TagValueTraitKey<SelectionValue>.self] {
++                return tag == selection
++            }
++            return false
++        } ?? 0
++    }
++}
++
++private struct TabItemTrait: _ViewTraitKey {
++    static var defaultValue: AnyView? { nil }
++}
++
++extension View {
++    /// Sets the tab bar item associated with this view.
++    public func tabItem<V>(@ViewBuilder _ label: () -> V) -> some View where V: View {
++        _trait(TabItemTrait.self, AnyView(label()))
++    }
++}
++
++// MARK: - Picker
++
++/// A control for selecting from a set of mutually exclusive values.
++public struct Picker<Label, SelectionValue, Content>: View where Label: View, SelectionValue: Hashable, Content: View {
++    var selection: Binding<SelectionValue>
++    var label: Label
++    var content: Content
++    @Environment(\.irisPickerStyle) private var style
++
++    public init(selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
++        self.selection = selection
++        self.content = content()
++        self.label = label()
++    }
++
++    public var body: some View {
++        _VariadicView.Tree(PickerRoot(selection: selection, label: label, style: style)) {
++            content
++        }
++    }
++}
++
++extension Picker where Label == Text {
++    public init(_ titleKey: LocalizedStringKey, selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) {
++        self.init(selection: selection, content: content) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, selection: Binding<SelectionValue>, @ViewBuilder content: () -> Content) where S: StringProtocol {
++        self.init(selection: selection, content: content) { Text(title) }
++    }
++}
++
++private struct PickerRoot<Label, SelectionValue>: _VariadicView_UnaryViewRoot where Label: View, SelectionValue: Hashable {
++    var selection: Binding<SelectionValue>
++    var label: Label
++    var style: IrisPickerStyle
++
++    func body(children: _VariadicView.Children) -> some View {
++        let options = children.compactMap { child -> (child: _VariadicView.Children.Element, tag: SelectionValue)? in
++            guard case let .tagged(tag) = child[TagValueTraitKey<SelectionValue>.self] else { return nil }
++            return (child, tag)
++        }
++        let selected = options.firstIndex { $0.tag == selection.wrappedValue }
++        return Group {
++            switch style {
++            case .segmented:
++                HStack(spacing: 0) {
++                    ForEach(Array(options.enumerated()), id: \.element.child.id) { index, option in
++                        option.child
++                            .font(.footnote)
++                            .frame(maxWidth: .infinity, minHeight: 28)
++                            .background {
++                                if index == selected {
++                                    RoundedRectangle(cornerRadius: 7)
++                                        .fill(Color.white)
++                                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
++                                }
++                            }
++                            .contentShape(Rectangle())
++                            .onTapGesture { selection.wrappedValue = option.tag }
++                    }
++                }
++                .padding(2)
++                .background(RoundedRectangle(cornerRadius: 9).fill(Color(red: 238 / 255, green: 238 / 255, blue: 239 / 255)))
++            case .inline:
++                VStack(alignment: .leading, spacing: 0) {
++                    ForEach(Array(options.enumerated()), id: \.element.child.id) { index, option in
++                        HStack {
++                            option.child
++                            Spacer()
++                            if index == selected {
++                                Checkmark()
++                                    .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
++                                    .frame(width: 14, height: 12)
++                            }
++                        }
++                        .frame(minHeight: 44)
++                        .contentShape(Rectangle())
++                        .onTapGesture { selection.wrappedValue = option.tag }
++                    }
++                }
++            case .menu:
++                HStack {
++                    label
++                    Spacer(minLength: 8)
++                    if let selected {
++                        options[selected].child.foregroundStyle(tint)
++                    }
++                    UpDownChevron()
++                        .stroke(tint, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
++                        .frame(width: 8, height: 13)
++                }
++                .contentShape(Rectangle())
++                .onTapGesture {
++                    // ponytail: the next option, until menus can be presented.
++                    guard !options.isEmpty else { return }
++                    let next = ((selected ?? -1) + 1) % options.count
++                    selection.wrappedValue = options[next].tag
++                }
++            }
++        }
++    }
++}
++
++/// SF Symbols' checkmark, which needs Apple's fonts.
++private struct Checkmark: Shape {
++    func path(in rect: CGRect) -> Path {
++        var path = Path()
++        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
++        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.35, y: rect.maxY))
++        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
++        return path
++    }
++}
++
++/// SF Symbols' chevron.up.chevron.down.
++private struct UpDownChevron: Shape {
++    func path(in rect: CGRect) -> Path {
++        var path = Path()
++        path.addLines([
++            CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.35),
++            CGPoint(x: rect.midX, y: rect.minY),
++            CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.35),
++        ])
++        path.addLines([
++            CGPoint(x: rect.minX, y: rect.maxY - rect.height * 0.35),
++            CGPoint(x: rect.midX, y: rect.maxY),
++            CGPoint(x: rect.maxX, y: rect.maxY - rect.height * 0.35),
++        ])
++        return path
++    }
++}
++
++/// A type that specifies the appearance and interaction of all pickers within a view
++/// hierarchy. Iris: the system styles only.
++public protocol PickerStyle {}
++
++public struct DefaultPickerStyle: PickerStyle { public init() {} }
++public struct MenuPickerStyle: PickerStyle { public init() {} }
++public struct SegmentedPickerStyle: PickerStyle { public init() {} }
++public struct InlinePickerStyle: PickerStyle { public init() {} }
++public struct WheelPickerStyle: PickerStyle { public init() {} }
++public struct NavigationLinkPickerStyle: PickerStyle { public init() {} }
++
++extension PickerStyle where Self == DefaultPickerStyle {
++    public static var automatic: DefaultPickerStyle { .init() }
++}
++
++extension PickerStyle where Self == MenuPickerStyle {
++    public static var menu: MenuPickerStyle { .init() }
++}
++
++extension PickerStyle where Self == SegmentedPickerStyle {
++    public static var segmented: SegmentedPickerStyle { .init() }
++}
++
++extension PickerStyle where Self == InlinePickerStyle {
++    public static var inline: InlinePickerStyle { .init() }
++}
++
++extension PickerStyle where Self == WheelPickerStyle {
++    public static var wheel: WheelPickerStyle { .init() }
++}
++
++extension PickerStyle where Self == NavigationLinkPickerStyle {
++    public static var navigationLink: NavigationLinkPickerStyle { .init() }
++}
++
++extension View {
++    public func pickerStyle<S>(_ style: S) -> some View where S: PickerStyle {
++        let kind: IrisPickerStyle = switch style {
++        case is SegmentedPickerStyle: .segmented
++        case is InlinePickerStyle, is WheelPickerStyle: .inline
++        default: .menu
++        }
++        return environment(\.irisPickerStyle, kind)
++    }
++}
++
++enum IrisPickerStyle {
++    case menu, segmented, inline
++}
++
++private struct IrisPickerStyleKey: EnvironmentKey {
++    static var defaultValue: IrisPickerStyle { .menu }
++}
++
++extension EnvironmentValues {
++    var irisPickerStyle: IrisPickerStyle {
++        get { self[IrisPickerStyleKey.self] }
++        set { self[IrisPickerStyleKey.self] = newValue }
++    }
++}

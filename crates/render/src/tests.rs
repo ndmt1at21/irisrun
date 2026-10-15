@@ -266,6 +266,67 @@ fn styles_runs_separately() {
 }
 
 #[test]
+fn places_the_caret_and_finds_touched_offsets() {
+    let scene = scene_with_fonts();
+    let style = ParagraphStyle::default();
+    let caret = |text: &str, offset: usize, width: f32| {
+        scene.text_caret(text, &run(text, RunStyle::default()), &style, width, offset)
+    };
+    let text = "Xin chào ạ";
+    let start = caret(text, 0, f32::INFINITY);
+    assert_eq!(start.x, 0.0);
+    assert!(start.height > 17.0 && start.height < 24.0, "{start:?}");
+    // Offsets are bytes: "à" and "ạ" take two and three of them.
+    let after_chao = caret(text, "Xin chào".len(), f32::INFINITY);
+    let end = caret(text, text.len(), f32::INFINITY);
+    let width = scene
+        .measure_text(text, &run(text, RunStyle::default()), &style, f32::INFINITY)
+        .width;
+    assert!(
+        0.0 < after_chao.x && after_chao.x < end.x,
+        "{after_chao:?} {end:?}"
+    );
+    assert!((end.x - width).abs() < 1.0, "{end:?} vs width {width}");
+    // An offset inside "à" goes back to its start.
+    assert_eq!(
+        caret(text, "Xin ch".len() + 1, f32::INFINITY),
+        caret(text, "Xin ch".len(), f32::INFINITY)
+    );
+
+    // A wrapped line: the offset after the space starts the next line.
+    let wrapped = caret(text, "Xin ".len(), 40.0);
+    assert_eq!(wrapped.x, 0.0);
+    assert!(wrapped.y > start.y + 15.0, "{wrapped:?}");
+
+    // Empty text, and the empty line after a final newline, still get a caret
+    // as tall as the run's font.
+    let big = RunStyle {
+        size: 34.0,
+        ..RunStyle::default()
+    };
+    let empty = scene.text_caret("", &run("", big.clone()), &style, f32::INFINITY, 0);
+    assert_eq!(empty.x, 0.0);
+    assert!(empty.height > 34.0, "{empty:?}");
+    let newline = caret("ab\n", 3, f32::INFINITY);
+    assert_eq!(newline.x, 0.0);
+    assert!(newline.y > start.y + 15.0, "{newline:?}");
+
+    // Touching text finds the nearest boundary, in bytes.
+    let at = |x: f32, y: f32| {
+        scene.text_offset_at(
+            text,
+            &run(text, RunStyle::default()),
+            &style,
+            f32::INFINITY,
+            Point::new(x, y),
+        )
+    };
+    assert_eq!(at(-5.0, 10.0), 0);
+    assert_eq!(at(after_chao.x + 0.5, 10.0), "Xin chào".len());
+    assert_eq!(at(500.0, 10.0), text.len());
+}
+
+#[test]
 fn casts_shadows_unless_masked() {
     let card = Layer {
         frame: Rect::from_xywh(20.0, 20.0, 40.0, 40.0),
@@ -584,6 +645,9 @@ fn encodes_frames_on_other_threads() {
         .unwrap()
         .expect("encoded");
     assert!(png.starts_with(b"\x89PNG"));
+    // Its header gives the pixel size: a 100-point scene at 1x.
+    assert_eq!(Scene::image_size(&png), Some((100, 100)));
+    assert_eq!(Scene::image_size(b"not an image"), None);
     // The next render draws into a copy, leaving the earlier frame intact.
     let earlier = scene.render();
     scene.layer_mut(scene.root()).unwrap().background_color = Color::BLUE;

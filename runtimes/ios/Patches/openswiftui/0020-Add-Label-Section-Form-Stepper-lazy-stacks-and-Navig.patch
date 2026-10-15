@@ -1,0 +1,596 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 17:34:49 +0700
+Subject: [PATCH 20/22] Add Label, Section, Form, Stepper, lazy stacks and
+ NavigationView
+
+None of these existed. They are made of SwiftUI parts with iOS's default look.
+Form puts its sections in white rounded cards on the grouped background, with
+separators between rows, uppercase headers and footers; rows outside a
+section get a card of their own. Sections in a list lay out their own rows,
+which a trait tells List. Stepper draws UIStepper's two buttons and stops at
+its bounds. Label shows its icon and title, or one of them with labelStyle.
+LazyVStack and LazyHStack make every child at once. NavigationView is a
+NavigationStack, as on iPhone, and NavigationLink also takes its destination
+as a view, as before iOS 16.
+---
+ .../View/Container/IrisContainers.swift       | 527 ++++++++++++++++++
+ .../ProgressView/ArchivableProgressView.swift |  14 +-
+ Sources/OpenSwiftUI/View/List/List.swift      |   8 +-
+ 3 files changed, 529 insertions(+), 20 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+new file mode 100644
+index 0000000..7338d7c
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+@@ -0,0 +1,527 @@
++//
++//  IrisContainers.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: views upstream does not have yet, made of SwiftUI parts with iOS's default look: Label,
++// Section, Form, Stepper, LazyVStack, LazyHStack and NavigationView. Custom label and
++// navigation view styles are not supported yet.
++
++/// systemGroupedBackground.
++private let groupedBackground = Color(red: 242 / 255, green: 242 / 255, blue: 247 / 255)
++/// separator, opaque.
++private let separator = Color(red: 198 / 255, green: 198 / 255, blue: 200 / 255)
++
++// MARK: - Label
++
++/// A standard label for user interface items, consisting of an icon with a title.
++@available(OpenSwiftUI_v2_0, *)
++public struct Label<Title, Icon>: View where Title: View, Icon: View {
++    var title: Title
++    var icon: Icon
++    @Environment(\.irisLabelStyle) private var style
++
++    public init(@ViewBuilder title: () -> Title, @ViewBuilder icon: () -> Icon) {
++        self.title = title()
++        self.icon = icon()
++    }
++
++    public var body: some View {
++        switch style {
++        case .titleOnly:
++            title
++        case .iconOnly:
++            icon
++        case .automatic, .titleAndIcon:
++            HStack(spacing: 8) {
++                icon
++                title
++            }
++        }
++    }
++}
++
++@available(OpenSwiftUI_v2_0, *)
++extension Label where Title == Text, Icon == Image {
++    public init(_ titleKey: LocalizedStringKey, image name: String) {
++        self.init { Text(titleKey) } icon: { Image(name) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, image name: String) where S: StringProtocol {
++        self.init { Text(title) } icon: { Image(name) }
++    }
++
++    public init(_ titleKey: LocalizedStringKey, systemImage name: String) {
++        self.init { Text(titleKey) } icon: { Image(systemName: name) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, systemImage name: String) where S: StringProtocol {
++        self.init { Text(title) } icon: { Image(systemName: name) }
++    }
++}
++
++/// A type that applies a custom appearance to all labels within a view. Iris: the system
++/// styles only.
++public protocol LabelStyle {}
++
++public struct DefaultLabelStyle: LabelStyle { public init() {} }
++public struct TitleOnlyLabelStyle: LabelStyle { public init() {} }
++public struct IconOnlyLabelStyle: LabelStyle { public init() {} }
++public struct TitleAndIconLabelStyle: LabelStyle { public init() {} }
++
++extension LabelStyle where Self == DefaultLabelStyle {
++    public static var automatic: DefaultLabelStyle { .init() }
++}
++
++extension LabelStyle where Self == TitleOnlyLabelStyle {
++    public static var titleOnly: TitleOnlyLabelStyle { .init() }
++}
++
++extension LabelStyle where Self == IconOnlyLabelStyle {
++    public static var iconOnly: IconOnlyLabelStyle { .init() }
++}
++
++extension LabelStyle where Self == TitleAndIconLabelStyle {
++    public static var titleAndIcon: TitleAndIconLabelStyle { .init() }
++}
++
++extension View {
++    public func labelStyle<S>(_ style: S) -> some View where S: LabelStyle {
++        let kind: IrisLabelStyle = switch style {
++        case is TitleOnlyLabelStyle: .titleOnly
++        case is IconOnlyLabelStyle: .iconOnly
++        case is TitleAndIconLabelStyle: .titleAndIcon
++        default: .automatic
++        }
++        return environment(\.irisLabelStyle, kind)
++    }
++}
++
++enum IrisLabelStyle {
++    case automatic, titleOnly, iconOnly, titleAndIcon
++}
++
++private struct IrisLabelStyleKey: EnvironmentKey {
++    static var defaultValue: IrisLabelStyle { .automatic }
++}
++
++extension EnvironmentValues {
++    var irisLabelStyle: IrisLabelStyle {
++        get { self[IrisLabelStyleKey.self] }
++        set { self[IrisLabelStyleKey.self] = newValue }
++    }
++
++    /// Iris: rows sit in the rounded cards of a grouped list, as in a Form.
++    var irisGroupedRows: Bool {
++        get { self[IrisGroupedRowsKey.self] }
++        set { self[IrisGroupedRowsKey.self] = newValue }
++    }
++}
++
++private struct IrisGroupedRowsKey: EnvironmentKey {
++    static var defaultValue: Bool { false }
++}
++
++// MARK: - Section
++
++/// A container view that you can use to add hierarchy within certain views.
++@available(OpenSwiftUI_v1_0, *)
++public struct Section<Parent, Content, Footer>: View where Parent: View, Content: View, Footer: View {
++    var header: Parent
++    var content: Content
++    var footer: Footer
++    @Environment(\.irisGroupedRows) private var isGrouped
++
++    public init(@ViewBuilder content: () -> Content, @ViewBuilder header: () -> Parent, @ViewBuilder footer: () -> Footer) {
++        self.header = header()
++        self.content = content()
++        self.footer = footer()
++    }
++
++    public init(header: Parent, footer: Footer, @ViewBuilder content: () -> Content) {
++        self.header = header
++        self.content = content()
++        self.footer = footer
++    }
++
++    public var body: some View {
++        VStack(alignment: .leading, spacing: 6) {
++            header
++                .font(.footnote)
++                .foregroundStyle(.secondary)
++                .textCase(.uppercase)
++                .padding(.horizontal, isGrouped ? 32 : 16)
++                .padding(.top, isGrouped ? 0 : 8)
++            if isGrouped {
++                _VariadicView.Tree(IrisCardRows()) {
++                    content
++                }
++            } else {
++                _VariadicView.Tree(IrisPlainRows()) {
++                    content
++                }
++            }
++            footer
++                .font(.footnote)
++                .foregroundStyle(.secondary)
++                .padding(.horizontal, isGrouped ? 32 : 16)
++        }
++        ._trait(IrisSectionTrait.self, true)
++    }
++}
++
++extension Section where Parent == EmptyView, Footer == EmptyView {
++    public init(@ViewBuilder content: () -> Content) {
++        self.init(content: content, header: { EmptyView() }, footer: { EmptyView() })
++    }
++}
++
++extension Section where Footer == EmptyView {
++    public init(@ViewBuilder content: () -> Content, @ViewBuilder header: () -> Parent) {
++        self.init(content: content, header: header, footer: { EmptyView() })
++    }
++
++    public init(header: Parent, @ViewBuilder content: () -> Content) {
++        self.init(header: header, footer: EmptyView(), content: content)
++    }
++}
++
++extension Section where Parent == EmptyView {
++    public init(@ViewBuilder content: () -> Content, @ViewBuilder footer: () -> Footer) {
++        self.init(content: content, header: { EmptyView() }, footer: footer)
++    }
++
++    public init(footer: Footer, @ViewBuilder content: () -> Content) {
++        self.init(header: EmptyView(), footer: footer, content: content)
++    }
++}
++
++extension Section where Parent == Text, Footer == EmptyView {
++    public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content) {
++        self.init(content: content, header: { Text(titleKey) })
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, @ViewBuilder content: () -> Content) where S: StringProtocol {
++        self.init(content: content, header: { Text(title) })
++    }
++}
++
++/// Iris: marks sections among the rows of a list or form, which lay out their own rows.
++struct IrisSectionTrait: _ViewTraitKey {
++    static var defaultValue: Bool { false }
++}
++
++/// Rows of a plain list: at least 44 points tall, with the list's margins.
++struct IrisPlainRows: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        VStack(alignment: .leading, spacing: 0) {
++            ForEach(children) { row in
++                if row[IrisSectionTrait.self] {
++                    row
++                } else {
++                    row
++                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++                        .padding(.horizontal, 16)
++                }
++            }
++        }
++    }
++}
++
++/// Rows in a white rounded card, with separators between them, as an inset grouped list
++/// draws a section.
++struct IrisCardRows: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        VStack(alignment: .leading, spacing: 0) {
++            ForEach(children) { row in
++                row
++                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++                    .padding(.horizontal, 16)
++                if row.id != children.last?.id {
++                    separator.frame(height: 0.5).padding(.leading, 16)
++                }
++            }
++        }
++        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
++        .padding(.horizontal, 16)
++    }
++}
++
++// MARK: - Form
++
++/// A container for grouping controls used for data entry, such as in settings or inspectors.
++/// Iris: sections in white rounded cards on the grouped background, as on iOS; rows outside a
++/// section share a card.
++@available(OpenSwiftUI_v1_0, *)
++public struct Form<Content>: View where Content: View {
++    var content: Content
++
++    public init(@ViewBuilder content: () -> Content) {
++        self.content = content()
++    }
++
++    public var body: some View {
++        ScrollView {
++            _VariadicView.Tree(IrisFormRoot()) {
++                content
++            }
++            .padding(.vertical, 20)
++        }
++        .background(groupedBackground)
++        .environment(\.irisGroupedRows, true)
++    }
++}
++
++private struct IrisFormRoot: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        VStack(alignment: .leading, spacing: 28) {
++            ForEach(children) { child in
++                if child[IrisSectionTrait.self] {
++                    child
++                } else {
++                    VStack(spacing: 0) {
++                        child
++                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++                            .padding(.horizontal, 16)
++                    }
++                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
++                    .padding(.horizontal, 16)
++                }
++            }
++        }
++    }
++}
++
++// MARK: - Stepper
++
++/// A control that performs increment and decrement actions: UIStepper's two buttons after the
++/// label.
++@available(OpenSwiftUI_v1_0, *)
++public struct Stepper<Label>: View where Label: View {
++    var label: Label
++    var onIncrement: (() -> Void)?
++    var onDecrement: (() -> Void)?
++    var onEditingChanged: (Bool) -> Void
++
++    public init(
++        @ViewBuilder label: () -> Label,
++        onIncrement: (() -> Void)?,
++        onDecrement: (() -> Void)?,
++        onEditingChanged: @escaping (Bool) -> Void = { _ in }
++    ) {
++        self.label = label()
++        self.onIncrement = onIncrement
++        self.onDecrement = onDecrement
++        self.onEditingChanged = onEditingChanged
++    }
++
++    public init<V>(
++        value: Binding<V>,
++        in bounds: ClosedRange<V>,
++        step: V.Stride = 1,
++        onEditingChanged: @escaping (Bool) -> Void = { _ in },
++        @ViewBuilder label: () -> Label
++    ) where V: Strideable {
++        self.init(
++            label: label,
++            onIncrement: value.wrappedValue < bounds.upperBound ? {
++                value.wrappedValue = min(value.wrappedValue.advanced(by: step), bounds.upperBound)
++            } : nil,
++            onDecrement: value.wrappedValue > bounds.lowerBound ? {
++                value.wrappedValue = max(value.wrappedValue.advanced(by: -step), bounds.lowerBound)
++            } : nil,
++            onEditingChanged: onEditingChanged
++        )
++    }
++
++    public init<V>(
++        value: Binding<V>,
++        step: V.Stride = 1,
++        onEditingChanged: @escaping (Bool) -> Void = { _ in },
++        @ViewBuilder label: () -> Label
++    ) where V: Strideable {
++        self.init(
++            label: label,
++            onIncrement: { value.wrappedValue = value.wrappedValue.advanced(by: step) },
++            onDecrement: { value.wrappedValue = value.wrappedValue.advanced(by: -step) },
++            onEditingChanged: onEditingChanged
++        )
++    }
++
++    public var body: some View {
++        HStack {
++            label
++            Spacer(minLength: 8)
++            HStack(spacing: 0) {
++                button("−", action: onDecrement)
++                separator.frame(width: 1, height: 18)
++                button("+", action: onIncrement)
++            }
++            .background(RoundedRectangle(cornerRadius: 8).fill(Color(red: 238 / 255, green: 238 / 255, blue: 239 / 255)))
++        }
++    }
++
++    private func button(_ symbol: String, action: (() -> Void)?) -> some View {
++        Text(verbatim: symbol)
++            .font(.title3)
++            .foregroundStyle(action == nil ? Color.gray : Color.primary)
++            .frame(width: 47, height: 32)
++            .contentShape(Rectangle())
++            .onTapGesture {
++                guard let action else { return }
++                onEditingChanged(true)
++                action()
++                onEditingChanged(false)
++            }
++    }
++}
++
++extension Stepper where Label == Text {
++    public init<V>(_ titleKey: LocalizedStringKey, value: Binding<V>, in bounds: ClosedRange<V>, step: V.Stride = 1) where V: Strideable {
++        self.init(value: value, in: bounds, step: step) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S, V>(_ title: S, value: Binding<V>, in bounds: ClosedRange<V>, step: V.Stride = 1) where S: StringProtocol, V: Strideable {
++        self.init(value: value, in: bounds, step: step) { Text(title) }
++    }
++
++    public init<V>(_ titleKey: LocalizedStringKey, value: Binding<V>, step: V.Stride = 1) where V: Strideable {
++        self.init(value: value, step: step) { Text(titleKey) }
++    }
++
++    public init(_ titleKey: LocalizedStringKey, onIncrement: (() -> Void)?, onDecrement: (() -> Void)?) {
++        self.init(label: { Text(titleKey) }, onIncrement: onIncrement, onDecrement: onDecrement)
++    }
++}
++
++// MARK: - Lazy stacks
++
++/// A set of views that tells a scroll view which pinned views to keep in its bounds. Iris:
++/// accepted; nothing is pinned yet.
++public struct PinnedScrollableViews: OptionSet, Sendable {
++    public let rawValue: UInt32
++
++    public init(rawValue: UInt32) {
++        self.rawValue = rawValue
++    }
++
++    public static let sectionHeaders = PinnedScrollableViews(rawValue: 1 << 0)
++    public static let sectionFooters = PinnedScrollableViews(rawValue: 1 << 1)
++}
++
++/// A view that arranges its children in a vertical line. Iris: all children are made at once.
++public struct LazyVStack<Content>: View where Content: View {
++    var alignment: HorizontalAlignment
++    var spacing: CGFloat?
++    var content: Content
++
++    public init(
++        alignment: HorizontalAlignment = .center,
++        spacing: CGFloat? = nil,
++        pinnedViews: PinnedScrollableViews = .init(),
++        @ViewBuilder content: () -> Content
++    ) {
++        self.alignment = alignment
++        self.spacing = spacing
++        self.content = content()
++    }
++
++    public var body: some View {
++        VStack(alignment: alignment, spacing: spacing) {
++            content
++        }
++    }
++}
++
++/// A view that arranges its children in a horizontal line. Iris: all children are made at once.
++public struct LazyHStack<Content>: View where Content: View {
++    var alignment: VerticalAlignment
++    var spacing: CGFloat?
++    var content: Content
++
++    public init(
++        alignment: VerticalAlignment = .center,
++        spacing: CGFloat? = nil,
++        pinnedViews: PinnedScrollableViews = .init(),
++        @ViewBuilder content: () -> Content
++    ) {
++        self.alignment = alignment
++        self.spacing = spacing
++        self.content = content()
++    }
++
++    public var body: some View {
++        HStack(alignment: alignment, spacing: spacing) {
++            content
++        }
++    }
++}
++
++// MARK: - NavigationView
++
++/// A view for presenting a stack of views that represents a visible path in a navigation
++/// hierarchy. Iris: a NavigationStack, as on iPhone.
++public struct NavigationView<Content>: View where Content: View {
++    var content: Content
++
++    public init(@ViewBuilder content: () -> Content) {
++        self.content = content()
++    }
++
++    public var body: some View {
++        NavigationStack {
++            content
++        }
++    }
++}
++
++public protocol NavigationViewStyle {}
++
++public struct DefaultNavigationViewStyle: NavigationViewStyle { public init() {} }
++public struct StackNavigationViewStyle: NavigationViewStyle { public init() {} }
++public struct DoubleColumnNavigationViewStyle: NavigationViewStyle { public init() {} }
++
++extension NavigationViewStyle where Self == DefaultNavigationViewStyle {
++    public static var automatic: DefaultNavigationViewStyle { .init() }
++}
++
++extension NavigationViewStyle where Self == StackNavigationViewStyle {
++    public static var stack: StackNavigationViewStyle { .init() }
++}
++
++extension NavigationViewStyle where Self == DoubleColumnNavigationViewStyle {
++    public static var columns: DoubleColumnNavigationViewStyle { .init() }
++}
++
++extension View {
++    public func navigationViewStyle<S>(_ style: S) -> some View where S: NavigationViewStyle {
++        self
++    }
++}
++
++extension NavigationLink {
++    /// The destination as a view, as before iOS 16.
++    public init(destination: Destination, @ViewBuilder label: () -> Label) {
++        self.init(destination: { destination }, label: label)
++    }
++}
++
++extension NavigationLink where Label == Text {
++    public init(_ titleKey: LocalizedStringKey, destination: Destination) {
++        self.init(destination: { destination }, label: { Text(titleKey) })
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, destination: Destination) where S: StringProtocol {
++        self.init(destination: { destination }, label: { Text(title) })
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Control/ProgressView/ArchivableProgressView.swift b/Sources/OpenSwiftUI/View/Control/ProgressView/ArchivableProgressView.swift
+index 1b4eb7b..e13dd42 100644
+--- a/Sources/OpenSwiftUI/View/Control/ProgressView/ArchivableProgressView.swift
++++ b/Sources/OpenSwiftUI/View/Control/ProgressView/ArchivableProgressView.swift
+@@ -196,16 +196,4 @@ struct LinearCapsuleGauge: View {
+     }
+ }
+ 
+-extension View {
+-    func labelStyle(_ style: LabelStyle) -> some View {
+-        self
+-    }
+-}
+-
+-protocol LabelStyle {}
+-
+-struct IconOnlyLabelStyle: LabelStyle {}
+-
+-extension LabelStyle where Self == IconOnlyLabelStyle {
+-    static var iconOnly: IconOnlyLabelStyle { .init() }
+-}
++// Iris: labelStyle(_:) and LabelStyle live with Label (IrisContainers.swift).
+diff --git a/Sources/OpenSwiftUI/View/List/List.swift b/Sources/OpenSwiftUI/View/List/List.swift
+index 3a72206..3c2f8d2 100644
+--- a/Sources/OpenSwiftUI/View/List/List.swift
++++ b/Sources/OpenSwiftUI/View/List/List.swift
+@@ -25,13 +25,7 @@ public struct List<SelectionValue, Content>: View where SelectionValue: Hashable
+ private struct ListRows: _VariadicView_UnaryViewRoot {
+     func body(children: _VariadicView.Children) -> some View {
+         ScrollView {
+-            VStack(alignment: .leading, spacing: 0) {
+-                ForEach(children) { row in
+-                    row
+-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+-                        .padding(.horizontal, 16)
+-                }
+-            }
++            IrisPlainRows().body(children: children)
+         }
+     }
+ }

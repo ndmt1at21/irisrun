@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 12:42:51 +0700
+Subject: [PATCH 10/22] Hit-test rounded rectangles without OpenRenderBox on
+ Linux
+
+Path.contains asked OpenRenderBox for a rounded rectangle path, which it does
+not make on Linux yet, so touching any view with a RoundedRectangle background
+crashed. A point is in a rounded rectangle when it is in the rectangle and,
+in a corner, in the ellipse of that corner. Continuous corners count as
+circular ones.
+---
+ Sources/OpenSwiftUICore/Shape/Path.swift | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Shape/Path.swift b/Sources/OpenSwiftUICore/Shape/Path.swift
+index 10862f5..d2aca02 100644
+--- a/Sources/OpenSwiftUICore/Shape/Path.swift
++++ b/Sources/OpenSwiftUICore/Shape/Path.swift
+@@ -545,10 +545,23 @@ public struct Path: Equatable, LosslessStringConvertible, @unchecked Sendable {
+             #if canImport(Darwin)
+             return rect.contains(p)
+             #else
+-            // FIXME
+-            let path = retainRBPath()
+-            defer { path.release() }
+-            return path.contains(point: p, eoFill: false)
++            // Iris: OpenRenderBox has no rounded rectangle paths on Linux yet, and hit-testing
++            // through them crashed. Continuous corners count as circular ones here.
++            let bounds = rect.rect.standardized
++            guard bounds.contains(p) else {
++                return false
++            }
++            let radiusX = min(abs(rect.cornerSize.width), bounds.width / 2)
++            let radiusY = min(abs(rect.cornerSize.height), bounds.height / 2)
++            guard radiusX > 0, radiusY > 0 else {
++                return true
++            }
++            // The center of the corner's arc when the point is in a corner, or the point itself.
++            let centerX = min(max(p.x, bounds.minX + radiusX), bounds.maxX - radiusX)
++            let centerY = min(max(p.y, bounds.minY + radiusY), bounds.maxY - radiusY)
++            let dx = (p.x - centerX) / radiusX
++            let dy = (p.y - centerY) / radiusY
++            return dx * dx + dy * dy <= 1
+             #endif
+         case .stroked, .trimmed:
+             _openSwiftUIUnreachableCode()
