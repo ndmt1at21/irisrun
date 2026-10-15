@@ -10,7 +10,7 @@ set -euo pipefail
 
 ios="$(cd "$(dirname "$0")/.." && pwd)"
 examples="$ios/../../examples/ios-swiftui"
-bin="$("$ios/Scripts/compile-app.sh" "$examples/IrisSample" "$@")"
+bin="$("$ios/Scripts/compile-app.sh" "$examples" "$@")"
 frames="$("$bin" < "$examples/session.txt")"
 echo "$frames"
 

@@ -29,9 +29,9 @@ let environment = ProcessInfo.processInfo.environment
 let home = environment["IRISRUN_HOME"] ?? (environment["HOME"] ?? NSHomeDirectory()) + "/.irisrun"
 
 let scene = Scene(width: screenWidth, height: screenHeight, scale: 3)
-for font in ["Inter.ttf", "NotoSansSC.ttf"] {
+for font in ["Inter.ttf", "InterItalic.ttf", "NotoSansSC.ttf"] {
     let path = home + "/fonts/" + font
-    guard let data = FileManager.default.contents(atPath: path), scene.addFont([UInt8](data)) else {
+    guard scene.addFont(path: path) else {
         fatalError("cannot load \(path); run crates/render/fetch-fonts.sh")
     }
 }
@@ -181,6 +181,87 @@ func typographyScreen(thumbnail: [UInt8]) -> Layer {
     return view
 }
 
+/// The render core's second round: text in runs, shadows, gradients, shapes,
+/// masks, image placement and animations.
+@MainActor
+func effectsScreen() -> (view: Layer, card: Layer, badge: Layer) {
+    let view = Layer(in: scene)
+    view.frame = Rect(x: 0, y: 0, width: screenWidth, height: screenHeight)
+    view.backgroundColor = SystemColor.groupedBackground
+
+    let rich = "Đậm, nghiêng, gạch chân, gạch ngang và chữ nâng lên."
+    func range(_ word: String) -> Range<Int> {
+        let start = rich.utf8.distance(from: rich.startIndex, to: rich.range(of: word)!.lowerBound)
+        return start ..< start + word.utf8.count
+    }
+    let line = Layer(in: scene)
+    let runs = [
+        TextRun(range("Đậm"), weight: 700),
+        TextRun(range("nghiêng"), isItalic: true),
+        TextRun(range("gạch chân"), color: SystemColor.blue, isUnderlined: true),
+        TextRun(range("gạch ngang"), isStruckThrough: true),
+        TextRun(range("nâng lên"), size: 12, baselineOffset: 6),
+    ]
+    let paragraph = ParagraphStyle(lineSpacing: 6)
+    let metrics = scene.measure(rich, runs: runs, paragraph: paragraph, maxWidth: screenWidth - 40)
+    line.frame = Rect(x: 20, y: 70, width: screenWidth - 40, height: metrics.height)
+    line.setText(rich, runs: runs, paragraph: paragraph)
+    view.addSublayer(line)
+
+    let card = box(Rect(x: 20, y: 150, width: 160, height: 110), color: SystemColor.background, radius: 16, in: view)
+    card.shadowColor = 0x4000_0000
+    card.shadowOffset = Point(x: 0, y: 6)
+    card.shadowRadius = 16
+    text("Bóng đổ", TextStyle(size: 17, weight: 600), x: 16, centerY: 30, in: card)
+
+    let gradient = box(Rect(x: 200, y: 150, width: 173, height: 110), color: 0, radius: 16, in: view)
+    gradient.setGradient(Gradient(.linear(start: Point(x: 0, y: 0), end: Point(x: 173, y: 110)), colors: [0xFF00_7AFF, 0xFFAF_52DE]))
+    text("Gradient", TextStyle(size: 17, weight: 600, color: 0xFFFF_FFFF), x: 16, centerY: 30, in: gradient)
+
+    let radial = box(Rect(x: 20, y: 290, width: 110, height: 110), color: 0, in: view)
+    radial.setGradient(Gradient(.radial(center: Point(x: 55, y: 55), startRadius: 0, endRadius: 55), colors: [0xFFFF_CC00, 0xFFFF_3B30, 0x00FF_3B30], locations: [0, 0.7, 1]))
+    let conic = box(Rect(x: 142, y: 290, width: 110, height: 110), color: 0, radius: 55, in: view)
+    conic.setGradient(Gradient(.conic(center: Point(x: 55, y: 55), startAngle: 0, endAngle: 2 * .pi), colors: [0xFFFF_3B30, 0xFFFF_CC00, 0xFF34_C759, 0xFF00_7AFF, 0xFFAF_52DE, 0xFFFF_3B30]))
+
+    var star = Path()
+    for index in 0 ..< 10 {
+        let radius: Float = index % 2 == 0 ? 52 : 22
+        let angle = Float(index) * .pi / 5 - .pi / 2
+        let point = Point(x: 55 + radius * cos(angle), y: 55 + radius * sin(angle))
+        if index == 0 { star.move(to: point) } else { star.addLine(to: point) }
+    }
+    star.closeSubpath()
+    let shape = box(Rect(x: 264, y: 290, width: 110, height: 110), color: 0, in: view)
+    shape.setShape(star, style: ShapeStyle(fill: 0xFFFF_CC00, stroke: 0xFF1C_1C1E, lineWidth: 3, lineJoin: .round, dashes: [8, 4]))
+
+    // A 90 × 60 picture, red to blue across and darker down, in a circle
+    // mask, then fit and fill.
+    var pixels: [UInt8] = []
+    for y in 0 ..< 60 {
+        for x in 0 ..< 90 {
+            pixels += [UInt8(x * 255 / 89), UInt8(150 - y * 2), UInt8(255 - x * 255 / 89), 255]
+        }
+    }
+    var circle = Path()
+    let k: Float = 0.5523 * 50 // cubic Bézier circle
+    circle.move(to: Point(x: 100, y: 50))
+    circle.addCurve(to: Point(x: 50, y: 100), control1: Point(x: 100, y: 50 + k), control2: Point(x: 50 + k, y: 100))
+    circle.addCurve(to: Point(x: 0, y: 50), control1: Point(x: 50 - k, y: 100), control2: Point(x: 0, y: 50 + k))
+    circle.addCurve(to: Point(x: 50, y: 0), control1: Point(x: 0, y: 50 - k), control2: Point(x: 50 - k, y: 0))
+    circle.addCurve(to: Point(x: 100, y: 50), control1: Point(x: 50 + k, y: 0), control2: Point(x: 100, y: 50 - k))
+    circle.closeSubpath()
+    for (index, mode) in [ContentMode.scaleAspectFill, .scaleAspectFit, .scaleAspectFill].enumerated() {
+        let image = box(Rect(x: 20 + Float(index) * 122, y: 430, width: 100, height: 100), color: 0xFFFF_FFFF, radius: 12, in: view)
+        image.contentMode = mode
+        image.setImage(rgba: pixels, width: 90, height: 60, rowBytes: 90 * 4, premultiplied: false)
+        if index == 0 { image.mask = circle } else { image.masksToBounds = index == 2 }
+    }
+
+    let badge = box(Rect(x: 20, y: 560, width: 120, height: 44), color: 0xFF34_C759, radius: 22, in: view)
+    text("Animation", TextStyle(size: 15, weight: 600, color: 0xFFFF_FFFF), x: 18, centerY: 22, in: badge)
+    return (view, card, badge)
+}
+
 @MainActor
 func save(_ name: String, _ format: ImageFormat) -> [UInt8] {
     guard let data = scene.encode(format) else { fatalError("cannot encode \(name)") }
@@ -237,4 +318,41 @@ library.view.removeFromSuperlayer()
 let typography = typographyScreen(thumbnail: thumbnail)
 screens.addSublayer(typography)
 _ = save("typography.png", .png)
+
+typography.removeFromSuperlayer()
+let effects = effectsScreen()
+screens.addSublayer(effects.view)
+// The chrome layer covers the screen, and hit-testing finds plain layers too.
+chrome.isHidden = true
+precondition(scene.hitTest(Point(x: 100, y: 200)) === effects.card, "the card is front-most there")
+chrome.isHidden = false
+_ = save("effects.png", .png)
+
+// The badge slides right and fades out and back in, over 0.6 s of the
+// scene's clock at 60 fps; the layer keeps its own values meanwhile.
+let start = effects.badge.frame
+effects.badge.add(Animation(from: .frame(start), to: .frame(Rect(x: 253, y: start.y, width: start.width, height: start.height)), duration: 0.6, timing: .easeInEaseOut))
+effects.badge.add(Animation(from: .opacity(1), to: .opacity(0.2), duration: 0.3, timing: .linear, autoreverses: true))
+var animationFrames = 0
+measure("animation", frames: 37) { index in
+    scene.time = Double(index) / 60
+    animationFrames += scene.isAnimating ? 1 : 0
+    if index == 18 { _ = save("animation-midway.jpg", .jpeg) }
+}
+precondition(animationFrames == 36 && !scene.isAnimating, "the animations end after 0.6 s")
+
+// Frames encoded on other threads while the next one renders.
+let clock = ContinuousClock()
+let group = DispatchGroup()
+let encodedFrames = 30
+let pipelined = clock.measure {
+    for index in 0 ..< encodedFrames {
+        effects.card.frame.y = 150 + Float(index)
+        let frame = scene.render()
+        DispatchQueue.global().async(group: group) { _ = frame.encode(.jpeg) }
+    }
+    group.wait()
+}
+let milliseconds = Double(pipelined.components.attoseconds) / 1e15 + Double(pipelined.components.seconds) * 1000
+print(String(format: "encoded on other threads: %d frames, %.1f ms/frame, %.0f fps", encodedFrames, milliseconds / Double(encodedFrames), Double(encodedFrames) * 1000 / milliseconds))
 print("frames written to \(output.path)")

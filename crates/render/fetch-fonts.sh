@@ -20,5 +20,6 @@ fetch() { # file path-in-repo sha256
 }
 
 fetch Inter.ttf 'ofl/inter/Inter%5Bopsz,wght%5D.ttf' 29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031
+fetch InterItalic.ttf 'ofl/inter/Inter-Italic%5Bopsz,wght%5D.ttf' acd98e64795781b2058f07b18475e0ecee2a0fe2b42a49e2f9e37d0d6bf66ce6
 fetch NotoSansSC.ttf 'ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf' a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da
 echo "$dir"

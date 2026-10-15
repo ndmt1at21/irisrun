@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 10:02:11 +0700
+Subject: [PATCH 9/9] Use the render core's text metrics and map its fonts
+
+Text sizes, first and last baselines, line counts and truncation now come
+from the render core's measurement, the one it draws with, instead of
+baselines estimated at 80% of the line height. Fonts are mapped rather than
+read, so the CJK font costs memory only for the glyphs drawn, and Inter
+Italic is loaded for italic text.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../DisplayListLayerRenderer.swift            |  5 ++--
+ .../Text/Text/Text+StringDrawingContext.swift | 29 ++++++-------------
+ 2 files changed, 12 insertions(+), 22 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index e7f762e..393c6cc 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -23,9 +23,10 @@ extension IrisRender.Scene {
+         scene.root.backgroundColor = 0xFFFF_FFFF
+         let environment = ProcessInfo.processInfo.environment
+         let home = environment["IRISRUN_HOME"] ?? (environment["HOME"] ?? NSHomeDirectory()) + "/.irisrun"
+-        for name in ["Inter.ttf", "NotoSansSC.ttf"] {
++        for name in ["Inter.ttf", "InterItalic.ttf", "NotoSansSC.ttf"] {
+             let path = home + "/fonts/" + name
+-            guard let data = FileManager.default.contents(atPath: path), scene.addFont([UInt8](data)) else {
++            // Mapped, not read: the CJK font takes memory only for the glyphs drawn.
++            guard scene.addFont(path: path) else {
+                 fatalError("cannot load \(path); run Iris's crates/render/fetch-fonts.sh")
+             }
+         }
+diff --git a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+index c8fbc36..ab7b334 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+@@ -255,34 +255,23 @@ extension NSAttributedString {
+             )
+             #else
+             // Iris: measured by the render core with the fonts it draws with. The text on one
+-            // line comes first: it gives the line height, and the size when nothing wraps.
+-            var style = irisTextStyle(lineLimit: lineLimit)
++            // line comes first: it is the size when nothing wraps.
++            let style = irisTextStyle(lineLimit: lineLimit)
+             let line = irisScene.measure(string, style: style)
+             let fits = CGFloat(line.width) <= requestedSize.width
+-            let size = fits ? line : irisScene.measure(string, style: style, maxWidth: Float(requestedSize.width))
+-            let lineHeight = CGFloat(line.height)
+-            let height = CGFloat(size.height)
+-            let lineCount = lineHeight > 0 ? max(1, Int((height / lineHeight).rounded())) : 1
+-            // ponytail: baselines at 80% of the line height, the ascent of Inter and Noto Sans
+-            // SC; the render core should report them.
+-            let firstBaseline = lineHeight * 0.8
+-            var isTruncated = false
+-            if !fits, lineLimit != nil {
+-                style.maxLines = 0
+-                isTruncated = irisScene.measure(string, style: style, maxWidth: Float(requestedSize.width)).height > size.height
+-            }
++            let text = fits ? line : irisScene.measure(string, style: style, maxWidth: Float(requestedSize.width))
+             return Metrics(
+                 size: CGSize(
+-                    width: widthIsFlexible ? requestedSize.width : CGFloat(size.width),
+-                    height: height
++                    width: widthIsFlexible ? requestedSize.width : CGFloat(text.width),
++                    height: CGFloat(text.height)
+                 ),
+                 scale: 1,
+-                firstBaseline: firstBaseline,
+-                lastBaseline: height - lineHeight + firstBaseline,
++                firstBaseline: CGFloat(text.firstBaseline),
++                lastBaseline: CGFloat(text.lastBaseline),
+                 baselineAdjustment: 0,
+                 requestedWidth: requestedSize.width,
+-                numberOfLines: wantsNumberOfLineFragments ? UInt(lineCount) : nil,
+-                hasTruncatedRanges: isTruncated
++                numberOfLines: wantsNumberOfLineFragments ? UInt(max(text.lineCount, 1)) : nil,
++                hasTruncatedRanges: text.isTruncated
+             )
+             #endif
+         }

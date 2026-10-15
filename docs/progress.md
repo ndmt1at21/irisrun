@@ -1,6 +1,6 @@
 # Tiến độ triển khai
 
-Cập nhật 15/10/2026, session thứ tư (sau khi session thứ ba hết context). File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
+Cập nhật 15/10/2026 chiều, cuối session thứ tư. File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
 
 ## Tổng quan
 
@@ -17,7 +17,9 @@ Cập nhật 15/10/2026, session thứ tư (sau khi session thứ ba hết conte
 | P0-09 Binary Doctor | Xong | `crates/doctor`, lệnh `irisrun doctor <path>`; quét 14 SDK, xem [reports/p0-09-binary-doctor.md](reports/p0-09-binary-doctor.md) |
 | P0-06 Render core | Xong | `crates/render`: cây layer kiểu CALayer, C ABI, lớp bọc Swift. OpenSwiftUI đo và vẽ chữ qua render core (patch 0006–0008): app mẫu ra 8 frame PNG, `check-sample.sh` đạt 14 điểm ở cả chế độ stdout và frame (kiểm lại ở session thứ tư). 2x: 32–55 fps từ display list ra JPEG. Xem [reports/p0-06-render-core.md](reports/p0-06-render-core.md) |
 | P0-10 cloud Android | Xong ở local | Emulator Android 16 trong container trên KVM → scrcpy-server → `irisrun-gateway` (str0m) → WebRTC → Chromium; chạm, kéo, phím, chữ (cả tiếng Việt), Back đều chạy. Còn đo từ VN tới host Singapore. Xem [reports/p0-10-cloud-android.md](reports/p0-10-cloud-android.md) |
-| P0-11 cloud iOS | Chưa làm | Cần Mac |
+| P1-14 Render core v1 | Xong phần code | Chữ nhiều kiểu, metric chữ thật, bóng đổ, path, gradient, mask, ảnh theo `contentMode`, animation, hit-test, frame mã hoá ở luồng khác; OpenSwiftUI dùng metric thật (patch 0009). Còn so ảnh với simulator. Xem [reports/p1-14-render-core-v1.md](reports/p1-14-render-core-v1.md) |
+| P1-12 Pipeline build iOS | Xong phần pipeline | `irisrun-ios-build` (Swift, chỉ Foundation) đọc `.pbxproj` kể cả thư mục đồng bộ của Xcode 16, chọn target iOS, gom source/resource/gói SPM, bỏ preview, `.xcstrings` → `.strings`, sinh SwiftPM; 65/65 app corpus đọc được; app mẫu build qua `IrisSample.xcodeproj`. Nửa UIKit chờ P1-16, P1-33. Xem [reports/p1-12-ios-build-pipeline.md](reports/p1-12-ios-build-pipeline.md) |
+| P0-11 cloud iOS | Hoãn | Tầng dự phòng chạy simulator thật, cần Mac thuê (EC2 Mac hoặc MacStadium). Đường iOS chính (OpenKit trên Linux) không phụ thuộc nó. Người dùng chọn hoãn ngày 15/10 |
 | P0-13, P0-14, P0-15, P0-16 | Không phải việc code | Pháp lý, đối tác, họp cổng 0, giữ chỗ tên |
 
 ## Task giao subagent
@@ -29,9 +31,9 @@ P0-05, P0-07 và P0-08 do subagent làm trong session thứ hai, mỗi task ch�
 1. **P0-05** đã xong. Build của nó ở `~/.cache/irisrun/p0-05/build/apps-{debug,release}`; nếu báo "missing required module", xoá `out/ModuleCache.noindex` trong thư mục đó rồi build lại.
 2. **P0-06** đã xong (subagent, session thứ ba và thứ tư). Từ đây mọi build OpenSwiftUI trên Linux, kể cả chế độ stdout và `ios-corpus compile`, cần `target/release/libirisrun_render.a` và font của render core. Chế độ frame: `swiftenv env IRISRUN_FRAMES=<thư mục> Scripts/check-sample.sh` (Docker không tự chuyển biến môi trường vào container). Việc còn lại thuộc P1-13, P1-14: mục "Việc cho P1-13 và P1-14" của báo cáo P0-06.
 3. Player WebRTC cho Device UI đã xong (session thứ ba); session UI giữ phần còn lại của `apps/web`, chỉ chạm `LiveDevicePage`, `Screen`, `connection`, `input`, `useDevice`, `webrtc`, `VideoScreen` khi cần.
-4. **P0-11** cần Mac; **P0-13 đến P0-16** không phải việc code; **P0-15** (họp cổng 0) là quyết định của team trước khi vào Phase 1. Tự làm Phase 1 trước cổng 0 thì nên hỏi người dùng trước.
+4. **Quyết định của người dùng ngày 15/10 (session thứ tư):** vào Phase 1 trước khi họp cổng 0, ưu tiên iOS không cần Mac theo thứ tự P1-14 render core v1 → P1-12 pipeline build iOS → P1-15 input iOS → P1-13 mở rộng OpenSwiftUI → P1-16 UIKit cơ bản; Android và server local (P1-03, P1-07, P1-08) làm xen khi iOS chờ build. P0-11 hoãn tới khi có Mac. `docs/tasks.md` là bản chuẩn của trạng thái task, không đồng bộ sang tab "Tasks" của Claude Docs.
 5. Job `render` và job `rust` (gói fontconfig/freetype, font) trong CI chưa chạy trên GitHub.
-6. **Hỏi người dùng** (chưa có câu trả lời lúc lưu): (a) có vào Phase 1 trước khi họp cổng 0 (P0-15) không, và nếu có thì task nào trước (P1-07, P1-08, P1-12, P1-14 chỉ phụ thuộc P0 đã xong); (b) có đồng bộ cột trạng thái sang tab "Tasks" của Claude Docs không, và bản nào là bản chuẩn.
+6. **Tiếp theo: P1-15** (input iOS: chạm thành gesture, nhập chữ cho `TextField`/`TextEditor` qua IME), rồi P1-13 (mở rộng OpenSwiftUI: host IrisProtocol thật chạy RunLoop, nối ảnh/gradient/shape/clip/shadow/chữ nhiều kiểu vào render core, style iOS cho List/Button) và P1-16 (UIKit cơ bản). P1-14 và P1-12 đã xong phần code (xem bảng trên). Build công cụ: `cd runtimes/ios && swiftenv swift build --scratch-path ~/.cache/irisrun/ios-runtime-build`; `compile-app.sh` tự build nó vào `$IRISRUN_IOS_WORK/build/tool`.
 
 Emulator và gateway của P0-10 chạy lại theo mục "Chạy lại" của báo cáo. Image `irisrun-emulator:36` (4,6 GB) còn trong Docker. Gateway bị dừng bằng PID: `pkill -x` không khớp vì tên process bị cắt còn 15 ký tự (`irisrun-gateway`).
 
@@ -81,3 +83,9 @@ Session thứ hai:
 - App mẫu Compose dùng `compileSdk = 37` (Compose BOM 2026.09.00 đòi vậy), vẫn giữ `targetSdk = 36`. List có 20 mục để cuộn được.
 - Render core chỉ dùng font được nạp vào scene, không dùng font của máy: Inter (Latin, tiếng Việt) và Noto Sans SC (Trung, kana Nhật), đều OFL. Font biến thiên lấy độ đậm từ trục `wght`.
 - Id layer trong C ABI có số thế hệ, nên id của layer đã huỷ không bao giờ trỏ nhầm sang layer mới.
+
+Session thứ tư:
+
+- Render core: run chữ tính theo byte UTF-8; `contentMode` dùng raw value của `UIView.ContentMode`; animation không đổi giá trị của layer (như Core Animation), đồng hồ do bên gọi đặt; bóng đổ có đường nhanh cho hình bo góc đục; chưa thêm encoder JPEG khác (libjpeg-turbo SIMD cần `nasm`, máy chưa có).
+- OpenSwiftUI có thêm patch 0009 (metric chữ thật, font mmap). Sửa patch: commit trong checkout `~/.cache/irisrun/p0-05/checkouts/OpenSwiftUI`, rồi `git format-patch --no-signature --zero-commit -o Patches/openswiftui 9a26fd83` và ghi lại stamp (sha256 16 ký tự đầu của các patch) vào `.git/irisrun-patches` của checkout.
+- Pipeline iOS viết bằng Swift chỉ dùng Foundation, trong package `runtimes/ios`; asset catalog chép nguyên vì OpenKit sẽ đọc `Contents.json` lúc chạy; `.xcstrings` đổi sang `.lproj/*.strings`; bỏ preview bằng quét dòng, chưa cần SwiftSyntax.

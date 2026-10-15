@@ -19,7 +19,7 @@
 | Lấy OpenSwiftUI 0.23.1 và 5 package anh em theo SHA đã pin, áp patch thành commit, cảnh báo khi patch đổi sau lần lấy trước | `runtimes/ios/Scripts/fetch-openswiftui.sh` |
 | Cấu hình build cho Linux: backend Compute, dùng checkout local, tắt target GTK, đường dẫn header của toolchain | `runtimes/ios/Scripts/env.sh` |
 | Patch cho OpenSwiftUI và OpenObservation | `runtimes/ios/Patches/openswiftui/`, `runtimes/ios/Patches/openobservation/` |
-| Compile một thư mục app SwiftUI không sửa code: gom file Swift (bỏ test, Pods, Carthage), bỏ `#Preview`, sinh package SwiftPM, build | `runtimes/ios/Scripts/compile-app.sh`, `runtimes/ios/Scripts/strip-previews.py` |
+| Compile một thư mục app SwiftUI không sửa code: gom file Swift (bỏ test, Pods, Carthage), bỏ `#Preview`, sinh package SwiftPM, build | `runtimes/ios/Scripts/compile-app.sh`; từ P1-12 phần gom file và bỏ preview nằm trong công cụ `irisrun-ios-build` |
 | Kịch bản chạm cho app mẫu, script build và kiểm tra | `examples/ios-swiftui/session.txt`, `runtimes/ios/Scripts/check-sample.sh` |
 | Giữ khoảng trắng cuối dòng trong patch khi sửa bằng editor | `runtimes/ios/Patches/.editorconfig` |
 
