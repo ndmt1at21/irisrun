@@ -44,7 +44,7 @@ function Tag({ className, ...props }: ComponentProps<"span">) {
     <span
       data-slot="tag"
       className={cn(
-        "inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-border px-1.5 text-[11px] text-muted-foreground",
+        "inline-flex h-[22px] shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-border px-1.5 text-[11px] text-muted-foreground",
         className,
       )}
       {...props}

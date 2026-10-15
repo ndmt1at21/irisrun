@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Wed, 14 Oct 2026 23:58:43 +0700
+Subject: [PATCH 1/8] Measure text without CoreText
+
+Fonts resolve to their size and weight, and text is measured with a fixed
+advance of half the font size, so Text gets a frame on Linux. The render core
+replaces both later.
+---
+ .../Shim/FontNonDarwinShims.swift             | 12 ++++++++-
+ .../OpenSwiftUICore/View/Text/Font/Font.swift | 25 ++++++++++++++++---
+ .../Text/Text/Text+StringDrawingContext.swift | 25 ++++++++++++++-----
+ 3 files changed, 52 insertions(+), 10 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift b/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift
+index 15cc8a4..f7e3cf1 100644
+--- a/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift
++++ b/Sources/OpenSwiftUICore/Shim/FontNonDarwinShims.swift
+@@ -8,6 +8,16 @@ public import Foundation
+ // Placeholder for CoreText when not available.
+ public class CTFontDescriptor: CFCompatObject {}
+ 
+-public class CTFont: CFCompatObject {}
++// Iris: keeps the resolved size and weight so text can be measured until the render core can.
++public class CTFont: CFCompatObject {
++    package let pointSize: CGFloat
++    package let weight: CGFloat
++
++    package init(pointSize: CGFloat, weight: CGFloat) {
++        self.pointSize = pointSize
++        self.weight = weight
++        super.init()
++    }
++}
+ 
+ #endif
+diff --git a/Sources/OpenSwiftUICore/View/Text/Font/Font.swift b/Sources/OpenSwiftUICore/View/Text/Font/Font.swift
+index 715e961..22d461f 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Font/Font.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Font/Font.swift
+@@ -88,7 +88,21 @@ public struct Font: Hashable, Sendable {
+             self.weight = weight?.value ?? w
+             self.width = nil
+             #else
+-            _openSwiftUIPlatformUnimplementedFailure()
++            // Iris: the iOS type ramp at the default Dynamic Type size.
++            self.pointSize = switch textStyle {
++            case .largeTitle: 34
++            case .title: 28
++            case .title2: 22
++            case .title3: 20
++            case .callout: 16
++            case .subheadline: 15
++            case .footnote: 13
++            case .caption: 12
++            case .caption2: 11
++            default: 17
++            }
++            self.weight = weight?.value ?? (textStyle == .headline ? Font.Weight.semibold.value : 0)
++            self.width = nil
+             #endif
+         }
+ 
+@@ -303,7 +317,7 @@ extension Font {
+             return ratio
+         }
+         #else
+-        _openSwiftUIPlatformUnimplementedFailure()
++        return 1 // Iris: no Dynamic Type yet.
+         #endif
+     }
+ }
+@@ -382,7 +396,12 @@ extension Font {
+                 nil
+             )
+             #else
+-            _openSwiftUIPlatformUnimplementedFailure()
++            // Iris: there are no font files yet, only the size and weight layout asks for.
++            var traits = resolved.font.resolveTraits(in: resolved.context)
++            for modifier in resolved.modifiers {
++                modifier.modify(traits: &traits)
++            }
++            return CTFont(pointSize: traits.pointSize, weight: traits.weight)
+             #endif
+         }
+         return cache
+diff --git a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+index 864ba4a..1bd1b39 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+@@ -254,16 +254,29 @@ extension NSAttributedString {
+                 hasTruncatedRanges: drawingContext.hasTruncatedRanges
+             )
+             #else
+-            _openSwiftUIPlatformUnimplementedWarning()
++            // Iris: an estimate until the render core measures text: every character is half
++            // the font size wide, and lines wrap at the proposed width.
++            let font = length > 0 ? attribute(.kitFont, at: 0, effectiveRange: nil) as? CTFont : nil
++            let pointSize = font?.pointSize ?? 17
++            let lineHeight = (pointSize * 1.2).rounded(.up)
++            let textWidth = CGFloat(string.count) * pointSize / 2
++            var lineCount = requestedSize.width > 0 ? max(1, Int((textWidth / requestedSize.width).rounded(.up))) : 1
++            if let lineLimit {
++                lineCount = min(lineCount, max(lineLimit, 1))
++            }
++            let height = CGFloat(lineCount) * lineHeight
+             return Metrics(
+-                size: .zero,
++                size: CGSize(
++                    width: widthIsFlexible ? requestedSize.width : min(textWidth, requestedSize.width),
++                    height: height
++                ),
+                 scale: 1,
+-                firstBaseline: 0,
+-                lastBaseline: 0,
++                firstBaseline: pointSize,
++                lastBaseline: height - lineHeight + pointSize,
+                 baselineAdjustment: 0,
+                 requestedWidth: requestedSize.width,
+-                numberOfLines: wantsNumberOfLineFragments ? 0 : nil,
+-                hasTruncatedRanges: false
++                numberOfLines: wantsNumberOfLineFragments ? UInt(lineCount) : nil,
++                hasTruncatedRanges: textWidth > requestedSize.width * CGFloat(lineCount)
+             )
+             #endif
+         }

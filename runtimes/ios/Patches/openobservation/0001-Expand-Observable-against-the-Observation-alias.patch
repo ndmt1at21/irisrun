@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Wed, 14 Oct 2026 23:57:29 +0700
+Subject: [PATCH] Expand @Observable against the Observation alias
+
+---
+ Sources/OpenObservationMacros/ObservableMacro.swift | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Sources/OpenObservationMacros/ObservableMacro.swift b/Sources/OpenObservationMacros/ObservableMacro.swift
+index 551e17e..d1ef5c2 100644
+--- a/Sources/OpenObservationMacros/ObservableMacro.swift
++++ b/Sources/OpenObservationMacros/ObservableMacro.swift
+@@ -15,7 +15,9 @@ import SwiftDiagnostics
+ import SwiftSyntaxBuilder
+ 
+ public struct ObservableMacro {
+-  static let moduleName = "OpenObservation"
++  // Iris compiles apps with -module-alias Observation=OpenObservation, which forbids naming
++  // OpenObservation in their source, macro expansions included.
++  static let moduleName = "Observation"
+ 
+   static let conformanceName = "Observable"
+   static var qualifiedConformanceName: String {

@@ -1,0 +1,3 @@
+# Context lines in a diff can end in spaces; trimming them breaks the patch.
+[*.patch]
+trim_trailing_whitespace = false

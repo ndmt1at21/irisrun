@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 06:58:12 +0700
+Subject: [PATCH 6/8] Resolve modified fonts to traits without CoreText
+
+A font with a modifier, such as .bold() or .weight(_:), got its traits from
+a CTFontDescriptor, which crashes on Linux. It now takes the traits of its
+base font and applies the modifier to them, as every font modifier can.
+---
+ .../View/Text/Font/ModifiedFont.swift           | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift b/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift
+index 0df5422..f308ea4 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Font/ModifiedFont.swift
+@@ -885,6 +885,15 @@ extension Font {
+             modifier.modify(descriptor: &descriptor, in: context)
+             return descriptor
+         }
++
++        #if !canImport(CoreText)
++        // Iris: without CoreText there are no descriptors, only traits.
++        func resolveTraits(in context: Font.Context) -> Font.ResolvedTraits {
++            var traits = base.resolveTraits(in: context)
++            modifier.modify(traits: &traits)
++            return traits
++        }
++        #endif
+     }
+ 
+     private struct StaticModifierProvider<M>: FontProvider where M: StaticFontModifier {
+@@ -895,5 +904,13 @@ extension Font {
+             M.modify(descriptor: &descriptor, in: context)
+             return descriptor
+         }
++
++        #if !canImport(CoreText)
++        func resolveTraits(in context: Font.Context) -> Font.ResolvedTraits {
++            var traits = base.resolveTraits(in: context)
++            M.modify(traits: &traits)
++            return traits
++        }
++        #endif
+     }
+ }

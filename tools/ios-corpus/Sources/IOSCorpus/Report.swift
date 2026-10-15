@@ -31,9 +31,11 @@ private func percent(_ count: Int, _ total: Int) -> String {
 
 private let planGroups = [
     "toolchain": "có sẵn trong toolchain", "OpenKit": "OpenKit (P1-13, P1-16)", "shim": "shim nhỏ, chưa có task",
-    "P1-17": "P1-17", "E2-05": "E2-05", "E2-10": "overlay adapter (E2-10)", "Charts": "hướng 4, chưa có task",
-    "none": "chưa có kế hoạch",
+    "other-platform": "macOS/watchOS/tvOS, không build cho iOS", "P1-17": "P1-17", "E2-05": "E2-05",
+    "E2-10": "overlay adapter (E2-10)", "Charts": "hướng 4, chưa có task", "none": "chưa có kế hoạch, stub ở P1-18",
 ]
+
+private let objcStatus = ["error": "lỗi compile", "link": "lỗi link", "ok": "compile được"]
 
 /// Generated report sections, keyed by the marker name used in the report.
 func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: CompileResult]?) -> [(String, String)] {
@@ -42,8 +44,12 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
     let uiKitApps = results.filter { $0.ui == "uikit" }
     func used(_ result: AppResult, _ category: String, _ name: String) -> Bool { result.usage[category]?[name] != nil }
     func files(_ result: AppResult, _ kinds: String...) -> Int { kinds.reduce(0) { $0 + (result.inventory.files[$1] ?? 0) } }
-    func objcInSwift(_ result: AppResult) -> Bool { !(result.usage["objc"] ?? [:]).isEmpty }
-    func objcAny(_ result: AppResult) -> Bool { objcInSwift(result) || files(result, "m", "mm") > 0 || result.inventory.bridgingHeader }
+    /// Third-party packages the app runs with; build and test tools are left out.
+    func packages(_ result: AppResult) -> (spm: [String], pods: [String]) {
+        let inventory = result.inventory
+        let pods = inventory.pods.map { $0.lowercased() } + inventory.carthage
+        return (inventory.spm.filter { !Catalog.devPackages.contains($0) }, pods.filter { !Catalog.devPackages.contains($0) })
+    }
     func countRow(_ label: String, _ task: String? = nil, _ predicate: (AppResult) -> Bool) -> [String] {
         let count = results.filter(predicate).count
         return [label, "\(count)", percent(count, total)] + (task.map { [$0] } ?? [])
@@ -66,26 +72,23 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
         ["Điểm vào (`@main`)", rank(results, "entry").map { "\($0.name) \($0.apps)" }.joined(separator: ", ")],
     ])
 
-    // SwiftUI: views, types, modifiers, wrappers and #Preview in one ranking.
-    let swiftUIAttribute = { (name: String) in ["SwiftUI", "Observation"].contains(Catalog.attributes[name]) }
-    let swiftUI: [(Rank, String, String)] =
-        rank(results, "swiftui.view").map { ($0, "view", $0.name) }
-        + rank(results, "swiftui.type").map { ($0, "kiểu", $0.name) }
-        + rank(results, "swiftui.modifier").map { ($0, "modifier", "." + $0.name) }
-        + rank(results, "attribute", where: swiftUIAttribute).map { ($0, "thuộc tính", "@" + $0.name) }
-        + rank(results, "macro", where: { $0 == "Preview" }).map { ($0, "macro", "#" + $0.name) }
-    let swiftUITable = table(
-        ["#", "API", "Loại", "App", "% app", "Lần dùng"],
-        swiftUI.sorted { higher($0.0, $1.0) }.prefix(40).enumerated().map {
-            ["\($0.offset + 1)", "`\($0.element.2)`", $0.element.1, "\($0.element.0.apps)", percent($0.element.0.apps, total), "\($0.element.0.uses)"]
-        })
-    let swiftUIByKind = ["swiftui.view": "view", "swiftui.type": "kiểu", "swiftui.modifier": "modifier"].sorted { $0.key < $1.key }
-        .map { "- \($0.value): \(rank(results, $0.key).count) API khác nhau" }.joined(separator: "\n")
+    // SwiftUI rankings.
+    let views = rank(results, "swiftui.view")
+    let types = rank(results, "swiftui.type")
+    let modifiers = rank(results, "swiftui.modifier")
+    let swiftUIViews = table(["#", "View", "App", "% app", "Lần dùng"], rankRows(views, limit: 40)) + """
+
+
+        Số API khác nhau: \(views.count) view, \(types.count) kiểu, \(modifiers.count) modifier. Hàm tự do: \
+        \(rank(results, "swiftui.function").map { "`\($0.name)` \($0.apps) app" }.joined(separator: ", ")).
+        """
+    let swiftUIModifiers = table(["#", "Modifier hoặc method", "App", "% app", "Lần dùng"], rankRows(modifiers, limit: 60) { "`.\($0.name)`" })
+    let swiftUITypes = table(["#", "Kiểu", "App", "% app", "Lần dùng"], rankRows(types, limit: 30))
 
     // Property wrappers, attached and freestanding macros, result builders (not language or ObjC attributes).
     let wrappers =
         rank(results, "attribute", where: { !["Swift", "ObjC"].contains(Catalog.attributes[$0]) }).map { ($0, "@" + $0.name, Catalog.attributes[$0.name] ?? "bên thứ ba/app") }
-        + rank(results, "macro", where: { !Catalog.builtinMacros.contains($0) }).map { ($0, "#" + $0.name, $0.name == "Preview" ? "SwiftUI" : $0.name == "Predicate" ? "Foundation" : "bên thứ ba/app") }
+        + rank(results, "macro", where: { !Catalog.builtinMacros.contains($0) }).map { ($0, "#" + $0.name, Catalog.macros[$0.name] ?? "bên thứ ba/app") }
     let wrappersTable = table(
         ["#", "Thuộc tính / macro", "Module", "App", "% app", "Lần dùng"],
         wrappers.sorted { higher($0.0, $1.0) }.prefix(30).enumerated().map {
@@ -93,46 +96,73 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
         })
     let environment = table(["#", "Khoá `@Environment`", "App", "% app", "Lần dùng"], rankRows(rank(results, "swiftui.environment"), limit: 15))
 
-    // UIKit, with the count among the UIKit apps of the corpus.
+    // How much UIKit the SwiftUI apps need: none, non-view types only, or views and view controllers.
+    func hasUIKit(_ result: AppResult) -> Bool { !(result.usage["uikit.type"] ?? [:]).isEmpty }
+    func wrapsUIKit(_ result: AppResult) -> Bool { used(result, "swiftui.type", "UIViewRepresentable") || used(result, "swiftui.type", "UIViewControllerRepresentable") }
+    func usesUIKitViews(_ result: AppResult) -> Bool {
+        wrapsUIKit(result) || used(result, "swiftui.type", "UIHostingController")
+            || (result.usage["uikit.type"] ?? [:]).keys.contains { $0.contains("View") || $0.contains("Controller") }
+    }
+    func swiftUIRow(_ label: String, _ predicate: (AppResult) -> Bool) -> [String] {
+        let count = swiftUIApps.filter(predicate).count
+        return [label, "\(count)", percent(count, swiftUIApps.count)]
+    }
+    let uiKitInSwiftUI = table(["\(swiftUIApps.count) app SwiftUI", "App", "%"], [
+        swiftUIRow("Không dùng tên UIKit nào") { !hasUIKit($0) },
+        swiftUIRow("Chỉ dùng kiểu UIKit không phải view (vòng đời app, `UIDevice`, `UIPasteboard`…)") { hasUIKit($0) && !usesUIKitViews($0) },
+        swiftUIRow("Dùng view hoặc view controller UIKit") { usesUIKitViews($0) },
+        swiftUIRow("Trong đó bọc view UIKit (`UIViewRepresentable`, `UIViewControllerRepresentable`)", wrapsUIKit),
+        swiftUIRow("Trong đó đặt SwiftUI vào UIKit (`UIHostingController`)") { used($0, "swiftui.type", "UIHostingController") },
+    ]) + "\n\nApp UIKit có import SwiftUI: \(uiKitApps.filter { used($0, "import", "SwiftUI") }.count)/\(uiKitApps.count)."
+
+    // UIKit, with the count among the SwiftUI and the UIKit apps of the corpus.
     func uiKitTable(_ category: String, limit: Int) -> String {
+        let inSwiftUIApps = Dictionary(uniqueKeysWithValues: rank(swiftUIApps, category).map { ($0.name, $0.apps) })
         let inUIKitApps = Dictionary(uniqueKeysWithValues: rank(uiKitApps, category).map { ($0.name, $0.apps) })
         return table(
-            ["#", "API", "App", "% app", "App UIKit (/\(uiKitApps.count))", "Lần dùng"],
+            ["#", "API", "App", "% app", "App SwiftUI (/\(swiftUIApps.count))", "App UIKit (/\(uiKitApps.count))", "Lần dùng"],
             rank(results, category).prefix(limit).enumerated().map {
-                ["\($0.offset + 1)", "`\($0.element.name)`", "\($0.element.apps)", percent($0.element.apps, total), "\(inUIKitApps[$0.element.name] ?? 0)", "\($0.element.uses)"]
+                let name = $0.element.name
+                return ["\($0.offset + 1)", "`\(name)`", "\($0.element.apps)", percent($0.element.apps, total), "\(inSwiftUIApps[name] ?? 0)", "\(inUIKitApps[name] ?? 0)", "\($0.element.uses)"]
             })
     }
 
     // Apple frameworks by plan coverage; other imports are app modules or third-party libraries.
+    let appleImports = rank(results, "import", where: { Catalog.appleModules[$0] != nil })
     let frameworks = table(
         ["#", "Module", "Kế hoạch", "App", "% app", "File import"],
-        rank(results, "import", where: { Catalog.appleModules[$0] != nil }).filter { $0.apps > 1 }.enumerated().map {
+        appleImports.prefix(40).enumerated().map {
             ["\($0.offset + 1)", "`\($0.element.name)`", planGroups[Catalog.appleModules[$0.element.name]!]!, "\($0.element.apps)", percent($0.element.apps, total), "\($0.element.uses)"]
         })
-    let singleFrameworks = rank(results, "import", where: { Catalog.appleModules[$0] != nil }).filter { $0.apps == 1 }.map(\.name)
     let otherImports = rank(results, "import", where: { Catalog.appleModules[$0] == nil })
     let frameworksNote = """
-        Module Apple chỉ 1 app dùng: \(singleFrameworks.map { "`\($0)`" }.joined(separator: ", ")).
+        Module Apple khác (\(appleImports.count - min(40, appleImports.count)) module, kèm số app): \
+        \(appleImports.dropFirst(40).map { "`\($0.name)` \($0.apps)" }.joined(separator: ", ")).
 
         Module không thuộc SDK Apple (module của chính app hoặc thư viện): \(otherImports.count) module; nhiều app nhất: \
         \(otherImports.prefix(12).map { "`\($0.name)` \($0.apps)" }.joined(separator: ", ")).
         """
 
-    // Objective-C dependence: constructs in Swift (no ObjC runtime on Linux) and ObjC sources.
+    // Objective-C: Swift constructs with their measured status on Linux, then ObjC sources.
     func split(_ predicate: (AppResult) -> Bool) -> [String] {
         let count = results.filter(predicate).count
         return ["\(count)", percent(count, total), "\(swiftUIApps.filter(predicate).count)", "\(uiKitApps.filter(predicate).count)"]
     }
+    func failsOnLinux(_ result: AppResult) -> Bool { (result.usage["objc"] ?? [:]).keys.contains { Catalog.objcOnLinux[$0] != "ok" } }
     let objcRows =
-        rank(results, "objc").map { construct in ["`\(construct.name)`"] + split { used($0, "objc", construct.name) } + ["\(construct.uses)"] }
+        rank(results, "objc").map { construct in
+            ["`\(construct.name)`", objcStatus[Catalog.objcOnLinux[construct.name] ?? "error"]!] + split { used($0, "objc", construct.name) } + ["\(construct.uses)"]
+        }
         + [
-            ["Bất kỳ cấu trúc nào ở trên"] + split(objcInSwift) + [""],
-            ["File Objective-C (`.m`, `.mm`)"] + split { files($0, "m", "mm") > 0 } + ["\(results.reduce(0) { $0 + files($1, "m", "mm") })"],
-            ["Bridging header"] + split { $0.inventory.bridgingHeader } + [""],
-            ["**Phụ thuộc ObjC bất kỳ** (cấu trúc, file `.m`/`.mm` hoặc bridging header)"] + split(objcAny) + [""],
-            ["File C/C++ (`.c`, `.cc`, `.cpp`)"] + split { files($0, "c", "cc", "cpp") > 0 } + ["\(results.reduce(0) { $0 + files($1, "c", "cc", "cpp") })"],
+            ["Có cấu trúc lỗi trên Linux", ""] + split(failsOnLinux) + [""],
+            ["File Objective-C (`.m`, `.mm`)", ""] + split { files($0, "m", "mm") > 0 } + ["\(results.reduce(0) { $0 + files($1, "m", "mm") })"],
+            ["Bridging header", ""] + split { $0.inventory.bridgingHeader } + [""],
+            ["**Không cần ObjC**", ""] + split { $0.objcNeed == .none } + [""],
+            ["**Chỉ cần viết lại bằng SwiftSyntax** (`@objc`, `@objcMembers`, `#selector`, `#keyPath`, `Selector`, `@IBOutlet`)", ""] + split { $0.objcNeed == .rewrite } + [""],
+            ["**Cần ObjC runtime hoặc Core Data** (KVO, `@NSManaged`, file `.m`/`.mm`, bridging header)", ""] + split { $0.objcNeed == .runtime } + [""],
+            ["File C/C++ (`.c`, `.cc`, `.cpp`)", ""] + split { files($0, "c", "cc", "cpp") > 0 } + ["\(results.reduce(0) { $0 + files($1, "c", "cc", "cpp") })"],
         ]
-    let objc = table(["Cấu trúc", "App", "% app", "SwiftUI (/\(swiftUIApps.count))", "UIKit (/\(uiKitApps.count))", "Lần dùng / số file"], objcRows)
+    let objc = table(["Cấu trúc", "Linux (Swift 6.4.1)", "App", "% app", "SwiftUI (/\(swiftUIApps.count))", "UIKit (/\(uiKitApps.count))", "Lần dùng / số file"], objcRows)
 
     // Build inventory: what share of the corpus each gap touches.
     let inventory = table(["Khoảng trống", "App", "% app", "Task trong plan"], [
@@ -140,9 +170,8 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
         countRow("Không commit `.xcodeproj`, sinh bằng XcodeGen/Tuist", "P1-12") { $0.inventory.xcodeProjects == 0 && $0.inventory.generator != nil },
         countRow("Chỉ có `Package.swift` (không `.xcodeproj`)", "P1-12") { $0.inventory.xcodeProjects == 0 && $0.inventory.generator == nil && $0.inventory.rootPackage },
         countRow("Local package (app chia nhiều module)", "P1-12") { $0.inventory.localPackages > 0 || $0.inventory.packageManifests > ($0.inventory.rootPackage ? 1 : 0) },
-        countRow("Gói SPM bên thứ ba", "P1-12, E2-04") { !$0.inventory.spm.isEmpty },
-        countRow("CocoaPods", "chưa có task") { !$0.inventory.pods.isEmpty },
-        countRow("Carthage", "chưa có task") { !$0.inventory.carthage.isEmpty },
+        countRow("Gói SPM bên thứ ba (không tính công cụ build/test)", "P1-12, E2-04") { !packages($0).spm.isEmpty },
+        countRow("CocoaPods hoặc Carthage (không tính công cụ build/test)", "chưa có task") { !packages($0).pods.isEmpty },
         countRow("Binary vendored (`.xcframework`, `.framework`)", "P0-09, P1-05") { files($0, "xcframework", "framework") > 0 },
         countRow("File Objective-C (`.m`, `.mm`) hoặc bridging header", "P0-07, E2-03") { files($0, "m", "mm") > 0 || $0.inventory.bridgingHeader },
         countRow("File C/C++", "clang trong P1-12") { files($0, "c", "cc", "cpp") > 0 },
@@ -157,7 +186,10 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
         countRow("`#Preview`", "P1-12, P1-19") { used($0, "macro", "Preview") },
         countRow("`PreviewProvider` (kiểu cũ)", "P1-12, P1-19") { used($0, "swiftui.type", "PreviewProvider") },
         countRow("SF Symbols (`systemName:`, `systemImage:`)", "bộ icon thay thế") { !($0.usage["sfsymbol"] ?? [:]).isEmpty },
-        countRow("Widget (`import WidgetKit`)", "chưa có kế hoạch") { used($0, "import", "WidgetKit") },
+        countRow("Widget extension (`@main` trên `WidgetBundle`/`Widget`)", "chưa có kế hoạch") { used($0, "entry", "WidgetKit") },
+        countRow("Code macOS/watchOS trong cùng repo (import AppKit, WatchKit…)", "P1-12 (chọn target iOS)") { result in
+            (result.usage["import"] ?? [:]).keys.contains { Catalog.appleModules[$0] == "other-platform" }
+        },
     ])
 
     func distribution(_ label: String, _ value: (AppResult) -> String?) -> String {
@@ -178,26 +210,50 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
         for (name, manager) in names { managers[name, default: []].insert(manager) }
         for name in Set(names.map(\.0)) { dependencyApps[name, default: 0] += 1 }
     }
+    let dependencyRanks = dependencyApps.sorted { ($1.value, $0.key) < ($0.value, $1.key) }
+    let runtimeDependencies = dependencyRanks.filter { !Catalog.devPackages.contains($0.key) }
     let dependencies = table(
         ["#", "Gói", "Qua", "App"],
-        dependencyApps.sorted { ($1.value, $0.key) < ($0.value, $1.key) }.prefix(25).enumerated().map {
+        runtimeDependencies.prefix(25).enumerated().map {
             ["\($0.offset + 1)", "`\($0.element.key)`", managers[$0.element.key]!.sorted().joined(separator: ", "), "\($0.element.value)"]
-        })
+        }) + """
 
-    // Upper bound for a compile rate: apps whose Apple imports are all covered by the plan up to a step.
-    let steps: [(String, Set<String>)] = [
-        ("1. Chỉ SwiftUI/UIKit, Foundation và shim nhỏ (OS log, CryptoKit…)", ["toolchain", "OpenKit", "shim"]),
-        ("2. + framework đợt 1 (P1-17: Combine, StoreKit, PhotosUI, CoreLocation…)", ["P1-17"]),
-        ("3. + SwiftData/Core Data (E2-05), overlay adapter (E2-10), Charts", ["E2-05", "E2-10", "Charts"]),
-    ]
+
+        \(runtimeDependencies.count) gói khác nhau, \(runtimeDependencies.filter { $0.value == 1 }.count) gói chỉ 1 app dùng. \
+        Công cụ build/test, không tính ở bảng này và ở các bảng khác: \
+        \(dependencyRanks.filter { Catalog.devPackages.contains($0.key) }.map { "`\($0.key)` \($0.value)" }.joined(separator: ", ")).
+        """
+
+    // Upper bound for a compile rate: apps whose every blocker is covered once the plan reaches a step.
+    // Modules of macOS, watchOS and tvOS targets never block, because the iOS build leaves them out.
     func appleGroups(_ result: AppResult) -> Set<String> { Set((result.usage["import"] ?? [:]).keys.compactMap { Catalog.appleModules[$0] }) }
-    let unblocked = results.filter { !objcAny($0) && $0.inventory.pods.isEmpty && $0.inventory.carthage.isEmpty }
-    var covered: Set<String> = []
-    let readiness = table(["Mức OpenKit phủ đủ", "App", "% app", "Trong đó có gói SPM bên thứ ba"], steps.map { step in
-        covered.formUnion(step.1)
-        let ready = unblocked.filter { appleGroups($0).isSubset(of: covered) }
-        return [step.0, "\(ready.count)", percent(ready.count, total), "\(ready.filter { !$0.inventory.spm.isEmpty }.count)"]
-    } + [["Còn lại: phụ thuộc ObjC, CocoaPods/Carthage hoặc framework chưa có kế hoạch", "\(total - unblocked.filter { appleGroups($0).isSubset(of: covered) }.count)", "", ""]])
+    func ready(_ groups: Set<String>, _ objc: Set<ObjCNeed>) -> [AppResult] {
+        results.filter { packages($0).pods.isEmpty && objc.contains($0.objcNeed) && appleGroups($0).isSubset(of: groups) }
+    }
+    func readinessRow(_ label: String, _ apps: [AppResult]) -> [String] {
+        [label, "\(apps.count)", percent(apps.count, total), "\(apps.filter { !packages($0).spm.isEmpty }.count)"]
+    }
+    let steps: [(String, Set<String>, Set<ObjCNeed>)] = [
+        ("1. SwiftUI, UIKit, Foundation và shim nhỏ (os, CryptoKit, UTType…), không dùng ObjC", ["toolchain", "OpenKit", "shim", "other-platform"], [.none]),
+        ("2. + framework đợt 1 (P1-17: Combine, StoreKit, PhotosUI, CoreLocation…)", ["P1-17"], []),
+        ("3. + stub cho mọi framework Apple còn lại (P1-18), kể cả SwiftData, MapKit, WebKit", ["E2-05", "E2-10", "Charts", "none"], []),
+        ("4. + viết lại `@objc`, `#selector`, `#keyPath`, `@IBOutlet` bằng SwiftSyntax", [], [.rewrite]),
+    ]
+    var groups: Set<String> = []
+    var objcAllowed: Set<ObjCNeed> = []
+    var covered: [AppResult] = []
+    let readinessRows = steps.map { step in
+        groups.formUnion(step.1)
+        objcAllowed.formUnion(step.2)
+        covered = ready(groups, objcAllowed)
+        return readinessRow(step.0, covered)
+    }
+    let readiness = table(
+        ["Mức phủ (cộng dồn)", "App", "% app", "Trong đó cần gói SPM bên thứ ba"],
+        readinessRows + [
+            ["Còn lại: cần ObjC runtime/Core Data (KVO, `@NSManaged`, file `.m`) hoặc CocoaPods/Carthage", "\(total - covered.count)", percent(total - covered.count, total), ""],
+            readinessRow("Đối chiếu: như mức 4 nhưng không có stub, E2-05, E2-10 và Charts làm thật", ready(groups.subtracting(["none"]), objcAllowed)),
+        ])
 
     // SF Symbols: Apple's license rules them out, so the replacement icon set needs these names.
     let symbols = rank(results, "sfsymbol", where: { $0 != "(dynamic)" })
@@ -219,11 +275,12 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
             ["App compile được", passed.joined(separator: ", ")],
         ])
     } else {
-        compile = "_Chưa có số: bước compile chờ OpenKit (P0-05). Cách chạy ở mục \"Tỉ lệ compile\"._"
+        compile = "_Chưa có số: `ios-corpus compile` chưa được chạy với OpenKit (chờ P0-05)._"
     }
 
+    let objcNeeds: [ObjCNeed: String] = [.none: "không", .rewrite: "viết lại", .runtime: "runtime"]
     let apps = table(
-        ["App", "UI", "File", "Dòng", "Project", "iOS", "Swift", "SPM", "Pods/Carthage", "`.m`/`.mm`", "Storyboard/XIB", "`.xcassets`", "`.xcstrings`"],
+        ["App", "UI", "File", "Dòng", "Project", "iOS", "Swift", "SPM", "Pods/Carthage", "ObjC", "`.m`/`.mm`", "Storyboard/XIB", "`.xcassets`", "`.xcstrings`"],
         results.map { result in
             let inventory = result.inventory
             let project =
@@ -231,7 +288,7 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
             return [
                 result.id, result.ui, "\(result.swiftFiles)", "\(result.swiftLines)", project,
                 newest(inventory.deploymentTargets) ?? "-", newest(inventory.swiftVersions) ?? newest(inventory.toolsVersions) ?? "-",
-                "\(inventory.spm.count)", "\(inventory.pods.count + inventory.carthage.count)", "\(files(result, "m", "mm"))",
+                "\(packages(result).spm.count)", "\(packages(result).pods.count)", objcNeeds[result.objcNeed]!, "\(files(result, "m", "mm"))",
                 "\(files(result, "storyboard", "xib"))", "\(files(result, "xcassets"))", "\(files(result, "xcstrings"))",
             ]
         })
@@ -245,11 +302,14 @@ func reportSections(corpus: Corpus, results: [AppResult], compiled: [String: Com
 
     return [
         ("summary", summary),
-        ("swiftui", swiftUITable + "\n\n" + swiftUIByKind),
+        ("swiftui-views", swiftUIViews),
+        ("swiftui-modifiers", swiftUIModifiers),
+        ("swiftui-types", swiftUITypes),
         ("swiftui-wrappers", wrappersTable),
         ("swiftui-environment", environment),
-        ("uikit", uiKitTable("uikit.type", limit: 25)),
-        ("uikit-members", uiKitTable("uikit.member", limit: 25)),
+        ("uikit-in-swiftui", uiKitInSwiftUI),
+        ("uikit", uiKitTable("uikit.type", limit: 40)),
+        ("uikit-members", uiKitTable("uikit.member", limit: 30)),
         ("quartzcore", uiKitTable("quartzcore.type", limit: 10)),
         ("frameworks", frameworks + "\n\n" + frameworksNote),
         ("objc", objc),

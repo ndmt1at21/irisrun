@@ -1,6 +1,6 @@
 // Names used to attribute syntax to SwiftUI, UIKit and Apple modules. Written by hand from
-// public documentation knowledge, not from any Apple SDK file. `results.json` lists the top
-// unattributed names so gaps here are easy to spot.
+// public documentation knowledge, not from any Apple SDK file. The `unattributed` block of
+// `tables.md` lists the most used names this catalog misses.
 
 func words(_ text: String) -> Set<String> {
     Set(text.split(whereSeparator: \.isWhitespace).map(String.init))
@@ -17,7 +17,7 @@ enum Catalog {
         PhaseAnimator Picker ProgressView RadialGradient Rectangle RenameButton RoundedRectangle
         ScrollView ScrollViewReader SecureField Section ShareLink Slider Spacer Stepper Tab TabSection
         TabView Table TableColumn TableRow Text TextEditor TextField TextFieldLink TimelineView Toggle
-        UnevenRoundedRectangle VStack ViewThatFits ZStack ConcentricRectangle
+        UnevenRoundedRectangle VStack ViewThatFits ZStack ConcentricRectangle GlassEffectContainer
         """)
 
     static let swiftUITypes = words("""
@@ -30,9 +30,9 @@ enum Catalog {
         FocusedValueKey FocusedValues Namespace GestureState ScaledMetric Bindable FetchRequest
         FetchedResults SectionedFetchRequest SectionedFetchResults UIApplicationDelegateAdaptor
         NSApplicationDelegateAdaptor WKApplicationDelegateAdaptor AccessibilityFocusState DynamicProperty
-        PreferenceKey
+        PreferenceKey ObservableObject GridItem TupleView
         Font Alignment HorizontalAlignment VerticalAlignment AlignmentID Edge EdgeInsets Axis Angle
-        Anchor UnitPoint ContentMode Layout LayoutSubviews LayoutSubview ProposedViewSize ViewDimensions
+        Anchor UnitPoint ContentMode Layout LayoutSubviews LayoutSubview Subviews ProposedViewSize ViewDimensions
         LayoutValueKey AnyLayout HStackLayout VStackLayout ZStackLayout SafeAreaRegions CoordinateSpace
         NamedCoordinateSpace CoordinateSpaceProtocol GeometryProxy ScrollViewProxy ScrollPosition
         ScrollTargetBehavior ViewAlignedScrollTargetBehavior PagingScrollTargetBehavior ScrollGeometry
@@ -45,7 +45,7 @@ enum Catalog {
         Animation AnyTransition Transition Transaction Spring UnitCurve Animatable AnimatablePair
         EmptyAnimatableData VectorArithmetic ContentTransition CustomAnimation AnimationContext
         KeyframeTrack LinearKeyframe SpringKeyframe CubicKeyframe MoveKeyframe KeyframeTimeline
-        MatchedGeometryProperties
+        MatchedGeometryProperties GeometryEffect AnimatableModifier ProjectionTransform
         Gesture TapGesture SpatialTapGesture LongPressGesture DragGesture MagnificationGesture
         MagnifyGesture RotationGesture RotateGesture SimultaneousGesture SequenceGesture ExclusiveGesture
         GestureMask AnyGesture
@@ -55,17 +55,20 @@ enum Catalog {
         SubmitLabel SubmitTriggers TextInputAutocapitalization TextAlignment LocalizedStringKey
         SymbolRenderingMode SymbolVariants AccessibilityTraits AccessibilityActionKind
         AccessibilityChildBehavior AccessibilityAdjustmentDirection HorizontalEdge VerticalEdge
-        ContentShapeKinds MenuOrder SearchFieldPlacement ToolbarItem ToolbarItemGroup
-        ToolbarItemPlacement ToolbarContent ToolbarRole ToolbarPlacement ToolbarSpacer
+        ContentShapeKinds MenuOrder SearchFieldPlacement ToolbarItem ToolbarItemGroup ToolbarTitleMenu
+        ToolbarItemPlacement ToolbarContent ToolbarRole ToolbarPlacement ToolbarSpacer ContentSizeCategory
         ToolbarTitleDisplayMode NavigationPath NavigationSplitViewVisibility NavigationSplitViewColumn
         NavigationBarItem PresentationDetent PresentationMode PresentationAdaptation
         PresentationBackgroundInteraction PresentationContentInteraction PresentationSizing EditMode
         OpenURLAction DismissAction RefreshAction OpenWindowAction DismissWindowAction
         OpenImmersiveSpaceAction DismissSearchAction NewDocumentAction ImageRenderer GraphicsContext
+        FileDocument ReferenceFileDocument FileDocumentConfiguration ReadConfiguration
+        WriteConfiguration SharePreview
         TimelineSchedule PeriodicTimelineSchedule EveryMinuteTimelineSchedule AnimationTimelineSchedule
         ExplicitTimelineSchedule
         ButtonStyle PrimitiveButtonStyle ButtonStyleConfiguration PrimitiveButtonStyleConfiguration
-        ToggleStyle ToggleStyleConfiguration LabelStyle LabelStyleConfiguration ListStyle PlainListStyle
+        ToggleStyle ToggleStyleConfiguration SwitchToggleStyle ButtonToggleStyle CheckboxToggleStyle
+        DefaultToggleStyle LabelStyle LabelStyleConfiguration ListStyle PlainListStyle
         InsetGroupedListStyle GroupedListStyle SidebarListStyle InsetListStyle DefaultListStyle
         CarouselListStyle PickerStyle SegmentedPickerStyle WheelPickerStyle MenuPickerStyle
         InlinePickerStyle DefaultPickerStyle NavigationLinkPickerStyle PalettePickerStyle TextFieldStyle
@@ -85,7 +88,8 @@ enum Catalog {
         Alert ActionSheet ContextMenu DropDelegate DropInfo DropProposal DropOperation
         """)
 
-    // Instance methods on View, Text, Image and Shape; free functions like withAnimation.
+    // Instance methods on View, Text, Image, Shape, Path, Font, Animation, AnyTransition, Gesture,
+    // ScrollViewProxy and layout subviews; free functions (`swiftUIFunctions`).
     static let swiftUIModifiers = words("""
         padding frame fixedSize layoutPriority offset position alignmentGuide aspectRatio scaledToFit
         scaledToFill ignoresSafeArea edgesIgnoringSafeArea safeAreaInset safeAreaPadding coordinateSpace
@@ -104,7 +108,7 @@ enum Catalog {
         fill stroke strokeBorder trim inset rotation scale
         rotationEffect rotation3DEffect scaleEffect transformEffect projectionEffect
         animation transition matchedGeometryEffect contentTransition phaseAnimator keyframeAnimator
-        transaction withAnimation withTransaction
+        transaction
         onTapGesture onLongPressGesture gesture simultaneousGesture highPriorityGesture allowsHitTesting
         disabled onHover focusable focused focusedValue focusSection onDrag onDrop draggable
         dropDestination onMove onDelete onInsert deleteDisabled moveDisabled contextMenu swipeActions
@@ -145,7 +149,15 @@ enum Catalog {
         flipsForRightToLeftLayoutDirection widgetURL containerBackground invalidatableContent
         commands windowStyle windowResizability defaultSize backgroundTask windowToolbarStyle
         immersionStyle previewLayout previewDevice previewDisplayName previewInterfaceOrientation
+        modifier matchedTransitionSource safeAreaBar focusEffectDisabled menuBarExtraStyle
+        focusedSceneValue gridColumnAlignment gridCellColumns gridCellAnchor gridCellUnsizedAxes
+        onChanged onEnded updating sequenced simultaneously exclusively
+        combined repeatForever repeatCount delay speed weight leading smallCaps interactive
+        move addLine addLines addArc addCurve addQuadCurve addRect addRoundedRect addEllipse addPath
+        closeSubpath trimmedPath scrollTo place replacingUnspecifiedDimensions
         """)
+
+    static let swiftUIFunctions = words("withAnimation withTransaction")
 
     // Attribute name -> owning module. Unlisted attributes are reported as third-party or app code.
     static let attributes: [String: String] = {
@@ -157,11 +169,16 @@ enum Catalog {
                 ScaledMetric Bindable FetchRequest SectionedFetchRequest UIApplicationDelegateAdaptor
                 NSApplicationDelegateAdaptor WKApplicationDelegateAdaptor AccessibilityFocusState Entry
                 Previewable ViewBuilder SceneBuilder ToolbarContentBuilder CommandsBuilder
-                TableColumnBuilder TableRowBuilder
+                TableColumnBuilder TableRowBuilder FocusState.Binding AccessibilityFocusState.Binding
+                Animatable AnimatableIgnored
                 """,
             "Observation": "Observable ObservationIgnored ObservationTracked",
-            "SwiftData": "Model Query Attribute Relationship Transient",
+            "SwiftData": "Model Query Attribute Relationship Transient ModelActor",
             "Combine": "Published",
+            "AppIntents": "Parameter Property IntentParameterDependency AppShortcutsBuilder",
+            "WidgetKit": "WidgetBundleBuilder",
+            "Charts": "ChartContentBuilder AxisContentBuilder",
+            "FoundationModels": "Generable Guide",
             "ObjC": """
                 objc objcMembers IBOutlet IBAction IBInspectable IBDesignable IBSegueAction NSManaged
                 NSCopying
@@ -171,7 +188,8 @@ enum Catalog {
                 frozen propertyWrapper resultBuilder dynamicMemberLookup dynamicCallable globalActor
                 preconcurrency unchecked retroactive testable Sendable unknown convention _exported
                 _implementationOnly _spi backDeployed nonobjc UIApplicationMain NSApplicationMain
-                warn_unqualified_access isolated concurrent
+                warn_unqualified_access isolated concurrent inline attached freestanding TaskLocal
+                _disfavoredOverload _transparent _silgen_name
                 """,
         ]
         for (module, names) in groups {
@@ -183,7 +201,32 @@ enum Catalog {
     // Built-in literal macros that say nothing about framework use.
     static let builtinMacros = words("""
         file fileID filePath line column function dsohandle warning error selector keyPath
-        colorLiteral imageLiteral fileLiteral
+        colorLiteral imageLiteral fileLiteral externalMacro
+        """)
+
+    // Freestanding macros of Apple modules; other macros are third-party or app code.
+    static let macros = [
+        "Preview": "SwiftUI", "Predicate": "Foundation", "Expression": "Foundation", "Rule": "TipKit",
+        "Index": "SwiftData", "Unique": "SwiftData",
+    ]
+
+    // How each Objective-C construct fares with Swift 6.4.1 on Linux, measured with swiftc
+    // (P0-08 report). "ok" means it compiles and links.
+    static let objcOnLinux = [
+        "@objc": "error", "@objcMembers": "error", "#selector": "error", "#keyPath": "error",
+        "Selector": "error", "@IBOutlet": "error", "KVO": "error", "@NSManaged": "link",
+        "@IBAction": "ok", "@IBInspectable": "ok", "@IBDesignable": "ok", "@IBSegueAction": "ok",
+        "@NSCopying": "ok", "dynamic": "ok", "NSObject subclass": "ok",
+    ]
+
+    // Failing constructs a SwiftSyntax source rewrite can remove (plan, direction 6, short term).
+    static let objcRewritable = words("@objc @objcMembers #selector #keyPath Selector @IBOutlet")
+
+    // Package identities that only run at build or test time, not in the app.
+    static let devPackages = words("""
+        swiftlint swiftlintplugins swiftlintplugin swiftformat swiftgen licenseplist
+        swift-snapshot-testing viewinspector quick nimble ohhttpstubs mocker rxblocking
+        swift-docc-plugin
         """)
 
     // NS-prefixed names that belong to UIKit on iOS; any other UI-prefixed name counts as UIKit too.
@@ -195,7 +238,8 @@ enum Catalog {
         NSCollectionLayoutItem NSCollectionLayoutGroup NSCollectionLayoutSize NSCollectionLayoutDimension
         NSCollectionLayoutBoundarySupplementaryItem NSCollectionLayoutEdgeSpacing
         NSCollectionLayoutSpacing NSCollectionLayoutDecorationItem NSCollectionLayoutAnchor
-        NSCollectionLayoutEnvironment NSCollectionLayoutSupplementaryItem
+        NSCollectionLayoutEnvironment NSCollectionLayoutSupplementaryItem NSTextAlignment
+        NSLineBreakMode NSDataAsset
         """)
 
     // Free functions that a bare call inside a UIKit subclass must not be mistaken for.
@@ -219,15 +263,20 @@ enum Catalog {
     ]
 
     // Apple SDK and toolchain modules, grouped by where the plan covers them on Linux.
+    // "other-platform" modules belong to macOS, watchOS or tvOS targets and are not built for iOS.
     static let appleModules: [String: String] = {
         var map: [String: String] = [:]
         let groups = [
             "toolchain": """
-                Foundation Dispatch Observation RegexBuilder Synchronization Distributed Swift
-                _Concurrency XCTest Testing
+                Foundation FoundationNetworking Dispatch Observation RegexBuilder Synchronization
+                Distributed Swift _Concurrency XCTest Testing
                 """,
-            "OpenKit": "SwiftUI UIKit CoreGraphics QuartzCore",
-            "shim": "os OSLog Darwin CryptoKit",
+            "OpenKit": "SwiftUI SwiftUICore UIKit CoreGraphics QuartzCore",
+            "shim": "os OSLog Darwin CryptoKit UniformTypeIdentifiers MobileCoreServices SQLite3",
+            "other-platform": """
+                AppKit Cocoa Carbon IOKit ServiceManagement WatchKit ClockKit ApplicationServices OpenGL
+                ScreenCaptureKit SystemExtensions TVServices TVUIKit
+                """,
             "P1-17": """
                 Combine StoreKit PhotosUI CoreLocation UserNotifications LocalAuthentication Security
                 """,
@@ -240,19 +289,20 @@ enum Catalog {
                 VisionKit NaturalLanguage Speech ARKit RealityKit RealityFoundation SceneKit SpriteKit
                 GameKit GameplayKit GameController Metal MetalKit MetalPerformanceShaders MessageUI
                 Messages AuthenticationServices Network NetworkExtension SystemConfiguration
-                UniformTypeIdentifiers CoreTransferable CoreSpotlight Intents IntentsUI QuickLook
+                CoreTransferable CoreSpotlight Intents IntentsUI QuickLook
                 QuickLookThumbnailing PDFKit PencilKit TipKit FamilyControls ManagedSettings
                 ManagedSettingsUI DeviceActivity MediaPlayer MusicKit ShazamKit AudioToolbox CoreAudio
                 CoreAudioKit CoreMedia CoreVideo ImageIO Accelerate CoreText CoreServices
-                MobileCoreServices BackgroundTasks WatchKit WatchConnectivity ClockKit AppKit Cocoa Carbon
-                IOKit ServiceManagement Social Accounts AdSupport AppTrackingTransparency StoreKitTest
+                BackgroundTasks WatchConnectivity
+                Social Accounts AdSupport AppTrackingTransparency StoreKitTest
                 LinkPresentation FoundationModels Translation CarPlay CallKit PushKit
                 MultipeerConnectivity GroupActivities SharedWithYou ExtensionKit CommonCrypto Compression
                 Photos AVRouting AVFAudio SoundAnalysis CoreMIDI AppClip Symbols CryptoTokenKit
                 DeveloperToolsSupport ExposureNotification DeviceCheck MetricKit NearbyInteraction
                 SensorKit HomeKit Matter ScreenTime CoreAudioTypes ImagePlayground JavaScriptCore
                 ColorSync OpenGLES GLKit CoreTelephony SafetyKit WeatherKit MLCompute CreateML
-                SwiftUICore Spatial RealityKitContent
+                Spatial RealityKitContent VideoToolbox simd NotificationCenter ObjectiveC PassKit
+                _PassKit_SwiftUI Playgrounds UserNotificationsUI MachO MediaAccessibility dnssd
                 """,
         ]
         for (group, names) in groups {

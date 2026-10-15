@@ -23,9 +23,10 @@ private let counted: Set<String> = [
     "m", "mm", "c", "cc", "cpp", "h", "storyboard", "xib", "xcassets", "xcstrings", "strings",
     "xcdatamodeld", "storekit", "metal", "intentdefinition", "xcframework", "framework",
 ]
+// Dependencies, build output and build scripts: not app code.
 private let skippedDirectories: Set<String> = [
     ".git", ".build", ".swiftpm", "Pods", "Carthage", "DerivedData", "node_modules", "checkouts",
-    "SourcePackages", "Tuist",
+    "SourcePackages", "Tuist", "BuildTools", "fastlane", "scripts", "Scripts",
 ]
 
 /// Walks an app checkout: fills the inventory and returns the Swift sources to scan.

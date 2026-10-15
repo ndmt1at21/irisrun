@@ -8,7 +8,7 @@
 - Từ lúc nhả chuột tới lúc canvas có frame mới: 32–59 ms, trung vị khoảng 35 ms (8 lần bấm nút trong app Compose, máy đã nóng).
 - Khi kéo cuộn, UI vẽ được 16–34 fps, trong khi phía thiết bị gửi tới 50–55 fps. Chỗ nghẽn là giải mã JPEG 1078×2422 trong browser: trung vị 32 ms một frame trên Chromium headless không GPU.
 - Thử thật đã lộ ra 2 lỗi chặn và 2 lỗi khó dùng; cả 4 đã sửa (bảng dưới).
-- **Chưa có player WebRTC.** Phần này cần nguồn stream thật nên làm cùng P0-10 (cloud Android). Vì vậy task chưa đóng.
+- **Player WebRTC đã có** (làm cùng P0-10): `/#/live?gateway=<url>` hiện thiết bị cloud của `irisrun-gateway`. Video H.264 phát trong thẻ `<video>`; input dùng chung `input.ts` và đi qua data channel. Đã thử với emulator Android 16 trong container: chạm, gõ chữ ASCII, tiếng Việt và nút Back đều tác dụng.
 - Một session khác đang dựng UI mới theo design "Iris UI" ([ui-plan.md](../ui-plan.md)). Bản thử này chuyển sang route `/#/live` ở đó; phần nối thiết bị (`src/device/*`) được giữ để dùng lại.
 
 ## Đã làm
@@ -51,9 +51,21 @@ Chromium headless được điều khiển qua Chrome DevTools Protocol bằng m
 - App View: chạm vào EditText, soạn "Tiế" (có gạch chân), commit "Tiếng", gõ thêm " Việtt", Backspace còn "Tiếng Việt"; bấm Greet ra "Xin chào, Tiếng Việt!"; mở DetailActivity; Back quay lại; Back ở màn gốc hiện overlay "The app stopped."; Restart ra app mới.
 - App Compose: soạn chữ trong OutlinedTextField ("Xin chào, Tiế!" cập nhật ngay trong lúc soạn); gõ phím thường "Iris" và Backspace; kéo cuộn list 20 mục; mở một mục; nút Back của UI gọi BackHandler.
 
+## Player WebRTC
+
+| Phần | Ở đâu |
+| --- | --- |
+| `WebRtcConnection`: cùng hình dạng với `DeviceConnection` (`send`, `close`, cùng callback), thêm `onStream`; signaling bằng `POST <gateway>/offer`; tự nối lại mỗi giây | `apps/web/src/device/webrtc.ts` |
+| `VideoScreen`: `<video>`, chạm theo pixel của video (tính cả phần viền đen của `object-contain`), textarea ẩn cho bàn phím và IME, fps theo `requestVideoFrameCallback` | `apps/web/src/device/VideoScreen.tsx` |
+| `useDevice(url, "webrtc")`, và `LiveDevicePage` chọn WebRTC khi URL có `?gateway=` | `apps/web/src/device/useDevice.ts`, `LiveDevicePage.tsx` |
+
+Offer được gửi dạng `text/plain`, để request khác origin không cần preflight. Gateway chỉ trả header CORS cho origin khai báo qua `--allow-origin`, vì gateway chưa có xác thực, và mở `*` sẽ cho mọi trang web điều khiển thiết bị. Khi thiết bị chưa gửi trạng thái app (gateway cloud không gửi), tiêu đề hiện "Connected" thay cho "Connecting".
+
+Chạy thử: chạy emulator và gateway theo [p0-10-cloud-android.md](p0-10-cloud-android.md), thêm `--allow-origin http://127.0.0.1:7777`, phục vụ `apps/web/dist` ở cổng 7777 (`irisrun start` hoặc `python3 -m http.server 7777 --directory apps/web/dist`), rồi mở `http://127.0.0.1:7777/#/live?gateway=http://127.0.0.1:7780`.
+
 ## Giới hạn và việc tiếp
 
-- Player WebRTC: làm cùng P0-10.
+- Phía cloud chưa có chữ đang compose: UI chỉ gửi chữ đã commit (xem P0-10).
 - Chưa thử bộ gõ thật của hệ điều hành (Unikey, EVKey, Telex của macOS, pinyin, kana) và chưa thử trên browser có GPU. Có thể tự thử: chạy `irisrun start examples/android-views` trong WSL rồi mở `http://127.0.0.1:7777` bằng Chrome hoặc Edge trên Windows.
 - Đa điểm chạm chỉ thử bằng unit test; chuột chỉ cho một ngón. Pinch giả lập thuộc P1-28.
 - Nút Home và Apps chưa làm gì với Android local runtime; host ghi log "not supported yet".

@@ -39,9 +39,10 @@ export function Screen({ send, subscribeFrames }: Props) {
     send(input({ case: "text", value: { edit: { case: edit, value } } }));
 
   return (
-    <div className="screen">
+    <div className="relative size-full overflow-hidden rounded-[26px] bg-black">
       <canvas
         ref={canvas}
+        className="block size-full cursor-pointer touch-none"
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
           // Keep focus on the textarea so typing reaches the device.
@@ -55,7 +56,8 @@ export function Screen({ send, subscribeFrames }: Props) {
       />
       <textarea
         ref={textarea}
-        className="ime"
+        // Receives keyboard and input-method events without being seen.
+        className="absolute bottom-0 left-0 size-px resize-none opacity-0"
         aria-label="Type on the device"
         autoCapitalize="off"
         autoComplete="off"
@@ -85,7 +87,9 @@ export function Screen({ send, subscribeFrames }: Props) {
           event.currentTarget.value = "";
         }}
       />
-      <span className="fps">{fps} fps</span>
+      <span className="absolute top-2 right-2.5 rounded-md bg-black/50 px-1.5 py-0.5 font-mono text-[11px] text-white">
+        {fps} fps
+      </span>
     </div>
   );
 }

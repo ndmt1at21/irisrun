@@ -1,6 +1,6 @@
 # Tiến độ triển khai
 
-Cập nhật 14/10/2026, session thứ hai. File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
+Cập nhật 15/10/2026, session thứ tư (sau khi session thứ ba hết context). File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
 
 ## Tổng quan
 
@@ -10,42 +10,40 @@ Cập nhật 14/10/2026, session thứ hai. File này để session sau làm ti�
 | P0-02 Device Protocol v0 | Xong ở local | `proto/irisrun/device/v1alpha1/`. buf lint không nhận hậu tố `v0` nên package là `v1alpha1`. Một lệnh sinh code: `pnpm proto:generate` |
 | P0-03 Tải toolchain | Xong (Linux) | Xem [reports/p0-03-toolchain.md](reports/p0-03-toolchain.md). macOS chưa chạy thử |
 | P0-04 Android runtime | Xong | App View và app Compose chạy không sửa code; chạm, gõ chữ, Back đều đúng. Số đo và giới hạn: [reports/p0-04-android-runtime.md](reports/p0-04-android-runtime.md) |
-| P0-12 Device UI | Xong, trừ player WebRTC | Đã thử trên Chromium headless qua DevTools Protocol, sửa 4 lỗi: [reports/p0-12-device-ui.md](reports/p0-12-device-ui.md). Player WebRTC làm cùng P0-10. Một session khác đang dựng UI mới theo [ui-plan.md](ui-plan.md); bản thử chuyển sang `/#/live` |
-| P0-05 OpenSwiftUI trên Linux | Dở, subagent dừng giữa chừng | Xem mục "Task giao subagent" |
-| P0-07 Objective-C trên Linux | Dở, subagent dừng giữa chừng | Như trên |
-| P0-08 Corpus iOS | Dở, subagent dừng giữa chừng | Như trên |
+| P0-12 Device UI | Xong | Thử trên Chromium headless, sửa 4 lỗi; player WebRTC cho thiết bị cloud ở `/#/live?gateway=<url>` (`webrtc.ts`, `VideoScreen.tsx`). Xem [reports/p0-12-device-ui.md](reports/p0-12-device-ui.md). UI mới theo [ui-plan.md](ui-plan.md) đã xong với mock (UI-01 … UI-12, 60 test xanh); nối backend là UI-13 |
+| P0-05 OpenSwiftUI trên Linux | Xong | Go: lõi OpenSwiftUI 0.23.1 chạy trên Linux với 6 patch (~330 dòng); app mẫu compile không sửa dòng nào, `@State`/`@Observable` cập nhật đúng; `check-sample.sh` đạt 14 điểm (kiểm lại ở session thứ ba sau khi xoá module cache cũ). Xem [reports/p0-05-openswiftui-linux.md](reports/p0-05-openswiftui-linux.md) |
+| P0-07 Objective-C trên Linux | Xong | Go cho ObjC bằng clang + libobjc2 (demo 26/26 kiểm tra); no-go cho fork toolchain Swift bật ObjC interop (38–63 người-tuần). `@objc`, `#selector`, KVO nên viết lại source ở P1. Xem [reports/p0-07-objc-linux.md](reports/p0-07-objc-linux.md) |
+| P0-08 Corpus iOS | Xong, trừ tỉ lệ compile | 65 app, bảng xếp hạng API, kiểm kê build, trần tỉ lệ compile ước từ import: 18 app (28%) nếu có stub cho mọi framework, 39 app (60%) nếu thêm bước viết lại `@objc`/`#selector`. Lệnh `compile` đã nối với `runtimes/ios/Scripts/compile-app.sh` của P0-05 nhưng script đó hiện compile được 0/65 app (thiếu UIKit, Combine, stub, chọn target). Xem [reports/p0-08-ios-corpus.md](reports/p0-08-ios-corpus.md) |
 | P0-09 Binary Doctor | Xong | `crates/doctor`, lệnh `irisrun doctor <path>`; quét 14 SDK, xem [reports/p0-09-binary-doctor.md](reports/p0-09-binary-doctor.md) |
-| P0-06 Render core, P0-10 cloud Android, P0-11 cloud iOS | Chưa làm | P0-06 chờ P0-05. P0-10 làm được ở local vì máy có `/dev/kvm`. P0-11 cần Mac |
+| P0-06 Render core | Xong | `crates/render`: cây layer kiểu CALayer, C ABI, lớp bọc Swift. OpenSwiftUI đo và vẽ chữ qua render core (patch 0006–0008): app mẫu ra 8 frame PNG, `check-sample.sh` đạt 14 điểm ở cả chế độ stdout và frame (kiểm lại ở session thứ tư). 2x: 32–55 fps từ display list ra JPEG. Xem [reports/p0-06-render-core.md](reports/p0-06-render-core.md) |
+| P0-10 cloud Android | Xong ở local | Emulator Android 16 trong container trên KVM → scrcpy-server → `irisrun-gateway` (str0m) → WebRTC → Chromium; chạm, kéo, phím, chữ (cả tiếng Việt), Back đều chạy. Còn đo từ VN tới host Singapore. Xem [reports/p0-10-cloud-android.md](reports/p0-10-cloud-android.md) |
+| P0-11 cloud iOS | Chưa làm | Cần Mac |
 | P0-13, P0-14, P0-15, P0-16 | Không phải việc code | Pháp lý, đối tác, họp cổng 0, giữ chỗ tên |
 
-## Task giao subagent (P0-05, P0-07, P0-08)
+## Task giao subagent
 
-Session thứ hai giao lại ba task này cho subagent chạy nền. Cả ba dừng giữa chừng vì tài khoản chạm giới hạn phiên (hết giới hạn lúc 2 giờ sáng giờ Việt Nam). Code dở nằm đúng vùng được giao, chưa có báo cáo:
-
-| Task | Được sửa | Báo cáo | Đã có |
-| --- | --- | --- | --- |
-| P0-05 | `runtimes/ios/**` (trừ `Sources/IrisProtocol`, là code sinh), `examples/ios-swiftui/**` (không sửa file Swift của app mẫu) | `reports/p0-05-openswiftui-linux.md` | `Scripts/fetch-openswiftui.sh` pin OpenSwiftUI 0.23.1 và các gói anh em; `Patches/openswiftui/` còn trống. `runtimes/ios/.irisrun/checkouts` là symlink hỏng trỏ vào scratchpad đã bị dọn: xoá rồi fetch lại |
-| P0-07 | `native/objc/**` | `reports/p0-07-objc-linux.md` | `build.sh`, `MiniFoundation.h/.m`, `demo.m`, `README.md`. Subagent báo `build.sh` chạy qua trong 22 s ("all checks passed") nhưng chưa kiểm lại kết quả; `build.sh` có thay đổi chưa commit. Phần thử Swift bật ObjC interop chưa làm |
-| P0-08 | `tools/ios-corpus/**` | `reports/p0-08-ios-corpus.md` | Tool, `corpus.json` (65 app) và test đã commit. Chưa fetch corpus, chưa chạy `analyze`, chưa viết báo cáo |
-
-Có báo cáo trong `docs/reports/` nghĩa là task xong: đọc báo cáo, chạy lại lint và test của phần đó. Chưa có báo cáo thì đọc file trong vùng được giao rồi làm tiếp.
+P0-05, P0-07 và P0-08 do subagent làm trong session thứ hai, mỗi task chỉ sửa trong vùng của nó: `runtimes/ios/**` và `examples/ios-swiftui/**` (P0-05), `native/objc/**` (P0-07), `tools/ios-corpus/**` (P0-08), cùng báo cáo của mình. P0-07 và P0-08 đã bàn giao, và test đã chạy lại đạt. P0-05 xem mục "Làm tiếp".
 
 ## Làm tiếp
 
-1. Ba task giao subagent ở trên: cho chạy tiếp (sau 2 giờ sáng, khi hết giới hạn phiên).
-2. P0-06 render core (Rust + rust-skia): phần Rust và C API làm được trước; bước vẽ app mẫu cần P0-05.
-3. P0-10 cloud Android: emulator trên KVM của máy dev, stream H.264 qua str0m, input qua data channel; làm luôn player WebRTC còn thiếu của P0-12.
-4. `apps/web/**` đang do session UI (ui-plan.md) giữ: đừng build hay sửa ở đó khi session đó chưa báo xong UI-01.
+1. **P0-05** đã xong. Build của nó ở `~/.cache/irisrun/p0-05/build/apps-{debug,release}`; nếu báo "missing required module", xoá `out/ModuleCache.noindex` trong thư mục đó rồi build lại.
+2. **P0-06** đã xong (subagent, session thứ ba và thứ tư). Từ đây mọi build OpenSwiftUI trên Linux, kể cả chế độ stdout và `ios-corpus compile`, cần `target/release/libirisrun_render.a` và font của render core. Chế độ frame: `swiftenv env IRISRUN_FRAMES=<thư mục> Scripts/check-sample.sh` (Docker không tự chuyển biến môi trường vào container). Việc còn lại thuộc P1-13, P1-14: mục "Việc cho P1-13 và P1-14" của báo cáo P0-06.
+3. Player WebRTC cho Device UI đã xong (session thứ ba); session UI giữ phần còn lại của `apps/web`, chỉ chạm `LiveDevicePage`, `Screen`, `connection`, `input`, `useDevice`, `webrtc`, `VideoScreen` khi cần.
+4. **P0-11** cần Mac; **P0-13 đến P0-16** không phải việc code; **P0-15** (họp cổng 0) là quyết định của team trước khi vào Phase 1. Tự làm Phase 1 trước cổng 0 thì nên hỏi người dùng trước.
+5. Job `render` và job `rust` (gói fontconfig/freetype, font) trong CI chưa chạy trên GitHub.
+6. **Hỏi người dùng** (chưa có câu trả lời lúc lưu): (a) có vào Phase 1 trước khi họp cổng 0 (P0-15) không, và nếu có thì task nào trước (P1-07, P1-08, P1-12, P1-14 chỉ phụ thuộc P0 đã xong); (b) có đồng bộ cột trạng thái sang tab "Tasks" của Claude Docs không, và bản nào là bản chuẩn.
+
+Emulator và gateway của P0-10 chạy lại theo mục "Chạy lại" của báo cáo. Image `irisrun-emulator:36` (4,6 GB) còn trong Docker. Gateway bị dừng bằng PID: `pkill -x` không khớp vì tên process bị cắt còn 15 ký tự (`irisrun-gateway`).
 
 ## Môi trường máy dev (WSL2, Ubuntu 20.04, mạng chậm và chập chờn)
 
 - Rust 1.95, pin trong `rust-toolchain.toml`. Node 22 và pnpm 11.28.5 qua corepack (`corepack enable`); corepack của Node 22 chưa chạy được pnpm 12.
 - JDK 21: `~/.irisrun/toolchains/jdk-21.0.12.1+1`. Android SDK: `~/.irisrun/android-sdk` (license đã chấp nhận). Host Android: `~/.irisrun/maven`. Robolectric tải `android-all-instrumented` vào `~/.m2` (204 MB cho SDK 36, 228 MB cho SDK 37).
-- **Swift 6.4.1 không chạy trên Ubuntu 20.04.** Từ session thứ hai, Swift chạy qua Docker Desktop (đã bật cho WSL). Image `irisrun-swift-dev:6.4.1` dựng từ `swift:6.4.1-noble` thêm cmake, ninja, pkg-config, python3:
+- **Swift 6.4.1 không chạy trên Ubuntu 20.04.** Từ session thứ hai, Swift chạy qua Docker Desktop (đã bật cho WSL). Image `irisrun-swift-dev:6.4.1` dựng từ `swift:6.4.1-noble`, thêm cmake, ninja, pkg-config, python3 (libobjc2 cho P0-07), fontconfig và freetype (render core), OpenSSL và uuid (backend Compute của OpenSwiftUI):
 
   ```sh
   printf '%s\n' 'FROM swift:6.4.1-noble' \
-    'RUN apt-get update && apt-get install -y --no-install-recommends cmake ninja-build pkg-config python3' |
+    'RUN apt-get update && apt-get install -y --no-install-recommends cmake ninja-build pkg-config python3 libfontconfig1-dev libfreetype-dev libssl-dev uuid-dev' |
     docker build -t irisrun-swift-dev:6.4.1 -
   ```
 
@@ -57,10 +55,14 @@ Có báo cáo trong `docs/reports/` nghĩa là task xong: đọc báo cáo, ch�
     -v "$HOME:$HOME" -v /tmp:/tmp -w "$PWD" irisrun-swift-dev:6.4.1 "$@"
   ```
 
-  Ví dụ: `cd runtimes/ios && swiftenv swift test`. Wrapper nằm trong scratchpad của session nên mất khi `/tmp` bị dọn; image thì còn trong Docker. Checkout và build lớn để ở `~/.cache/irisrun/…`, không để trong `/tmp`.
+  Ví dụ: `cd runtimes/ios && swiftenv swift test`. Bản lưu của wrapper và các công cụ thử nằm ở `~/.cache/irisrun/devtools/`: `bin/swiftenv`, `bin/pnpm` (gọi `corepack pnpm`, vì máy chưa `corepack enable`), `client/client.mts` (client WebSocket của P0-04, chạy `node --experimental-transform-types --import ./register.mjs client.mts …`), `cdp/ui.mjs` (driver Chromium qua DevTools Protocol của P0-12), `swift-dev/Dockerfile`. Checkout và build lớn để ở `~/.cache/irisrun/…`, không để trong `/tmp`.
 - GitHub API không đăng nhập chỉ có 60 request mỗi giờ: dùng URL tải trực tiếp hoặc `git ls-remote`.
 - Đừng dùng `pgrep -f` với chuỗi có trong chính lệnh đang chạy (nó tự kill shell của mình); dùng `pgrep -x irisrun`.
+- Shell là zsh: biến không có ngoặc không bị tách từ (`$STEPS` là một đối số). Dùng `${=STEPS}` hoặc chạy bằng bash khi ghép lệnh từ biến.
+- Docker Desktop có thể đã tắt (vd. sau khi máy khởi động lại): bật bằng `cmd.exe /c start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"` rồi chờ `docker info`.
 - Sau khi sửa host Android: `cd runtimes/android && ./gradlew publish`, rồi bấm Restart trong UI. Không cần build lại app, vì classpath trong `.irisrun/build/app.launch` trỏ thẳng vào jar trong `~/.irisrun/maven`.
+- **Render core trên host:** máy không có gói `libfontconfig1-dev`, `libfreetype-dev`, nên thư mục `~/.cache/irisrun/devlibs` chứa symlink `libfontconfig.so`, `libfreetype.so` tới bản `.so.1`, `.so.6` của hệ thống. Mọi lệnh cargo cần link crate này (kể cả `cargo test --workspace`) chạy với `LIBRARY_PATH=$HOME/.cache/irisrun/devlibs`. Font cho test và demo: `crates/render/fetch-fonts.sh` (vào `~/.irisrun/fonts`).
+- Gói Swift của render core build và chạy trong container: `cd crates/render/swift && swiftenv swift build -c release --scratch-path ~/.cache/irisrun/render-swift -Xlinker -L$PWD/../../../target/release`, rồi `swiftenv ~/.cache/irisrun/render-swift/release/render-demo <thư mục ra>`. Trong container `NSHomeDirectory()` trả `/home/ubuntu`, nên code đọc `$HOME` trước.
 
 ## Quyết định kỹ thuật
 
@@ -77,3 +79,5 @@ Session thứ hai:
 - Host Android gửi frame JPEG chất lượng 90 thay cho PNG: mã hoá nhanh hơn 5–10 lần, chữ nhìn như nhau.
 - Host lấy view đang focus bằng `window.decorView.findFocus()`, vì `activity.currentFocus` bị Robolectric shadow và luôn trả null.
 - App mẫu Compose dùng `compileSdk = 37` (Compose BOM 2026.09.00 đòi vậy), vẫn giữ `targetSdk = 36`. List có 20 mục để cuộn được.
+- Render core chỉ dùng font được nạp vào scene, không dùng font của máy: Inter (Latin, tiếng Việt) và Noto Sans SC (Trung, kana Nhật), đều OFL. Font biến thiên lấy độ đậm từ trục `wght`.
+- Id layer trong C ABI có số thế hệ, nên id của layer đã huỷ không bao giờ trỏ nhầm sang layer mới.

@@ -8,9 +8,10 @@ const DialogClose = DialogPrimitive.Close;
 
 const overlayClass = "fixed inset-0 z-50 bg-overlay";
 const contentClass =
-  "fixed top-1/2 left-1/2 z-50 max-h-[calc(100%-48px)] w-[calc(100%-48px)] max-w-[540px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-background text-foreground shadow-[0_24px_64px_-16px_rgba(0,0,0,.5)] outline-none";
+  "fixed top-1/2 left-1/2 z-50 max-h-[calc(100%-48px)] w-[calc(100%-48px)] max-w-[540px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-background leading-normal text-foreground shadow-[0_24px_64px_-16px_rgba(0,0,0,.5)] outline-none";
 
-/** The centered panel over the overlay; the design has no close button, so add one when needed. */
+/** The centered panel over the overlay; the design has no close button, so add one when needed.
+ *  `leading-normal` because the portal sits in <body>, outside the 1.5 line-height of the pages that open it. */
 function DialogContent({ className, ...props }: ComponentProps<typeof DialogPrimitive.Content>) {
   return (
     <DialogPrimitive.Portal>

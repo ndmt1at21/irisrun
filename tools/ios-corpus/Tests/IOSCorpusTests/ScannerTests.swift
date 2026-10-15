@@ -12,7 +12,7 @@ import Testing
             }
 
             struct ContentView: View {
-                @State private var count = 0
+                @SwiftUI.State private var count = 0
                 @Environment(\\.dismiss) private var dismiss
                 var body: some View {
                     VStack {
@@ -30,7 +30,9 @@ import Testing
             """)
     let uiKit = scan(
         source: """
+            #if canImport(UIKit)
             import UIKit
+            #endif
 
             class BaseViewController: UIViewController {}
 
@@ -47,14 +49,18 @@ import Testing
                 }
                 func setUp() {}
                 @objc func add() {}
+                let refresh = Selector(("refresh"))
             }
             """)
-    let usage = analyze(id: "demo", ui: "swiftui", files: [swiftUI, uiKit], inventory: Inventory()).usage
+    let result = analyze(id: "demo", ui: "swiftui", files: [swiftUI, uiKit], inventory: Inventory())
+    let usage = result.usage
 
     #expect(usage["swiftui.view"]?["VStack"] == 1)
     #expect(usage["swiftui.view"]?["ContentView"] == nil)
     #expect(usage["swiftui.type"]?["WindowGroup"] == 1)
-    #expect(usage["swiftui.modifier"]?.keys.sorted() == ["navigationBarTitleDisplayMode", "onTapGesture", "padding", "withAnimation"])
+    #expect(usage["swiftui.modifier"]?.keys.sorted() == ["navigationBarTitleDisplayMode", "onTapGesture", "padding"])
+    #expect(usage["swiftui.function"]?["withAnimation"] == 1)
+    #expect(usage["other.call"]?["os"] == nil)
     #expect(usage["attribute"]?["State"] == 1)
     #expect(usage["swiftui.environment"]?["\\.dismiss"] == 1)
     #expect(usage["macro"]?["Preview"] == 1)
@@ -62,11 +68,13 @@ import Testing
     #expect(usage["entry"]?["SwiftUI App"] == 1)
 
     #expect(usage["uikit.type"]?["UITableView"] == 1)
+    #expect(usage["uikit.type"]?["UIKit"] == nil)
     #expect(usage["uikit.member"]?["UIViewController.viewDidLoad"] == 2)
     #expect(usage["uikit.member"]?["UITableView.reloadData"] == 1)
     #expect(usage["uikit.member"]?["UIView.addSubview"] == 1)
     #expect(usage["uikit.member"]?["UIViewController.present"] == 1)
     #expect(usage["uikit.member"]?["UINavigationItem.rightBarButtonItem"] == 1)
     #expect(usage["uikit.member"]?["UIViewController.setUp"] == nil)
-    #expect(usage["objc"] == ["#selector": 1, "@objc": 1, "@IBOutlet": 1])
+    #expect(usage["objc"] == ["#selector": 1, "@objc": 1, "@IBOutlet": 1, "Selector": 1])
+    #expect(result.objcNeed == .rewrite)
 }

@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# Checks out OpenSwiftUI and the OpenSwiftUIProject packages it builds against side by side in
-# .irisrun/checkouts, pinned, and applies Patches/openswiftui. Scripts/env.sh sets
-# OPENSWIFTUI_USE_LOCAL_DEPS=1 so every manifest uses these checkouts instead of `main`.
+# Checks out OpenSwiftUI and the OpenSwiftUIProject packages it builds against side by side, pinned,
+# and applies Patches/<package>/*.patch on top as commits. Scripts/env.sh points every manifest at
+# these checkouts (OPENSWIFTUI_USE_LOCAL_DEPS=1) instead of their `main` branches.
 #
-# The SHAs are upstream OpenSwiftUI 0.23.1 and the sibling revisions from its Package.resolved.
-# Once github.com/irisrun/OpenSwiftUI exists, point the OpenSwiftUI line at the fork commit that
-# carries Patches/openswiftui and delete that directory.
+# The SHAs are upstream OpenSwiftUI 0.23.1, the sibling revisions from its Package.resolved, and
+# Compute 0.6.0, the version OpenAttributeGraph asks for. Once github.com/irisrun/OpenSwiftUI exists,
+# point the OpenSwiftUI line at the fork commit that carries Patches/openswiftui and delete that
+# directory.
+#
+# To change a patch: edit and commit in the checkout, then regenerate the directory, for example
+#   git -C "$IRISRUN_IOS_WORK/checkouts/OpenSwiftUI" format-patch --no-signature --zero-commit \
+#     -o Patches/openswiftui 9a26fd83
 set -euo pipefail
 
 ios="$(cd "$(dirname "$0")/.." && pwd)"
-checkouts="$ios/.irisrun/checkouts"
+source "$ios/Scripts/env.sh"
+checkouts="$IRISRUN_IOS_WORK/checkouts"
 
 pins="
 OpenSwiftUI        https://github.com/OpenSwiftUIProject/OpenSwiftUI        9a26fd8385128d09e049200208091919b6b7ef78
@@ -20,19 +26,37 @@ OpenRenderBox      https://github.com/OpenSwiftUIProject/OpenRenderBox      7a85
 Compute            https://github.com/OpenSwiftUIProject/Compute            ef29bc336a16cee2091eb30b0a3aef606d2163d9
 "
 
+# GitHub drops connections often on this network.
+retry() {
+    local n
+    for n in 1 2 3 4 5; do
+        "$@" && return 0
+        echo "retrying ($n): $*" >&2
+        sleep $((n * 5))
+    done
+    return 1
+}
+
 mkdir -p "$checkouts"
 while read -r name url rev; do
     [ -n "$name" ] || continue
     dir="$checkouts/$name"
+    patches=("$ios/Patches/${name,,}"/*.patch)
+    [ -e "${patches[0]}" ] || patches=()
+    stamp="$(cat /dev/null "${patches[@]}" | sha256sum | cut -c1-16)"
     if [ -e "$dir/.git" ]; then
-        continue # Delete the directory to fetch it again.
+        if [ "$(cat "$dir/.git/irisrun-patches" 2>/dev/null)" != "$stamp" ]; then
+            echo "warning: Patches/${name,,} changed since $name was fetched; delete $dir and run again" >&2
+        fi
+        continue
     fi
     echo "fetching $name @ ${rev:0:7}"
     git init -q "$dir"
-    git -C "$dir" fetch -q --depth 1 "$url" "$rev"
+    retry git -C "$dir" fetch -q --depth 1 "$url" "$rev"
     git -C "$dir" checkout -q FETCH_HEAD
-    git -C "$dir" submodule -q update --init --depth 1
-    if [ "$name" = OpenSwiftUI ]; then
-        git -C "$dir" apply "$ios"/Patches/openswiftui/*.patch
+    retry git -C "$dir" submodule -q update --init --depth 1
+    if [ ${#patches[@]} -gt 0 ]; then
+        git -C "$dir" -c user.name=irisrun -c user.email=irisrun@localhost am -q --committer-date-is-author-date "${patches[@]}"
     fi
+    echo "$stamp" > "$dir/.git/irisrun-patches"
 done <<< "$pins"

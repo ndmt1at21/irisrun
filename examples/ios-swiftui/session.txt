@@ -1,0 +1,25 @@
+# Taps for IrisSample on the stdout runtime, one command per line. `tap <text>` touches the
+# middle of the first text that reads <text>; `tap <x> <y>` touches a point. Each command
+# prints the next frame. runtimes/ios/Scripts/check-sample.sh checks every `# expect` line
+# against the frame of the command above it (the first frame for the ones on top).
+# expect Library
+# expect Count: 0
+# expect Truyện Kiều
+tap Increment
+# expect Count: 1
+tap Increment
+# expect Count: 2
+tap Add book
+# expect Book 3
+tap Truyện Kiều
+# expect Not a favorite
+# expect Add to favorites
+tap Add to favorites
+# expect ★ Favorite
+# expect Remove from favorites
+tap ‹ Back
+# expect Count: 2
+# expect ★
+tap Book 3
+# expect Book 3
+# expect Not a favorite

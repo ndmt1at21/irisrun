@@ -1,0 +1,20 @@
+[package]
+name = "irisrun-gateway"
+description = "Streams an Android device to browsers over WebRTC and forwards their input to it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+irisrun-protocol.workspace = true
+prost.workspace = true
+serde_json.workspace = true
+str0m.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

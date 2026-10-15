@@ -1,0 +1,9 @@
+// libobjc2's C API as a Swift module. build.sh installs this file next to
+// libobjc2's headers, which the paths below are relative to.
+module ObjCRuntime [system] {
+  header "objc/runtime.h"
+  header "objc/objc-arc.h"
+  link "objc"
+  link "BlocksRuntime"
+  export *
+}

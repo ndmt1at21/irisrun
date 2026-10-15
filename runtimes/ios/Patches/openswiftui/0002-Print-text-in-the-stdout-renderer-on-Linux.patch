@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Wed, 14 Oct 2026 23:59:04 +0700
+Subject: [PATCH 2/8] Print text in the stdout renderer on Linux
+
+Text runs only need NSAttributedString, which swift-corelibs-foundation has.
+Colors come back from the NDColor shim. Nested display lists are now placed
+from the origin of the item that holds them; before, items inside an effect
+printed at their local position. Adds a lookup of a text's frame so a script
+can tap a view by its label.
+---
+ .../DisplayListStdoutRenderer.swift           | 40 ++++++++++++++-----
+ 1 file changed, 31 insertions(+), 9 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
+index 1e8eaee..ec789d8 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
+@@ -63,6 +63,15 @@ extension DisplayList {
+         visitor.append(list: self)
+         return visitor.commands
+     }
++
++    /// Iris: the frame of the first text that reads `string`, so a script can tap it by name.
++    package func stdoutFrame(ofText string: String) -> CGRect? {
++        for case let .text(frame, runs, _, _) in stdoutRenderCommands()
++        where runs.map(\.string).joined() == string {
++            return frame
++        }
++        return nil
++    }
+ }
+ 
+ private enum StdoutRenderCommand {
+@@ -118,19 +127,22 @@ private struct StdoutRenderCommandVisitor {
+         transform: CGAffineTransform,
+         opacity: Float
+     ) {
++        // Iris: nested lists are positioned from the origin of the item that holds them.
++        let itemTransform = CGAffineTransform(translationX: item.frame.minX, y: item.frame.minY)
++            .concatenating(transform)
+         switch item.value {
+         case let .content(content):
+             append(
+                 content: content,
+                 frame: item.frame.applying(transform),
+-                transform: transform,
++                transform: itemTransform,
+                 opacity: opacity
+             )
+         case let .effect(effect, list):
+-            append(effect: effect, list: list, transform: transform, opacity: opacity)
++            append(effect: effect, list: list, transform: itemTransform, opacity: opacity)
+         case let .states(states):
+             for (_, list) in states {
+-                append(list: list, transform: transform, opacity: opacity)
++                append(list: list, transform: itemTransform, opacity: opacity)
+             }
+         case .empty:
+             break
+@@ -151,7 +163,7 @@ private struct StdoutRenderCommandVisitor {
+                 commands.append(.fill(frame: frame, color: color.multiplyingOpacity(by: opacity)))
+             }
+         case let .text(text, _):
+-            #if os(macOS)
++            #if os(macOS) || !canImport(Darwin)
+             let runs = text.stdoutTextRuns.map { $0.multiplyingOpacity(by: opacity) }
+             commands.append(.text(
+                 frame: frame,
+@@ -165,9 +177,7 @@ private struct StdoutRenderCommandVisitor {
+         case let .flattened(list, offset, _):
+             append(
+                 list: list,
+-                transform: transform.concatenating(
+-                    CGAffineTransform(translationX: frame.minX + offset.x, y: frame.minY + offset.y)
+-                ),
++                transform: CGAffineTransform(translationX: offset.x, y: offset.y).concatenating(transform),
+                 opacity: opacity
+             )
+         default:
+@@ -185,7 +195,7 @@ private struct StdoutRenderCommandVisitor {
+         case let .opacity(alpha):
+             append(list: list, transform: transform, opacity: opacity * alpha)
+         case let .transform(.affine(affine)):
+-            append(list: list, transform: transform.concatenating(affine), opacity: opacity)
++            append(list: list, transform: affine.concatenating(transform), opacity: opacity)
+         default:
+             append(list: list, transform: transform, opacity: opacity)
+         }
+@@ -208,7 +218,7 @@ private extension AnyResolvedPaint {
+     }
+ }
+ 
+-#if os(macOS)
++#if os(macOS) || !canImport(Darwin)
+ private extension StyledTextContentView {
+     var stdoutTextRuns: [StdoutTextRun] {
+         guard let storage = text.storage, storage.length > 0 else {
+@@ -234,7 +244,19 @@ private func stdoutResolvedColor(_ value: Any) -> Color.Resolved? {
+     if let color = value as? Color.Resolved {
+         return color
+     }
++    #if canImport(Darwin)
+     return Color.Resolved(platformColor: value as AnyObject)
++    #else
++    guard let color = value as? NDColor else {
++        return nil
++    }
++    return Color.Resolved(
++        red: Float(color.red),
++        green: Float(color.green),
++        blue: Float(color.blue),
++        opacity: Float(color.alpha)
++    )
++    #endif
+ }
+ #endif
+ 

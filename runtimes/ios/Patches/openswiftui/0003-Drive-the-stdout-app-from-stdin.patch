@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 00:00:35 +0700
+Subject: [PATCH 3/8] Drive the stdout app from stdin
+
+The stdout host now outputs responders and owns an EventBindingManager. After
+the first frame the app reads one command per line until stdin closes:
+`tap <x> <y>` or `tap <text>` sends a touch down and up through the gesture
+system, then renders again. The default surface on Linux is 390x844 points.
+---
+ Sources/OpenSwiftUI/App/App/App.swift         |  5 +-
+ .../App/App/Stdout/StdoutApp.swift            | 76 ++++++++++++++++++-
+ .../DisplayList/StdoutRendererHost.swift      | 12 ++-
+ 3 files changed, 86 insertions(+), 7 deletions(-)
+
+diff --git a/Sources/OpenSwiftUI/App/App/App.swift b/Sources/OpenSwiftUI/App/App/App.swift
+index d550a79..002e6eb 100644
+--- a/Sources/OpenSwiftUI/App/App/App.swift
++++ b/Sources/OpenSwiftUI/App/App/App.swift
+@@ -214,7 +214,10 @@ typealias PlatformApplication = NSObject
+ typealias PlatformApplicationDelegate = AnyObject
+ 
+ func runApp<Application>(_ app: Application) -> Never where Application: App {
+-    let rendererConfiguration = Application.rendererConfiguration ?? .stdout()
++    // Iris: an iPhone-sized surface, in points, unless the app asks for another.
++    var options = _RendererConfiguration.StdoutOptions()
++    options.surface = CGSize(width: 390, height: 844)
++    let rendererConfiguration = Application.rendererConfiguration ?? .stdout(options)
+     guard case let .stdout(options) = rendererConfiguration.renderer else {
+         print("OpenSwiftUI currently supports only the stdout renderer on this platform.")
+         exit(1)
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index f36ae1c..03a3622 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -13,6 +13,7 @@ import WASILibc
+ import Foundation
+ @_spi(ForOpenSwiftUIOnly)
+ @_spi(StdoutRenderer)
++@_spi(_)
+ import OpenSwiftUICore
+ 
+ // MARK: - runStdoutApp
+@@ -21,13 +22,13 @@ func runStdoutApp(
+     _ app: some App,
+     options: _RendererConfiguration.StdoutOptions
+ ) -> Never {
+-    Update.dispatchImmediately(reason: nil) {
++    let session: ((Substring?) -> Void)? = Update.dispatchImmediately(reason: nil) {
+         let graph = AppGraph(app: app)
+         graph.instantiate()
+         AppGraph.shared = graph
+         guard let item = graph.rootSceneList?.items.first else {
+             print("OpenSwiftUI stdout renderer: no scene to render")
+-            return
++            return nil
+         }
+         #if os(macOS) || os(iOS) || os(visionOS)
+         let rootView = item.value.view
+@@ -42,8 +43,77 @@ func runStdoutApp(
+             environment: item.environment,
+             options: options
+         )
+-        host.renderOnce()
++        // Iris: render after this update ends, so that actions it queues, such as
++        // preference changes, land in the first frame.
++        return { command in
++            if let command {
++                run(command, in: host)
++            } else {
++                host.renderOnce()
++            }
++        }
++    }
++    guard let session else {
++        exit(0)
++    }
++    session(nil)
++    // Iris: keep the app alive and take one command per line until stdin closes. Each
++    // command prints the next frame when the display list changes.
++    fflush(stdout)
++    while let line = readLine() {
++        let command = line.drop { $0 == " " }
++        guard !command.isEmpty, !command.hasPrefix("#") else {
++            continue
++        }
++        print("> \(command)")
++        session(command)
++        fflush(stdout)
+     }
+     exit(0)
+ }
++
++// MARK: - Commands
++
++private var touchSerial = 0
++
++/// `tap <x> <y>` touches a point of the surface; `tap <text>` touches the middle of the
++/// first text that reads exactly `<text>`.
++private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Content>) {
++    let words = command.split(separator: " ", maxSplits: 1)
++    guard words.count == 2, words[0] == "tap" else {
++        print("unknown command: \(command)")
++        return
++    }
++    let coordinates = words[1].split(separator: " ").compactMap { Double($0) }
++    let point: CGPoint
++    if coordinates.count == 2 {
++        point = CGPoint(x: coordinates[0], y: coordinates[1])
++    } else if let frame = Update.ensure({ host.viewGraph.displayList().0 }).stdoutFrame(ofText: String(words[1])) {
++        point = CGPoint(x: frame.midX, y: frame.midY)
++    } else {
++        print("no text \"\(words[1])\" on screen")
++        return
++    }
++    touchSerial += 1
++    for phase in [EventPhase.began, .ended] {
++        let touch = TouchEvent(
++            timestamp: .systemUptime,
++            phase: phase,
++            location: point,
++            globalLocation: point,
++            radius: 1,
++            force: 0,
++            maximumPossibleForce: 0,
++            modifiers: [],
++            altitude: .zero,
++            azimuth: .zero,
++            touchType: .direct
++        )
++        host.eventBindingManager.send(touch, id: touchSerial)
++    }
++    // The touch has ended; start the next one from a fresh gesture graph, as
++    // EventBindingBridge does for UIKit and AppKit hosts.
++    host.eventBindingManager.reset()
++    host.render(targetTimestamp: nil)
++}
+ #endif
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+index 4469c68..5ae1c14 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+@@ -7,7 +7,7 @@ import Foundation
+ 
+ // MARK: - StdoutRendererHost
+ 
+-final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRenderDelegate where Content: View {
++final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRenderDelegate, EventGraphHost where Content: View {
+     typealias RootView = ModifiedContent<Content, HitTestBindingModifier>
+ 
+     package let viewGraph: ViewGraph
+@@ -15,6 +15,7 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+     package let rootView: Content
+     package let environment: EnvironmentValues
+     package let options: _RendererConfiguration.StdoutOptions
++    package let eventBindingManager = EventBindingManager()
+ 
+     package var currentTimestamp: Time = .zero
+     package var propertiesNeedingUpdate: ViewRendererHostProperties = .all
+@@ -30,13 +31,14 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+         self.environment = environment
+         self.options = options
+         Update.begin()
+-        // The stdout renderer only needs layout and display list output.
+-        viewGraph = ViewGraph(rootViewType: RootView.self, requestedOutputs: [.displayList, .layout])
++        // Iris: responders too, so scripted taps reach gestures.
++        viewGraph = ViewGraph(rootViewType: RootView.self, requestedOutputs: [.displayList, .layout, .viewResponders])
+         renderer = DisplayList.ViewRenderer(
+             platform: .init(definition: StdoutPlatformViewDefinition.self)
+         )
+         renderer.configuration = .stdout(options)
+         renderer.host = self
++        eventBindingManager.host = self
+         initializeViewGraph()
+         Update.end()
+     }
+@@ -82,6 +84,8 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+             return unsafeBitCast(self as any ViewGraphRenderDelegate, to: T.self)
+         } else if DisplayList.ViewRenderer.self == T.self {
+             return unsafeBitCast(renderer, to: T.self)
++        } else if EventGraphHost.self == T.self {
++            return unsafeBitCast(self as any EventGraphHost, to: T.self)
+         } else {
+             return nil
+         }
+@@ -101,6 +105,8 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+     package func withMainThreadRender(wasAsync: Bool, _ body: () -> Time) -> Time {
+         body()
+     }
++
++    package var focusedResponder: ResponderNode? { nil }
+ }
+ 
+ private final class StdoutPlatformViewDefinition: PlatformViewDefinition, @unchecked Sendable {}

@@ -1,9 +1,12 @@
 // Plain Objective-C on libobjc2: classes, properties, categories, protocols,
-// blocks, ARC + weak, @autoreleasepool, exceptions, runtime tricks, GCD.
+// blocks, ARC + weak, @autoreleasepool, exceptions, runtime tricks, GCD; then
+// Swift code that calls these classes and is called back by them.
 #import "MiniFoundation.h"
 #include <dispatch/dispatch.h>
 #include <stdio.h>
 #include <string.h>
+
+int swift_interop(void); // Interop.swift; returns its number of failed checks
 
 static int failures, deallocs;
 #define CHECK(c) do { if (!(c)) { failures++; printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
@@ -92,6 +95,16 @@ static int thrower(int code)
 
 static const char *original(id self, SEL _cmd) { return "swizzled"; }
 
+// KVO's mechanism: the observed object is moved (isa swizzling) to a subclass
+// made at run time, whose setter calls the original one and then notifies.
+static int nameChanges;
+static void (*setNameIMP)(id, SEL, NSString *);
+static void observedSetName(id self, SEL _cmd, NSString *name)
+{
+  setNameIMP(self, _cmd, name);
+  nameChanges++;
+}
+
 int main(void)
 {
   @autoreleasepool {
@@ -157,7 +170,7 @@ int main(void)
     [b tap];
     CHECK(c.taps == 2);
 
-    // Runtime: dynamic resolution, associated objects, swizzling.
+    // Runtime: dynamic resolution, associated objects, swizzling, KVO-style isa swizzling.
     CHECK([[Dynamic new] answer] == 42);
     static char key;
     objc_setAssociatedObject(ada, &key, c, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -166,17 +179,27 @@ int main(void)
     IMP old = method_setImplementation(m, (IMP)original);
     CHECK(strcmp([ada greet], "swizzled") == 0);
     method_setImplementation(m, old);
+    Class observed = objc_allocateClassPair([Person class], "Observed_Person", 0);
+    setNameIMP = (void (*)(id, SEL, NSString *))class_getMethodImplementation([Person class], @selector(setName:));
+    class_addMethod(observed, @selector(setName:), (IMP)observedSetName, "v@:@");
+    objc_registerClassPair(observed);
+    Person *kay = [Person personNamed:@"Kay"];
+    object_setClass(kay, observed);
+    kay.name = @"Kai";
+    CHECK(nameChanges == 1 && strcmp([kay.name UTF8String], "Kai") == 0);
 
-    // GCD from Objective-C, with ObjC objects captured in blocks.
+    // GCD and @synchronized, with ObjC objects captured in blocks.
     dispatch_group_t g = dispatch_group_create();
     __block int sum = 0;
     for (int i = 1; i <= 10; i++)
       dispatch_group_async(g, dispatch_get_global_queue(0, 0), ^{
-        __sync_fetch_and_add(&sum, i + [ada shoutLength] - 4);
+        @synchronized (c) { sum += i + [ada shoutLength] - 4; }
       });
     dispatch_group_wait(g, DISPATCH_TIME_FOREVER);
     dispatch_release(g); // GCD objects are not ObjC objects on Linux
     CHECK(sum == 55);
+
+    failures += swift_interop();
   }
   printf(failures ? "%d check(s) failed\n" : "all checks passed\n", failures);
   return failures != 0;

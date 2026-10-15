@@ -40,6 +40,12 @@ func scan(source: String) -> FileFacts {
     return visitor.facts
 }
 
+/// Conformance of a `@main` type -> kind of entry point.
+private let entryKinds = [
+    "App": "SwiftUI App", "UIApplicationDelegate": "UIApplicationDelegate", "WidgetBundle": "WidgetKit",
+    "Widget": "WidgetKit", "NSApplicationDelegate": "AppKit",
+]
+
 private final class Scanner: SyntaxVisitor {
     var facts = FileFacts()
     private var typeStack: [String] = []
@@ -52,6 +58,12 @@ private final class Scanner: SyntaxVisitor {
 
     override func visit(_ node: ImportDeclSyntax) -> SyntaxVisitorContinueKind {
         if let module = node.path.first?.name.text { facts.imports.insert(module) }
+        return .skipChildren
+    }
+
+    /// `#if canImport(UIKit)` and `#if DEBUG` name build conditions, not APIs: skip the condition.
+    override func visit(_ node: IfConfigClauseSyntax) -> SyntaxVisitorContinueKind {
+        if let elements = node.elements { walk(elements) }
         return .skipChildren
     }
 
@@ -132,7 +144,7 @@ private final class Scanner: SyntaxVisitor {
     // MARK: Attributes, macros, modifiers
 
     override func visit(_ node: AttributeSyntax) -> SyntaxVisitorContinueKind {
-        let name = node.attributeName.trimmedDescription
+        let name = attributeName(node.attributeName)
         facts.attributes[name, default: 0] += 1
         if Catalog.attributes[name] == "ObjC" { facts.objc["@" + name, default: 0] += 1 }
         if name == "Environment", case .argumentList(let arguments) = node.arguments,
@@ -288,7 +300,18 @@ private final class Scanner: SyntaxVisitor {
     }
 
     private func countIdentifier(_ name: String) {
-        if name.first?.isUppercase == true { facts.identifiers[name, default: 0] += 1 }
+        guard name.first?.isUppercase == true else { return }
+        facts.identifiers[name, default: 0] += 1
+        if name == "Selector" { facts.objc[name, default: 0] += 1 }
+    }
+
+    /// `@SwiftUI.State` -> `State`, `@FocusState<Field?>.Binding` -> `FocusState.Binding`.
+    private func attributeName(_ type: TypeSyntax) -> String {
+        if let member = type.as(MemberTypeSyntax.self) {
+            let base = attributeName(member.baseType)
+            return facts.imports.contains(base) ? member.name.text : "\(base).\(member.name.text)"
+        }
+        return type.as(IdentifierTypeSyntax.self)?.name.text ?? type.trimmedDescription
     }
 
     private func addSelfMember(_ member: String) {
@@ -303,9 +326,9 @@ private final class Scanner: SyntaxVisitor {
     private func declareType(_ name: String, attributes: AttributeListSyntax, inheritance: InheritanceClauseSyntax?) {
         facts.declaredTypes.insert(name)
         let attributeNames = Set(attributes.compactMap { $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription })
-        let inherited = Set(inheritance?.inheritedTypes.compactMap { typeName($0.type) } ?? [])
+        let inherited = inheritance?.inheritedTypes.compactMap { typeName($0.type) } ?? []
         if attributeNames.contains("main") || attributeNames.contains("UIApplicationMain") {
-            facts.entryPoints.insert(inherited.contains("App") ? "SwiftUI App" : inherited.contains("UIApplicationDelegate") ? "UIApplicationDelegate" : "other")
+            facts.entryPoints.insert(inherited.lazy.compactMap { entryKinds[$0] }.first ?? "other")
         }
         if inherited.contains("UIWindowSceneDelegate") { facts.entryPoints.insert("UIWindowSceneDelegate") }
     }

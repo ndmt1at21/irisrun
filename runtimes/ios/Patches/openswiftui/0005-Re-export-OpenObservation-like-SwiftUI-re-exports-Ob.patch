@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 00:02:11 +0700
+Subject: [PATCH 5/8] Re-export OpenObservation like SwiftUI re-exports
+ Observation
+
+---
+ Sources/OpenSwiftUI/Export.swift | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/Sources/OpenSwiftUI/Export.swift b/Sources/OpenSwiftUI/Export.swift
+index 3295b18..f92633a 100644
+--- a/Sources/OpenSwiftUI/Export.swift
++++ b/Sources/OpenSwiftUI/Export.swift
+@@ -12,6 +12,10 @@
+ public import OpenSwiftUICore
+ package typealias UniqueID = OpenSwiftUICore.UniqueID
+ 
++// Iris: SwiftUI re-exports Observation, so @Observable works with `import SwiftUI` alone.
++// Apps see this module as Observation through -module-alias.
++@_exported public import OpenObservation
++
+ #if canImport(CoreGraphics)
+ @_exported import CoreGraphics
+ #endif

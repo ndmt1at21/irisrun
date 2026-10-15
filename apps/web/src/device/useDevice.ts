@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppStatus, DeviceInfo } from "../gen/irisrun/device/v1alpha1/device_pb";
 import type { Frame } from "../gen/irisrun/device/v1alpha1/frame_pb";
 import type { LogEntry } from "../gen/irisrun/device/v1alpha1/log_pb";
-import { DeviceConnection, type HostPayload } from "./connection";
+import { type ConnectionEvents, DeviceConnection, type HostPayload } from "./connection";
+import { WebRtcConnection } from "./webrtc";
 
 const MAX_LOGS = 500;
 
@@ -11,16 +12,21 @@ export interface DeviceState {
   info?: DeviceInfo;
   status?: AppStatus;
   logs: LogEntry[];
+  /** The screen as video, from a cloud device. */
+  stream?: MediaStream;
 }
 
-/** Connects to the device at `url`. Frames go to subscribers, not React state. */
-export function useDevice(url: string) {
+/**
+ * Connects to the device at `url`: the CLI's WebSocket, or an irisrun-gateway
+ * over WebRTC. Frames go to subscribers, not React state.
+ */
+export function useDevice(url: string, transport: "websocket" | "webrtc" = "websocket") {
   const [state, setState] = useState<DeviceState>({ connected: false, logs: [] });
-  const connection = useRef<DeviceConnection | undefined>(undefined);
+  const connection = useRef<DeviceConnection | WebRtcConnection | undefined>(undefined);
   const frameSinks = useRef(new Set<(frame: Frame) => void>());
 
   useEffect(() => {
-    const device = new DeviceConnection(url, {
+    const events: ConnectionEvents = {
       onConnectedChange: (connected) => setState((state) => ({ ...state, connected })),
       onMessage: ({ payload }) => {
         switch (payload.case) {
@@ -41,10 +47,14 @@ export function useDevice(url: string) {
             break;
         }
       },
-    });
+    };
+    const device =
+      transport === "webrtc"
+        ? new WebRtcConnection(url, { ...events, onStream: (stream) => setState((state) => ({ ...state, stream })) })
+        : new DeviceConnection(url, events);
     connection.current = device;
     return () => device.close();
-  }, [url]);
+  }, [url, transport]);
 
   const send = useCallback((payload: HostPayload) => connection.current?.send(payload), []);
   const subscribeFrames = useCallback((sink: (frame: Frame) => void) => {

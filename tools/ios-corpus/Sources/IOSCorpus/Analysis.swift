@@ -7,9 +7,25 @@ struct AppResult: Codable, Sendable {
     let swiftLines: Int
     let inventory: Inventory
     /// Category -> name -> occurrences. Categories: import (files), swiftui.view, swiftui.type,
-    /// swiftui.modifier, swiftui.environment, attribute, macro, uikit.type, uikit.member,
-    /// quartzcore.type, objc, sfsymbol, entry, and other.type / other.call for catalog review.
+    /// swiftui.modifier, swiftui.function, swiftui.environment, attribute, macro, uikit.type,
+    /// uikit.member, quartzcore.type, objc, sfsymbol, entry, and other.type / other.call for
+    /// catalog review.
     let usage: [String: [String: Int]]
+
+    /// What it takes to compile the app without an Objective-C runtime: nothing, a SwiftSyntax
+    /// rewrite of the failing constructs, or a runtime (KVO, `@NSManaged`, `.m` files).
+    var objcNeed: ObjCNeed {
+        let failing = (usage["objc"] ?? [:]).keys.filter { Catalog.objcOnLinux[$0] != "ok" }
+        let sources = (inventory.files["m"] ?? 0) + (inventory.files["mm"] ?? 0)
+        if sources > 0 || inventory.bridgingHeader || failing.contains(where: { !Catalog.objcRewritable.contains($0) }) {
+            return .runtime
+        }
+        return failing.isEmpty ? .none : .rewrite
+    }
+}
+
+enum ObjCNeed {
+    case none, rewrite, runtime
 }
 
 /// Attributes one app's file facts to frameworks, using what the app declares itself.
@@ -51,10 +67,12 @@ func analyze(id: String, ui: String, files: [FileFacts], inventory: Inventory) -
     for file in files {
         for module in file.imports { add("import", module, 1) }
         let swiftUI = file.imports.contains("SwiftUI")
+        // ObservableObject is Combine's; SwiftUI re-exports it. View models often import Combine only.
+        let combine = swiftUI || file.imports.contains("Combine")
         for (name, count) in file.identifiers where !declaredTypes.contains(name) && !file.imports.contains(name) {
             let category =
                 if swiftUI && Catalog.swiftUIViews.contains(name) { "swiftui.view" }
-                else if swiftUI && Catalog.swiftUITypes.contains(name) { "swiftui.type" }
+                else if swiftUI && Catalog.swiftUITypes.contains(name) || combine && name == "ObservableObject" { "swiftui.type" }
                 else if Catalog.isUIKitType(name) { "uikit.type" }
                 else if Catalog.isQuartzCoreType(name) { "quartzcore.type" }
                 else { "other.type" }
@@ -64,6 +82,8 @@ func analyze(id: String, ui: String, files: [FileFacts], inventory: Inventory) -
             for (name, count) in file.calls {
                 if Catalog.swiftUIModifiers.contains(name) {
                     add("swiftui.modifier", name, count)
+                } else if Catalog.swiftUIFunctions.contains(name) {
+                    add("swiftui.function", name, count)
                 } else if !declaredNames.contains(name) {
                     add("other.call", name, count)
                 }

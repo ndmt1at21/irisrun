@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 07:09:47 +0700
+Subject: [PATCH 8/8] Run a frame loop in the stdout app
+
+The host keeps the soonest update the view graph asks for. After each
+command the app renders those updates on a virtual 60 Hz clock until none is
+left, so an animation runs to its end before the frame is printed or written.
+It gives up after two seconds of app time, for animations that never end.
+---
+ .../OpenSwiftUI/App/App/Stdout/StdoutApp.swift | 18 ++++++++++++++++++
+ .../DisplayList/StdoutRendererHost.swift       |  8 +++++++-
+ 2 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index bb67843..e9619e0 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -73,6 +73,7 @@ func runStdoutApp(
+             } else {
+                 host.renderOnce()
+             }
++            settle(host)
+             #if !canImport(Darwin)
+             if let frames {
+                 writeFrame(of: host, number: frame, to: frames, updatedIn: .now - start)
+@@ -147,6 +148,23 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+ 
+ // MARK: - Frames
+ 
++/// Iris: renders the updates the view graph asks for, such as the frames of an animation, on
++/// a virtual 60 Hz clock until none is left, so that a step ends where the app settles.
++private func settle<Content>(_ host: StdoutRendererHost<Content>) {
++    var elapsed = 0.0
++    while let delay = host.requestedUpdate {
++        host.requestedUpdate = nil
++        // Endless animations and repeating timers never settle.
++        guard elapsed < 2 else {
++            fputs("still updating after 2 s of app time; taking the frame as it is\n", stderr)
++            return
++        }
++        let interval = max(delay, 1.0 / 60)
++        elapsed += interval
++        host.render(interval: interval, targetTimestamp: nil)
++    }
++}
++
+ #if !canImport(Darwin)
+ /// Iris: prints the frame as the stdout renderer would, then draws and writes it as a PNG.
+ /// IRISRUN_BENCH=<count> also times drawing it that many times into JPEG, as hosts send frames.
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+index 5ae1c14..30d039f 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/StdoutRendererHost.swift
+@@ -91,7 +91,13 @@ final package class StdoutRendererHost<Content>: ViewRendererHost, ViewGraphRend
+         }
+     }
+ 
+-    package func requestUpdate(after delay: Double) {}
++    /// Iris: the soonest update the view graph asked for, in seconds from now, for the app's
++    /// frame loop.
++    package var requestedUpdate: Double?
++
++    package func requestUpdate(after delay: Double) {
++        requestedUpdate = min(requestedUpdate ?? delay, delay)
++    }
+ 
+     package var renderingRootView: AnyObject {
+         self

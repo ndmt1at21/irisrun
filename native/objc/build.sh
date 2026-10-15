@@ -1,7 +1,8 @@
 #!/bin/sh
 # Fetches libobjc2 and builds it with the Swift toolchain's clang against the
-# toolchain's libBlocksRuntime, then builds and runs demo.m.
-# usage: native/objc/build.sh [build-dir]   (default: ~/.cache/irisrun/objc, outside the repo)
+# toolchain's libBlocksRuntime, then builds and runs the demo: demo.m, which
+# also runs the Swift checks in Interop.swift.
+# usage: [JOBS=n] native/objc/build.sh [build-dir]   (default: ~/.cache/irisrun/objc, outside the repo)
 set -eu
 
 LIBOBJC2_TAG=v2.3
@@ -45,9 +46,15 @@ quiet cmake -S "$out/libobjc2" -B "$out/build" -G "$generator" -DCMAKE_BUILD_TYP
 quiet cmake --build "$out/build" -j "${JOBS:-$(nproc)}"
 quiet cmake --install "$out/build"
 
-cc="$toolchain/bin/clang -fobjc-runtime=gnustep-2.0 -fblocks -fobjc-exceptions -O1 -Wall -I$out/prefix/include -I$swift_lib"
-$cc -c "$here/MiniFoundation.m" -o "$out/MiniFoundation.o"
-$cc -fobjc-arc -c "$here/demo.m" -o "$out/demo.o"
-$cc "$out/demo.o" "$out/MiniFoundation.o" -o "$out/demo" -L"$out/prefix/lib" -lobjc \
-  -L"$swift_lib/linux" -ldispatch -lBlocksRuntime -Wl,-rpath,"$out/prefix/lib" -Wl,-rpath,"$swift_lib/linux"
+cc() {
+  "$toolchain/bin/clang" -fobjc-runtime=gnustep-2.0 -fblocks -fobjc-exceptions -O1 -Wall \
+    -I"$out/prefix/include" -I"$swift_lib" "$@"
+}
+cc -c "$here/MiniFoundation.m" -o "$out/MiniFoundation.o"
+cc -fobjc-arc -c "$here/demo.m" -o "$out/demo.o"
+# swiftc links, so the Swift runtime comes along; the module map lets
+# Interop.swift import libobjc2's headers as ObjCRuntime.
+cp "$here/module.modulemap" "$out/prefix/include/"
+"$swiftc" -parse-as-library -O -I "$out/prefix/include" "$here/Interop.swift" "$out/demo.o" "$out/MiniFoundation.o" \
+  -o "$out/demo" -L"$out/prefix/lib" -ldispatch -Xlinker -rpath -Xlinker "$out/prefix/lib"
 "$out/demo"

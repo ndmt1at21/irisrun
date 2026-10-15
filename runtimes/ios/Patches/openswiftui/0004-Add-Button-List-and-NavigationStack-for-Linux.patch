@@ -1,0 +1,198 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 00:02:01 +0700
+Subject: [PATCH 4/8] Add Button, List and NavigationStack for Linux
+
+Button was an empty stub. The three are the smallest versions that run the
+Iris sample: Button taps its label, List stacks its rows, NavigationStack shows
+one page under a back button and the title from navigationTitle.
+---
+ .../View/Control/Button/Button.swift          | 28 +++++-
+ Sources/OpenSwiftUI/View/List/List.swift      | 36 ++++++++
+ .../View/Navigation/NavigationStack.swift     | 91 +++++++++++++++++++
+ 3 files changed, 151 insertions(+), 4 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/View/List/List.swift
+ create mode 100644 Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Control/Button/Button.swift b/Sources/OpenSwiftUI/View/Control/Button/Button.swift
+index 6a1671e..8f16459 100644
+--- a/Sources/OpenSwiftUI/View/Control/Button/Button.swift
++++ b/Sources/OpenSwiftUI/View/Control/Button/Button.swift
+@@ -1,14 +1,34 @@
+ //
+-//  ButtonRole.swift
++//  Button.swift
+ //  OpenSwiftUI
+ //
+-//  Audited for 3.5.2
+-//  Status: Empty
++//  Status: Iris
+ 
++public import OpenSwiftUICore
++
++// Iris: a tap on the label runs the action. Button styles, roles and the pressed state
++// come with upstream's ButtonStyle work.
+ public struct Button<Label>: View where Label: View {
++    private var action: () -> Void
++    private var label: Label
++
+     public init(action: @escaping () -> Void, @ViewBuilder label: () -> Label) {
++        self.action = action
++        self.label = label()
++    }
+ 
++    public var body: some View {
++        label.onTapGesture(perform: action)
+     }
++}
+ 
+-    public var body: some View { EmptyView() }
++extension Button where Label == Text {
++    public init(_ titleKey: LocalizedStringKey, action: @escaping () -> Void) {
++        self.init(action: action) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, action: @escaping () -> Void) where S: StringProtocol {
++        self.init(action: action) { Text(title) }
++    }
+ }
+diff --git a/Sources/OpenSwiftUI/View/List/List.swift b/Sources/OpenSwiftUI/View/List/List.swift
+new file mode 100644
+index 0000000..74f449f
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/List/List.swift
+@@ -0,0 +1,36 @@
++//
++//  List.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import OpenSwiftUICore
++
++// Iris: rows in a plain stack until upstream has List: no scrolling, separators,
++// selection or list styles yet.
++public struct List<SelectionValue, Content>: View where SelectionValue: Hashable, Content: View {
++    private var content: Content
++
++    public init(@ViewBuilder content: () -> Content) where SelectionValue == Never {
++        self.content = content()
++    }
++
++    public var body: some View {
++        _VariadicView.Tree(ListRows()) {
++            content
++        }
++    }
++}
++
++private struct ListRows: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        VStack(alignment: .leading, spacing: 0) {
++            ForEach(children) { row in
++                row
++                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++                    .padding(.horizontal, 16)
++            }
++        }
++        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+new file mode 100644
+index 0000000..272fcea
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+@@ -0,0 +1,91 @@
++//
++//  NavigationStack.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import OpenSwiftUICore
++
++// Iris: a minimal stack until upstream has navigation. One page shows at a time, the root
++// or the last destination a NavigationLink pushed, under a bar with a back button and the
++// page's title. No path binding, toolbar or transitions yet.
++public struct NavigationStack<Root>: View where Root: View {
++    @State private var path: [AnyView] = []
++    @State private var title: Text?
++    private var root: Root
++
++    public init(@ViewBuilder root: () -> Root) {
++        self.root = root()
++    }
++
++    public var body: some View {
++        VStack(alignment: .leading, spacing: 0) {
++            HStack {
++                if !path.isEmpty {
++                    Button("‹ Back") { path.removeLast() }
++                }
++                Spacer()
++            }
++            .frame(height: 44)
++            .padding(.horizontal, 16)
++            if let title {
++                title.font(.largeTitle).padding(.horizontal, 16)
++            }
++            Group {
++                if let page = path.last {
++                    page
++                } else {
++                    root
++                }
++            }
++            .frame(maxWidth: .infinity, maxHeight: .infinity)
++            .onPreferenceChange(NavigationTitleKey.self) { title = $0?.title }
++        }
++        .environment(\.navigationPath, $path)
++    }
++}
++
++public struct NavigationLink<Label, Destination>: View where Label: View, Destination: View {
++    @Environment(\.navigationPath) private var path
++    private var destination: Destination
++    private var label: Label
++
++    public init(@ViewBuilder destination: () -> Destination, @ViewBuilder label: () -> Label) {
++        self.destination = destination()
++        self.label = label()
++    }
++
++    public var body: some View {
++        Button {
++            path?.wrappedValue.append(AnyView(destination))
++        } label: {
++            label
++        }
++    }
++}
++
++extension View {
++    public func navigationTitle(_ title: Text) -> some View {
++        preference(key: NavigationTitleKey.self, value: NavigationTitleStorage(title: title))
++    }
++
++    public func navigationTitle(_ titleKey: LocalizedStringKey) -> some View {
++        navigationTitle(Text(titleKey))
++    }
++
++    @_disfavoredOverload
++    public func navigationTitle<S>(_ title: S) -> some View where S: StringProtocol {
++        navigationTitle(Text(title))
++    }
++}
++
++private struct NavigationPathKey: EnvironmentKey {
++    static var defaultValue: Binding<[AnyView]>? { nil }
++}
++
++extension EnvironmentValues {
++    fileprivate var navigationPath: Binding<[AnyView]>? {
++        get { self[NavigationPathKey.self] }
++        set { self[NavigationPathKey.self] = newValue }
++    }
++}

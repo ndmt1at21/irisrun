@@ -24,3 +24,6 @@ local.properties
 .vscode/
 *.iml
 .DS_Store
+
+# Emulator and system image zips (cloud/emulator/fetch.sh)
+cloud/emulator/downloads/

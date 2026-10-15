@@ -15,7 +15,7 @@ function SearchField({ className, ...props }: Omit<ComponentProps<"input">, "typ
       <Search aria-hidden="true" className="size-3.5 shrink-0" />
       <input
         type="search"
-        className="h-full min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+        className="h-full min-w-0 flex-1 bg-transparent px-0.5 text-foreground outline-none placeholder:text-muted-foreground"
         {...props}
       />
     </label>

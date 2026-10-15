@@ -1,0 +1,5 @@
+module CIrisRender [system] {
+    header "../../../include/irisrun_render.h"
+    link "irisrun_render"
+    export *
+}

@@ -1,0 +1,501 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 07:04:31 +0700
+Subject: [PATCH 7/8] Measure and draw text with Iris's render core
+
+On Linux, OpenSwiftUI links Iris's render core, the Swift package that
+OPENSWIFTUI_IRIS_RENDER_PATH points at. The stdout app makes the window's
+render core scene with Iris's fonts when it starts, and text is measured by
+that scene with the fonts it is drawn with, so frames fit their text.
+
+The default renderer on Linux mirrors each display list into the scene's
+layers: colors, rectangles, rounded rectangles and circles in one color,
+text, opacity and affine transforms. With IRISRUN_FRAMES=<dir> the stdout
+app renders with it, prints each frame as before and also writes it to <dir>
+as a PNG. IRISRUN_SCALE sets the pixels per point, and IRISRUN_BENCH=<count>
+times drawing each frame that many times into JPEG.
+---
+ Package.swift                                 |  12 +
+ .../App/App/Stdout/StdoutApp.swift            |  69 +++++
+ .../DisplayListLayerRenderer.swift            | 254 ++++++++++++++++++
+ .../DisplayListStdoutRenderer.swift           |   2 +-
+ .../DisplayList/DisplayListViewRenderer.swift |   5 +
+ .../Text/Text/Text+StringDrawingContext.swift |  34 ++-
+ 6 files changed, 361 insertions(+), 15 deletions(-)
+ create mode 100644 Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+
+diff --git a/Package.swift b/Package.swift
+index 3f83fde..8b1546c 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -984,6 +984,18 @@ if swiftCryptoCondition {
+     openSwiftUITarget.addSwiftCryptoSettings()
+ }
+ 
++// Iris: on Linux, text is measured and drawn by Iris's render core, the Swift package in its
++// crates/render/swift. The Rust library behind it must be on the linker's search path.
++if !buildForDarwinPlatform {
++    guard let irisRenderPath = envStringValue("IRIS_RENDER_PATH") else {
++        fatalError("set OPENSWIFTUI_IRIS_RENDER_PATH to Iris's crates/render/swift")
++    }
++    package.dependencies.append(.package(path: irisRenderPath))
++    for target in [openSwiftUICoreTarget, openSwiftUITarget] {
++        target.dependencies.append(.product(name: "IrisRender", package: "swift"))
++    }
++}
++
+ #if TUIST
+ import struct ProjectDescription.PackageSettings
+ import enum ProjectDescription.Product
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index 03a3622..bb67843 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -15,6 +15,9 @@ import Foundation
+ @_spi(StdoutRenderer)
+ @_spi(_)
+ import OpenSwiftUICore
++#if !canImport(Darwin)
++import IrisRender
++#endif
+ 
+ // MARK: - runStdoutApp
+ 
+@@ -22,6 +25,17 @@ func runStdoutApp(
+     _ app: some App,
+     options: _RendererConfiguration.StdoutOptions
+ ) -> Never {
++    #if !canImport(Darwin)
++    // Iris: the window's render core scene, IRISRUN_SCALE pixels per point. Text is measured
++    // with its fonts, and with IRISRUN_FRAMES=<dir> the app draws into it and writes a PNG
++    // of each step to <dir>.
++    let environment = ProcessInfo.processInfo.environment
++    irisScene = .window(size: options.surface, scale: environment["IRISRUN_SCALE"].flatMap { Float($0) } ?? 3)
++    let frames = environment["IRISRUN_FRAMES"].map { URL(fileURLWithPath: $0, isDirectory: true) }
++    if let frames {
++        try? FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
++    }
++    #endif
+     let session: ((Substring?) -> Void)? = Update.dispatchImmediately(reason: nil) {
+         let graph = AppGraph(app: app)
+         graph.instantiate()
+@@ -43,14 +57,28 @@ func runStdoutApp(
+             environment: item.environment,
+             options: options
+         )
++        #if !canImport(Darwin)
++        var frame = 0
++        if frames != nil {
++            // The default renderer, which is the render core on Linux.
++            host.renderer.configuration = .init()
++        }
++        #endif
+         // Iris: render after this update ends, so that actions it queues, such as
+         // preference changes, land in the first frame.
+         return { command in
++            let start = ContinuousClock.now
+             if let command {
+                 run(command, in: host)
+             } else {
+                 host.renderOnce()
+             }
++            #if !canImport(Darwin)
++            if let frames {
++                writeFrame(of: host, number: frame, to: frames, updatedIn: .now - start)
++                frame += 1
++            }
++            #endif
+         }
+     }
+     guard let session else {
+@@ -116,4 +144,45 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+     host.eventBindingManager.reset()
+     host.render(targetTimestamp: nil)
+ }
++
++// MARK: - Frames
++
++#if !canImport(Darwin)
++/// Iris: prints the frame as the stdout renderer would, then draws and writes it as a PNG.
++/// IRISRUN_BENCH=<count> also times drawing it that many times into JPEG, as hosts send frames.
++private func writeFrame<Content>(
++    of host: StdoutRendererHost<Content>,
++    number: Int,
++    to directory: URL,
++    updatedIn update: Duration
++) {
++    let (list, version) = Update.ensure { host.viewGraph.displayList() }
++    print(list.stdoutDescription(surface: host.options.surface, version: version))
++    let clock = ContinuousClock()
++    var png: [UInt8]?
++    let encode = clock.measure { png = irisScene.encode(.png) }
++    let url = directory.appendingPathComponent(String(format: "frame-%03d.png", number))
++    guard let png, FileManager.default.createFile(atPath: url.path, contents: Data(png)) else {
++        fputs("cannot write \(url.path)\n", stderr)
++        exit(1)
++    }
++    print("frame: \(url.path) (update \(milliseconds(update)) ms, draw and PNG \(milliseconds(encode)) ms)")
++    guard let count = ProcessInfo.processInfo.environment["IRISRUN_BENCH"].flatMap({ Int($0) }), count > 0 else {
++        return
++    }
++    var layers = Duration.zero
++    var drawing = Duration.zero
++    var bytes = 0
++    for _ in 0 ..< count {
++        layers += clock.measure { irisScene.show(list) }
++        drawing += clock.measure { bytes += irisScene.encode(.jpeg)?.count ?? 0 }
++    }
++    let perFrame = (layers + drawing) / count
++    print("bench: \(count) frames, layers \(milliseconds(layers / count)) ms, drawing and JPEG \(milliseconds(drawing / count)) ms (\(Int(.seconds(1) / perFrame)) fps), \(bytes / count / 1024) KB")
++}
++
++private func milliseconds(_ duration: Duration) -> String {
++    String(format: "%.1f", duration / .milliseconds(1))
++}
++#endif
+ #endif
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+new file mode 100644
+index 0000000..e7f762e
+--- /dev/null
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -0,0 +1,254 @@
++//
++//  DisplayListLayerRenderer.swift
++//  OpenSwiftUICore
++//
++//  Status: Iris
++
++#if !canImport(Darwin)
++package import Foundation
++package import IrisRender
++
++// MARK: - The window's scene
++
++/// Iris: the render core scene of the app's one window, made when the app starts, before
++/// anything is laid out. Text is measured with the scene's fonts, so layout agrees with what
++/// the layer renderer draws.
++package var irisScene: IrisRender.Scene!
++
++extension IrisRender.Scene {
++    /// A white window with the fonts in `${IRISRUN_HOME:-~/.irisrun}/fonts`, which Iris's
++    /// crates/render/fetch-fonts.sh downloads.
++    package static func window(size: CGSize, scale: Float) -> IrisRender.Scene {
++        let scene = IrisRender.Scene(width: Float(size.width), height: Float(size.height), scale: scale)
++        scene.root.backgroundColor = 0xFFFF_FFFF
++        let environment = ProcessInfo.processInfo.environment
++        let home = environment["IRISRUN_HOME"] ?? (environment["HOME"] ?? NSHomeDirectory()) + "/.irisrun"
++        for name in ["Inter.ttf", "NotoSansSC.ttf"] {
++            let path = home + "/fonts/" + name
++            guard let data = FileManager.default.contents(atPath: path), scene.addFont([UInt8](data)) else {
++                fatalError("cannot load \(path); run Iris's crates/render/fetch-fonts.sh")
++            }
++        }
++        return scene
++    }
++}
++
++// MARK: - LayerRenderer
++
++/// Iris: the platform renderer on Linux. It mirrors each new display list into the layers of
++/// `irisScene`, which the host encodes into frames.
++final class LayerRenderer: ViewRendererBase {
++    let platform: DisplayList.ViewUpdater.Platform
++    weak var host: (any ViewRendererHost)?
++    private var seed: DisplayList.Seed?
++
++    init(platform: DisplayList.ViewUpdater.Platform, host: (any ViewRendererHost)?) {
++        self.platform = platform
++        self.host = host
++    }
++
++    var exportedObject: AnyObject? {
++        nil
++    }
++
++    func render(
++        rootView: AnyObject,
++        from list: DisplayList,
++        time: Time,
++        version: DisplayList.Version,
++        maxVersion: DisplayList.Version,
++        environment: DisplayList.ViewRenderer.Environment
++    ) -> Time {
++        let nextSeed = DisplayList.Seed(version)
++        guard nextSeed != seed else {
++            return .infinity
++        }
++        seed = nextSeed
++        irisScene.show(list)
++        if let host, let observer = host.as(ViewGraphRenderObserver.self) {
++            observer.didRender()
++        }
++        return .infinity
++    }
++
++    func renderAsync(
++        to list: DisplayList,
++        time: Time,
++        targetTimestamp: Time?,
++        version: DisplayList.Version,
++        maxVersion: DisplayList.Version
++    ) -> Time? {
++        nil
++    }
++
++    func destroy(rootView: AnyObject) {}
++
++    var viewCacheIsEmpty: Bool {
++        true
++    }
++}
++
++// MARK: - Display list to layers
++
++extension IrisRender.Scene {
++    /// Replaces the window's layers with ones that draw `list`.
++    // ponytail: rebuilds every layer for each display list; keep layers by item identity once
++    // screens are big enough for this to show in frame times.
++    package func show(_ list: DisplayList) {
++        for layer in root.sublayers {
++            layer.removeFromSuperlayer()
++        }
++        add(list, to: root, at: .zero)
++    }
++
++    /// Items are placed from the origin of the item that holds their list.
++    private func add(_ list: DisplayList, to parent: Layer, at origin: CGPoint) {
++        for item in list.items {
++            let frame = item.frame.offsetBy(dx: origin.x, dy: origin.y)
++            switch item.value {
++            case let .content(content):
++                add(content, in: frame, to: parent)
++            case let .effect(effect, list):
++                add(list, with: effect, in: frame, to: parent)
++            case let .states(states):
++                for (_, list) in states {
++                    add(list, to: parent, at: frame.origin)
++                }
++            case .empty:
++                break
++            }
++        }
++    }
++
++    private func add(_ content: DisplayList.Content, in frame: CGRect, to parent: Layer) {
++        switch content.value {
++        case let .color(color):
++            parent.addSublayer(box(frame, color: color))
++        case let .shape(path, paint, _):
++            // ponytail: rectangles, rounded rectangles and circles in one color; other paths
++            // and paints need path drawing in the render core.
++            if let color = paint.stdoutResolvedColor, let shape = path.irisRoundedRect {
++                let radius = min(shape.cornerSize.width, shape.cornerSize.height)
++                parent.addSublayer(box(shape.rect.offsetBy(dx: frame.minX, dy: frame.minY), color: color, radius: radius))
++            }
++        case let .text(view, _):
++            guard let storage = view.text.storage, storage.length > 0 else {
++                return
++            }
++            let properties = view.text.layoutProperties
++            let layer = Layer(in: self)
++            layer.frame = Rect(frame)
++            layer.setText(storage.string, style: storage.irisTextStyle(
++                lineLimit: properties.lineLimit,
++                alignment: properties.multilineTextAlignment
++            ))
++            parent.addSublayer(layer)
++        case let .flattened(list, offset, _):
++            add(list, to: parent, at: CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y))
++        default:
++            // ponytail: images, shadows, backdrops and platform views come with the render core's
++            // next round (P1-14).
++            break
++        }
++    }
++
++    private func box(_ frame: CGRect, color: Color.Resolved, radius: CGFloat = 0) -> Layer {
++        let layer = Layer(in: self)
++        layer.frame = Rect(frame)
++        layer.backgroundColor = color.irisColor
++        layer.cornerRadius = Float(radius)
++        return layer
++    }
++
++    private func add(_ list: DisplayList, with effect: DisplayList.Effect, in frame: CGRect, to parent: Layer) {
++        let group: Layer
++        switch effect {
++        case let .opacity(opacity):
++            group = Layer(in: self)
++            group.opacity = opacity
++        case let .transform(.affine(transform)):
++            // Display lists transform about the item's origin, the render core about the
++            // layer's center.
++            group = Layer(in: self)
++            let center = CGPoint(x: frame.width / 2, y: frame.height / 2)
++            let translation = center.applying(transform)
++            group.transform = [
++                transform.a, transform.b, transform.c, transform.d,
++                translation.x - center.x, translation.y - center.y,
++            ].map { Float($0) }
++        default:
++            // ponytail: clips, masks, filters and other transforms draw their content as is.
++            add(list, to: parent, at: frame.origin)
++            return
++        }
++        group.frame = Rect(frame)
++        parent.addSublayer(group)
++        add(list, to: group, at: .zero)
++    }
++}
++
++extension Rect {
++    init(_ rect: CGRect) {
++        self.init(x: Float(rect.minX), y: Float(rect.minY), width: Float(rect.width), height: Float(rect.height))
++    }
++}
++
++extension Path {
++    /// The path as a rounded rectangle, if it is one.
++    fileprivate var irisRoundedRect: FixedRoundedRect? {
++        switch storage {
++        case let .rect(rect):
++            FixedRoundedRect(rect)
++        case let .roundedRect(rounded):
++            rounded
++        case let .ellipse(rect) where rect.width == rect.height:
++            FixedRoundedRect(rect, cornerRadius: rect.width / 2, style: .circular)
++        default:
++            nil
++        }
++    }
++}
++
++// MARK: - Text and color
++
++extension NSAttributedString {
++    /// How the render core draws this text. It takes one style per text, so the font and
++    /// color of the first run apply to all of it.
++    func irisTextStyle(lineLimit: Int?, alignment: TextAlignment = .leading) -> IrisRender.TextStyle {
++        let font = length > 0 ? attribute(.kitFont, at: 0, effectiveRange: nil) as? CTFont : nil
++        let color = length > 0 ? attribute(.kitForegroundColor, at: 0, effectiveRange: nil) as? NDColor : nil
++        let textAlignment: IrisRender.TextStyle.Alignment = switch alignment {
++        case .leading: .leading
++        case .center: .center
++        case .trailing: .trailing
++        }
++        return IrisRender.TextStyle(
++            size: Float(font?.pointSize ?? 17),
++            weight: font.map { irisWeight($0.weight) } ?? 400,
++            color: color.map {
++                Color.Resolved(red: Float($0.red), green: Float($0.green), blue: Float($0.blue), opacity: Float($0.alpha))
++            }?.irisColor ?? 0xFF00_0000,
++            alignment: textAlignment,
++            maxLines: UInt32(max(lineLimit ?? 0, 0))
++        )
++    }
++}
++
++/// The CSS weight (100 to 900) closest to a `Font.Weight` value, which is on CoreText's scale.
++private func irisWeight(_ value: CGFloat) -> UInt16 {
++    let weights: [(CGFloat, UInt16)] = [
++        (-0.8, 100), (-0.6, 200), (-0.4, 300), (0, 400), (0.23, 500), (0.3, 600), (0.4, 700), (0.56, 800), (0.62, 900),
++    ]
++    return weights.min { abs($0.0 - value) < abs($1.0 - value) }!.1
++}
++
++extension Color.Resolved {
++    /// 0xAARRGGBB in sRGB, as the render core takes colors.
++    fileprivate var irisColor: UInt32 {
++        func byte(_ value: Float) -> UInt32 {
++            UInt32((min(max(value, 0), 1) * 255).rounded())
++        }
++        return byte(opacity) << 24 | byte(red) << 16 | byte(green) << 8 | byte(blue)
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
+index ec789d8..65d379c 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
+@@ -210,7 +210,7 @@ private struct StdoutColorPaintVisitor: ResolvedPaintVisitor {
+     }
+ }
+ 
+-private extension AnyResolvedPaint {
++extension AnyResolvedPaint {
+     var stdoutResolvedColor: Color.Resolved? {
+         var visitor = StdoutColorPaintVisitor()
+         visit(&visitor)
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListViewRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListViewRenderer.swift
+index 6a448df..c50574c 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListViewRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListViewRenderer.swift
+@@ -137,8 +137,13 @@ extension DisplayList {
+             } else {
+                 switch configuration.renderer {
+                 case .default:
++                    #if canImport(Darwin)
+                     let updater = ViewUpdater(platform: platform, host: host)
+                     renderer = updater
++                    #else
++                    // Iris: the platform renderer on Linux is Iris's render core.
++                    renderer = LayerRenderer(platform: platform, host: host)
++                    #endif
+                     state = .updating
+                 case let .rasterized(options):
+                     let rasterizer = ViewRasterizer(
+diff --git a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+index 1bd1b39..c8fbc36 100644
+--- a/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
++++ b/Sources/OpenSwiftUICore/View/Text/Text/Text+StringDrawingContext.swift
+@@ -254,29 +254,35 @@ extension NSAttributedString {
+                 hasTruncatedRanges: drawingContext.hasTruncatedRanges
+             )
+             #else
+-            // Iris: an estimate until the render core measures text: every character is half
+-            // the font size wide, and lines wrap at the proposed width.
+-            let font = length > 0 ? attribute(.kitFont, at: 0, effectiveRange: nil) as? CTFont : nil
+-            let pointSize = font?.pointSize ?? 17
+-            let lineHeight = (pointSize * 1.2).rounded(.up)
+-            let textWidth = CGFloat(string.count) * pointSize / 2
+-            var lineCount = requestedSize.width > 0 ? max(1, Int((textWidth / requestedSize.width).rounded(.up))) : 1
+-            if let lineLimit {
+-                lineCount = min(lineCount, max(lineLimit, 1))
++            // Iris: measured by the render core with the fonts it draws with. The text on one
++            // line comes first: it gives the line height, and the size when nothing wraps.
++            var style = irisTextStyle(lineLimit: lineLimit)
++            let line = irisScene.measure(string, style: style)
++            let fits = CGFloat(line.width) <= requestedSize.width
++            let size = fits ? line : irisScene.measure(string, style: style, maxWidth: Float(requestedSize.width))
++            let lineHeight = CGFloat(line.height)
++            let height = CGFloat(size.height)
++            let lineCount = lineHeight > 0 ? max(1, Int((height / lineHeight).rounded())) : 1
++            // ponytail: baselines at 80% of the line height, the ascent of Inter and Noto Sans
++            // SC; the render core should report them.
++            let firstBaseline = lineHeight * 0.8
++            var isTruncated = false
++            if !fits, lineLimit != nil {
++                style.maxLines = 0
++                isTruncated = irisScene.measure(string, style: style, maxWidth: Float(requestedSize.width)).height > size.height
+             }
+-            let height = CGFloat(lineCount) * lineHeight
+             return Metrics(
+                 size: CGSize(
+-                    width: widthIsFlexible ? requestedSize.width : min(textWidth, requestedSize.width),
++                    width: widthIsFlexible ? requestedSize.width : CGFloat(size.width),
+                     height: height
+                 ),
+                 scale: 1,
+-                firstBaseline: pointSize,
+-                lastBaseline: height - lineHeight + pointSize,
++                firstBaseline: firstBaseline,
++                lastBaseline: height - lineHeight + firstBaseline,
+                 baselineAdjustment: 0,
+                 requestedWidth: requestedSize.width,
+                 numberOfLines: wantsNumberOfLineFragments ? UInt(lineCount) : nil,
+-                hasTruncatedRanges: textWidth > requestedSize.width * CGFloat(lineCount)
++                hasTruncatedRanges: isTruncated
+             )
+             #endif
+         }
