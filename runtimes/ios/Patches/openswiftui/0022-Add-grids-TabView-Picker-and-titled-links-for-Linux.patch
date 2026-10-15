@@ -1,17 +1,19 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 17:58:44 +0700
-Subject: [PATCH 22/22] Add grids, TabView and Picker for Linux
+Subject: [PATCH 22/28] Add grids, TabView, Picker and titled links for Linux
 
 LazyVGrid and LazyHGrid with fixed, flexible and adaptive GridItems lay
 out as a custom Layout. TabView shows its children's tabItem labels in an
 iPhone tab bar, selects by tag or index, makes a tab when first selected
 and keeps it. Picker draws the segmented, inline and menu styles; a menu
-picker moves to its next option until menus can be presented.
+picker moves to its next option until menus can be presented. Link gets
+its title initializers.
 ---
  .../View/Container/IrisContainers.swift       |   7 +
  .../View/Container/IrisGridsTabsPickers.swift | 496 ++++++++++++++++++
- 2 files changed, 503 insertions(+)
+ .../OpenSwiftUI/View/Control/Link/Link.swift  |  24 +-
+ 3 files changed, 517 insertions(+), 10 deletions(-)
  create mode 100644 Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
 
 diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
@@ -539,5 +541,37 @@ index 0000000..22da299
 +    var irisPickerStyle: IrisPickerStyle {
 +        get { self[IrisPickerStyleKey.self] }
 +        set { self[IrisPickerStyleKey.self] = newValue }
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Control/Link/Link.swift b/Sources/OpenSwiftUI/View/Control/Link/Link.swift
+index 36e0545..af64b4a 100644
+--- a/Sources/OpenSwiftUI/View/Control/Link/Link.swift
++++ b/Sources/OpenSwiftUI/View/Control/Link/Link.swift
+@@ -71,13 +71,17 @@ public struct Link<Label>: View where Label: View {
+     var destination: LinkDestination
+ }
+ 
+-// extension Link where Label == Text {
+-//    public init(_ titleKey: LocalizedStringKey, destination: URL) {
+-//
+-//    }
+-//
+-//    @_disfavoredOverload
+-//    public init<S>(_ title: S, destination: URL) where S : StringProtocol {
+-//
+-//    }
+-// }
++extension Link where Label == Text {
++    /// Creates a control, consisting of a URL and a title key, used to
++    /// navigate to a URL.
++    public init(_ titleKey: LocalizedStringKey, destination: URL) {
++        self.init(destination: destination) { Text(titleKey) }
++    }
++
++    /// Creates a control, consisting of a URL and a title string, used to
++    /// navigate to a URL.
++    @_disfavoredOverload
++    public init<S>(_ title: S, destination: URL) where S: StringProtocol {
++        self.init(destination: destination) { Text(title) }
 +    }
 +}

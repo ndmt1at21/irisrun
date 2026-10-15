@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 12:43:00 +0700
-Subject: [PATCH 11/22] Add DragGesture and ScrollView, and scroll List
+Subject: [PATCH 11/28] Add DragGesture and ScrollView, and scroll List
 
 DragGesture becomes active once a touch moves its minimum distance and fails
 if the touch lifts before that, so taps still reach views underneath. Its

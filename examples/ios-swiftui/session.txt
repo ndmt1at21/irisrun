@@ -11,7 +11,7 @@ tap Increment
 # expect Count: 1
 tap Increment
 # expect Count: 2
-tap Add book
+tap Thêm
 # expect Book 3
 tap Truyện Kiều
 # expect Not a favorite
@@ -19,13 +19,15 @@ tap Truyện Kiều
 tap Add to favorites
 # expect ★ Favorite
 # expect Remove from favorites
-tap ‹ Back
+tap Library
 # expect Count: 2
 # expect ★
 tap Book 3
 # expect Book 3
 # expect Not a favorite
-tap ‹ Back
+# A page pushed by value; dismiss pops it.
+tap Xong
+# expect Count: 2
 # Signing in. The form focuses its first field when it appears. Telex composes Vietnamese
 # before committing it, as the Device UI sends it; the marked text shows as it grows.
 tap Đăng nhập
@@ -48,7 +50,7 @@ type matkhau
 key Enter
 # expect Xin chào, Nguyễn Thị Ánh!
 # expect Đã đăng nhập bằng Telex
-tap ‹ Back
+tap Library
 # Notes in a TextEditor: Return starts a line, the arrows move the caret, and input
 # method corrections delete around it.
 tap Truyện Kiều
@@ -62,7 +64,7 @@ type  bể
 delete 1 0
 type ẻ
 # expect Trăm năm bẻ\ntrong cõi
-tap ‹ Back
+tap Library
 # The list scrolls once it is longer than the screen: Đăng nhập ends below it until a drag.
 tap Add book
 tap Add book
@@ -80,7 +82,7 @@ tap Add book
 drag 195 600 195 300
 tap Đăng nhập
 # expect Email hoặc tên
-tap ‹ Back
+tap Library
 # A Form of controls drawn by SwiftUI on Linux: a switch flips on a tap, a slider follows a
 # drag, a stepper counts.
 drag 195 600 195 300
@@ -92,13 +94,22 @@ drag 140 332 370 332
 # expect Cỡ chữ: 28
 tap 335 378
 # expect Số bản: 2
-# Pickers: a segmented one selects the segment touched; a menu one moves to its next option
-# until menus can be presented.
+# Pickers: a segmented one selects the segment touched; a menu one opens a menu of its
+# options.
 tap Tối
 # expect Chế độ: Tối
 tap Sắp xếp
+# expect Tên
+tap Ngày thêm
 # expect Ngày thêm
-tap ‹ Back
+# A confirmation dialog: its title shows with a message, a destructive action resets.
+tap Khôi phục mặc định
+# expect Khôi phục cài đặt?
+# expect Cancel
+tap Khôi phục
+# expect Cỡ chữ: 17
+# expect Số bản: 1
+tap Library
 # A tab view over a grid of covers: a tab is made when first selected and keeps its state.
 drag 195 600 195 300
 tap Bộ sưu tập
@@ -107,5 +118,42 @@ tap Bộ sưu tập
 tap Thống kê
 # expect 15 cuốn sách
 # expect 1 cuốn yêu thích
+# expect Đọc thêm
 tap Bìa sách
 # expect Book 15
+# A sheet at its medium detent with its own navigation bar; an alert over it; the
+# toolbar button dismisses the sheet, and the list takes taps again.
+tap Library
+tap Giới thiệu
+# expect Một app SwiftUI chạy trên Iris.
+tap Đánh giá
+# expect Cảm ơn!
+# expect Bạn đã đánh giá 5 sao.
+tap OK
+tap Đóng
+tap Thêm
+# expect Book 16
+# Context menus: a long press opens one, in a list as well; a tap outside closes it.
+hold Book 4
+# expect Nhân bản
+tap 195 820
+tap Book 5
+hold Not a favorite
+# expect Yêu thích
+# expect Chia sẻ
+tap Yêu thích
+# expect ★ Favorite
+# Swiping a row reveals its Delete action, from onDelete; the list then has one book less.
+tap Library
+swipe Book 6
+# expect Delete
+tap Delete
+drag 195 600 195 300
+tap Bộ sưu tập
+tap Thống kê
+# expect 15 cuốn sách
+# A ScrollViewReader scrolls a lazy stack to its last book, which a tap then picks.
+tap Tên sách
+tap Về cuối
+tap Book 16
+# expect Đã chọn: Book 16

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 17:58:44 +0700
-Subject: [PATCH 21/22] Fix slicing layout subviews and replacing view list
+Subject: [PATCH 21/28] Fix slicing layout subviews and replacing view list
  children
 
 LayoutSubviews[range] returned every subview instead of the range, so a

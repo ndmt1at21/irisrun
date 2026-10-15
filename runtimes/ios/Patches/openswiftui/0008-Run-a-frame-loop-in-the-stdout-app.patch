@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 07:09:47 +0700
-Subject: [PATCH 08/22] Run a frame loop in the stdout app
+Subject: [PATCH 08/28] Run a frame loop in the stdout app
 
 The host keeps the soonest update the view graph asks for. After each
 command the app renders those updates on a virtual 60 Hz clock until none is

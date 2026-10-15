@@ -1,0 +1,577 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 18:54:08 +0700
+Subject: [PATCH 26/28] Add menus, context menus and long presses on Linux
+
+Menu opens a panel of its items next to its label, below it when there is
+room, each item a row with its icon at the trailing edge; a tap outside
+closes it, and a nested menu opens another panel. contextMenu opens one
+on a long press, in a scroll view too, without tapping the view. A menu
+picker opens a menu of its options with the selected one checked.
+
+LongPressGesture ends once the finger has been down long enough, and
+onLongPressGesture runs its action then. The stdout app gets a hold
+command for it.
+---
+ .../App/App/Stdout/StdoutApp.swift            |   7 +-
+ .../Event/Gesture/LongPressGesture.swift      |  63 +++++
+ .../View/Container/IrisContainers.swift       |   8 +
+ .../View/Container/IrisGridsTabsPickers.swift |  70 +++--
+ .../View/Presentation/IrisMenu.swift          | 257 ++++++++++++++++++
+ .../View/Presentation/IrisPresentation.swift  |  23 +-
+ 6 files changed, 403 insertions(+), 25 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/Event/Gesture/LongPressGesture.swift
+ create mode 100644 Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift
+
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index 89dcdb0..bc9e4d0 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -168,6 +168,7 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+ ///
+ ///     tap <text>                  touches the middle of the first text that reads <text>
+ ///     tap <x> <y>                 touches a point
++///     hold <text> | <x> <y>       touches and holds for 0.6 s, as a long press
+ ///     drag <x1> <y1> <x2> <y2>    moves a finger between two points and holds it before lifting
+ ///     fling <x1> <y1> <x2> <y2>   the same, lifting while moving, so scrolling keeps going
+ ///     type <text>                 commits text from the input method at the caret
+@@ -180,7 +181,7 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+     let argument = parts.count > 1 ? String(parts[1]) : ""
+     let numbers = argument.split(separator: " ").compactMap { Double($0) }
+     switch name {
+-    case "tap":
++    case "tap", "hold":
+         let point: CGPoint
+         if numbers.count == 2 {
+             point = CGPoint(x: numbers[0], y: numbers[1])
+@@ -191,6 +192,10 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+             return
+         }
+         input.touch([.init(id: 0, phase: .began, location: point)])
++        if name == "hold" {
++            // The app's clock moves on while the finger stays down.
++            host.render(interval: 0.6, targetTimestamp: nil)
++        }
+         input.touch([.init(id: 0, phase: .ended, location: point)])
+     case "drag", "fling":
+         guard numbers.count == 4 else {
+diff --git a/Sources/OpenSwiftUI/Event/Gesture/LongPressGesture.swift b/Sources/OpenSwiftUI/Event/Gesture/LongPressGesture.swift
+new file mode 100644
+index 0000000..5c6f74a
+--- /dev/null
++++ b/Sources/OpenSwiftUI/Event/Gesture/LongPressGesture.swift
+@@ -0,0 +1,63 @@
++//
++//  LongPressGesture.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: long presses, made of the gesture parts TapGesture is made of, until upstream has them.
++
++/// A gesture that succeeds when the user performs a long press.
++public struct LongPressGesture: Gesture {
++    /// The minimum duration of the long press that must elapse before the gesture succeeds.
++    public var minimumDuration: Double
++
++    /// The maximum distance that the long press can move before the gesture fails.
++    public var maximumDistance: CGFloat
++
++    /// Creates a long-press gesture with a minimum duration and a maximum distance that the
++    /// interaction can move before the gesture fails.
++    public init(minimumDuration: Double = 0.5, maximumDistance: CGFloat = 10) {
++        self.minimumDuration = minimumDuration
++        self.maximumDistance = maximumDistance
++    }
++
++    /// The value is true while the finger is down, and when the press succeeds: it ends as
++    /// soon as it has lasted long enough, before the finger lifts.
++    public var body: some Gesture<Bool> {
++        EventListener<TappableEvent>()
++            .duration(minimum: minimumDuration)
++            .mapPhase { phase -> GesturePhase<Bool> in
++                switch phase {
++                case let .possible(elapsed): .possible(elapsed.map { _ in true })
++                case .active, .ended: .ended(true)
++                case .failed: .failed
++                }
++            }
++            .gated(by: DistanceGesture(maximumDistance: maximumDistance).coordinateSpace(.global))
++    }
++
++    public typealias Value = Bool
++}
++
++extension View {
++    /// Adds an action to perform when this view recognizes a long press gesture.
++    public func onLongPressGesture(
++        minimumDuration: Double = 0.5,
++        maximumDistance: CGFloat = 10,
++        perform action: @escaping () -> Void,
++        onPressingChanged: ((Bool) -> Void)? = nil
++    ) -> some View {
++        gesture(LongPressGesture(minimumDuration: minimumDuration, maximumDistance: maximumDistance).onEnded { _ in
++            action()
++        })
++        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in
++            onPressingChanged?(true)
++        }.onEnded { _ in
++            onPressingChanged?(false)
++        })
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+index 7965d98..a37497d 100644
+--- a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
++++ b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+@@ -47,6 +47,12 @@ public struct Label<Title, Icon>: View where Title: View, Icon: View {
+                 icon
+                 title
+             }
++        case .menuItem:
++            HStack(spacing: 8) {
++                title
++                Spacer(minLength: 8)
++                icon
++            }
+         }
+     }
+ }
+@@ -113,6 +119,8 @@ enum IrisLabelStyle {
+     case automatic, titleOnly, iconOnly, titleAndIcon
+     /// The icon above the title, in a tab bar.
+     case tabItem
++    /// The title, then the icon at the trailing edge, in a menu.
++    case menuItem
+ }
+ 
+ private struct IrisLabelStyleKey: EnvironmentKey {
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift b/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
+index 22da299..20992ab 100644
+--- a/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
++++ b/Sources/OpenSwiftUI/View/Container/IrisGridsTabsPickers.swift
+@@ -13,7 +13,7 @@ public import OpenSwiftUICore
+ // which comes later, so a menu picker moves to its next option on a tap meanwhile.
+ 
+ /// systemBlue.
+-private let tint = Color(red: 0, green: 122 / 255, blue: 1)
++private let systemBlue = Color(red: 0, green: 122 / 255, blue: 1)
+ /// systemGray.
+ private let inactive = Color(red: 142 / 255, green: 142 / 255, blue: 147 / 255)
+ 
+@@ -261,7 +261,7 @@ private struct TabRoot<SelectionValue>: _VariadicView_UnaryViewRoot where Select
+                     (child[TabItemTrait.self] ?? AnyView(EmptyView()))
+                         .environment(\.irisLabelStyle, .tabItem)
+                         .font(.system(size: 10, weight: .medium))
+-                        .foregroundStyle(index == selected ? tint : inactive)
++                        .foregroundStyle(index == selected ? systemBlue : inactive)
+                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                         .contentShape(Rectangle())
+                         .onTapGesture {
+@@ -373,7 +373,7 @@ private struct PickerRoot<Label, SelectionValue>: _VariadicView_UnaryViewRoot wh
+                             Spacer()
+                             if index == selected {
+                                 Checkmark()
+-                                    .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
++                                    .stroke(systemBlue, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                                     .frame(width: 14, height: 12)
+                             }
+                         }
+@@ -383,25 +383,57 @@ private struct PickerRoot<Label, SelectionValue>: _VariadicView_UnaryViewRoot wh
+                     }
+                 }
+             case .menu:
+-                HStack {
+-                    label
+-                    Spacer(minLength: 8)
+-                    if let selected {
+-                        options[selected].child.foregroundStyle(tint)
++                MenuPickerRow(label: label, options: options, selection: selection)
++            }
++        }
++    }
++}
++
++/// A picker in a menu: the label, the selected option and a chevron; a tap opens a menu of
++/// the options, the selected one checked.
++private struct MenuPickerRow<Label, SelectionValue>: View where Label: View, SelectionValue: Hashable {
++    var label: Label
++    var options: [(child: _VariadicView.Children.Element, tag: SelectionValue)]
++    var selection: Binding<SelectionValue>
++    @State private var isPresented = false
++    @State private var anchor = IrisAnchorBox()
++
++    var body: some View {
++        let selected = options.firstIndex { $0.tag == selection.wrappedValue }
++        HStack {
++            label
++            Spacer(minLength: 8)
++            if let selected {
++                options[selected].child.foregroundStyle(systemBlue)
++            }
++            UpDownChevron()
++                .stroke(systemBlue, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
++                .frame(width: 8, height: 13)
++        }
++        .contentShape(Rectangle())
++        .onTapGesture {
++            isPresented = true
++        }
++        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [anchor] in
++            anchor.rect = $0
++        }
++        .modifier(PresentationModifier(kind: .menu, isPresented: $isPresented) { [anchor, options, selection] in
++            IrisMenuPanel(anchor: anchor.rect, dims: false) {
++                ForEach(Array(options.enumerated()), id: \.element.child.id) { _, option in
++                    Button {
++                        selection.wrappedValue = option.tag
++                    } label: {
++                        HStack(spacing: 8) {
++                            Checkmark()
++                                .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
++                                .frame(width: 14, height: 12)
++                                .opacity(option.tag == selection.wrappedValue ? 1 : 0)
++                            option.child
++                        }
+                     }
+-                    UpDownChevron()
+-                        .stroke(tint, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+-                        .frame(width: 8, height: 13)
+-                }
+-                .contentShape(Rectangle())
+-                .onTapGesture {
+-                    // ponytail: the next option, until menus can be presented.
+-                    guard !options.isEmpty else { return }
+-                    let next = ((selected ?? -1) + 1) % options.count
+-                    selection.wrappedValue = options[next].tag
+                 }
+             }
+-        }
++        })
+     }
+ }
+ 
+diff --git a/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift b/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift
+new file mode 100644
+index 0000000..ee0f80f
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift
+@@ -0,0 +1,257 @@
++//
++//  IrisMenu.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: menus and context menus, presented as iOS draws them: a 250-point panel next to what
++// opened it, below it when there is room, an item a row; a tap outside closes it. Submenus
++// open as another panel. Custom menu styles and context menu previews are not supported.
++
++/// systemRed.
++private let systemRed = Color(red: 1, green: 59 / 255, blue: 48 / 255)
++/// The background of menus: a light material, opaque here.
++private let materialBackground = Color(red: 242 / 255, green: 242 / 255, blue: 242 / 255)
++/// separator.
++private let separator = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.29)
++
++/// Where a view is on the screen, for the panel it opens.
++final class IrisAnchorBox {
++    var rect = CGRect.zero
++}
++
++// MARK: - Menu
++
++/// A control for presenting a menu of actions.
++public struct Menu<Label, Content>: View where Label: View, Content: View {
++    var label: Label
++    var content: Content
++    var primaryAction: (() -> Void)?
++    @State private var isPresented = false
++    @State private var anchor = IrisAnchorBox()
++
++    /// Creates a menu with a custom label.
++    public init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label) {
++        self.content = content()
++        self.label = label()
++    }
++
++    /// Creates a menu with a custom primary action and custom label. Iris: a tap runs the
++    /// primary action; the menu cannot be opened yet.
++    public init(@ViewBuilder content: () -> Content, @ViewBuilder label: () -> Label, primaryAction: @escaping () -> Void) {
++        self.content = content()
++        self.label = label()
++        self.primaryAction = primaryAction
++    }
++
++    public var body: some View {
++        Button {
++            if let primaryAction {
++                primaryAction()
++            } else {
++                isPresented = true
++            }
++        } label: {
++            label
++        }
++        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [anchor] in
++            anchor.rect = $0
++        }
++        .modifier(PresentationModifier(kind: .menu, isPresented: $isPresented) { [anchor, content] in
++            IrisMenuPanel(anchor: anchor.rect, dims: false) { content }
++        })
++    }
++}
++
++extension Menu where Label == Text {
++    /// Creates a menu that generates its label from a localized string key.
++    public init(_ titleKey: LocalizedStringKey, @ViewBuilder content: () -> Content) {
++        self.init(content: content) { Text(titleKey) }
++    }
++
++    /// Creates a menu that generates its label from a string.
++    @_disfavoredOverload
++    public init<S>(_ title: S, @ViewBuilder content: () -> Content) where S: StringProtocol {
++        self.init(content: content) { Text(title) }
++    }
++}
++
++extension Menu where Label == OpenSwiftUI.Label<Text, Image> {
++    /// Creates a menu that generates its label from a localized string key and system image.
++    public init(_ titleKey: LocalizedStringKey, systemImage: String, @ViewBuilder content: () -> Content) {
++        self.init(content: content) { OpenSwiftUI.Label(titleKey, systemImage: systemImage) }
++    }
++
++    /// Creates a menu that generates its label from a string and system image.
++    @_disfavoredOverload
++    public init<S>(_ title: S, systemImage: String, @ViewBuilder content: () -> Content) where S: StringProtocol {
++        self.init(content: content) { OpenSwiftUI.Label(title, systemImage: systemImage) }
++    }
++}
++
++/// A type that applies standard interaction behavior and a custom appearance to all menus
++/// within a view hierarchy. Iris: menus keep the system look.
++public protocol MenuStyle {}
++
++/// The default menu style.
++public struct DefaultMenuStyle: MenuStyle {
++    public init() {}
++}
++
++/// A menu style that doesn't show a border.
++public struct BorderlessButtonMenuStyle: MenuStyle {
++    public init() {}
++}
++
++/// A menu style that displays a button that toggles the display of the menu's contents.
++public struct ButtonMenuStyle: MenuStyle {
++    public init() {}
++}
++
++extension MenuStyle where Self == DefaultMenuStyle {
++    public static var automatic: DefaultMenuStyle { DefaultMenuStyle() }
++}
++
++extension MenuStyle where Self == ButtonMenuStyle {
++    public static var button: ButtonMenuStyle { ButtonMenuStyle() }
++}
++
++extension View {
++    /// Sets the style for menus within this view. Iris: menus keep the system look.
++    public func menuStyle<S>(_ style: S) -> some View where S: MenuStyle {
++        self
++    }
++
++    /// Adds a context menu to a view: a long press shows it.
++    public func contextMenu<MenuItems>(@ViewBuilder menuItems: () -> MenuItems) -> some View where MenuItems: View {
++        modifier(ContextMenuModifier(items: menuItems()))
++    }
++
++    /// Designates a context menu with a custom preview. Iris: without the preview.
++    public func contextMenu<M, P>(@ViewBuilder menuItems: () -> M, @ViewBuilder preview: () -> P) -> some View where M: View, P: View {
++        contextMenu(menuItems: menuItems)
++    }
++}
++
++private struct ContextMenuModifier<Items>: ViewModifier where Items: View {
++    var items: Items
++    @State private var isPresented = false
++    @State private var anchor = IrisAnchorBox()
++
++    func body(content: Content) -> some View {
++        content
++            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [anchor] in
++                anchor.rect = $0
++            }
++            // Before the view's own gestures, so that a long press does not also tap it.
++            .highPriorityGesture(LongPressGesture().onEnded { _ in
++                isPresented = true
++            })
++            .modifier(PresentationModifier(kind: .menu, isPresented: $isPresented) { [anchor, items] in
++                IrisMenuPanel(anchor: anchor.rect, dims: true) { items }
++            })
++    }
++}
++
++// MARK: - Panel
++
++/// A menu panel next to `anchor`, in screen coordinates.
++struct IrisMenuPanel<Content>: View where Content: View {
++    var anchor: CGRect
++    var dims: Bool
++    var content: Content
++    @Environment(\.dismiss) private var dismiss
++
++    init(anchor: CGRect, dims: Bool, @ViewBuilder content: () -> Content) {
++        self.anchor = anchor
++        self.dims = dims
++        self.content = content()
++    }
++
++    var body: some View {
++        GeometryReader { proxy in
++            let below = anchor.midY < proxy.size.height / 2
++            let leading = anchor.midX < proxy.size.width / 2
++            ZStack(alignment: .topLeading) {
++                Color(red: 0, green: 0, blue: 0, opacity: dims ? 0.2 : 0)
++                    .contentShape(Rectangle())
++                    .onTapGesture {
++                        dismiss()
++                    }
++                VStack(spacing: 0) {
++                    if below {
++                        Spacer().frame(height: anchor.maxY + 8)
++                    } else {
++                        Spacer(minLength: 0)
++                    }
++                    HStack(spacing: 0) {
++                        if leading {
++                            Spacer().frame(width: max(anchor.minX, 8))
++                        } else {
++                            Spacer(minLength: 8)
++                        }
++                        panel
++                        if leading {
++                            Spacer(minLength: 8)
++                        } else {
++                            Spacer().frame(width: max(proxy.size.width - anchor.maxX, 8))
++                        }
++                    }
++                    if below {
++                        Spacer(minLength: 0)
++                    } else {
++                        Spacer().frame(height: max(proxy.size.height - anchor.minY + 8, 0))
++                    }
++                }
++            }
++        }
++    }
++
++    private var panel: some View {
++        _VariadicView.Tree(MenuRows()) {
++            content
++        }
++        .buttonStyle(MenuItemButtonStyle(dismiss: dismiss.callAsFunction))
++        .environment(\.irisLabelStyle, .menuItem)
++        .frame(width: 250)
++        .background(RoundedRectangle(cornerRadius: 13).fill(materialBackground))
++        .clipShape(RoundedRectangle(cornerRadius: 13))
++        .shadow(color: Color(red: 0, green: 0, blue: 0, opacity: 0.15), radius: 20, y: 6)
++    }
++}
++
++private struct MenuRows: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        VStack(spacing: 0) {
++            ForEach(children) { child in
++                child
++                if child.id != children.last?.id {
++                    separator.frame(height: 0.33)
++                }
++            }
++        }
++    }
++}
++
++/// An item of a menu: its title on the leading edge and its icon on the trailing one; a
++/// tap closes the menu before running the action.
++private struct MenuItemButtonStyle: PrimitiveButtonStyle {
++    var dismiss: () -> Void
++
++    func makeBody(configuration: Configuration) -> some View {
++        configuration.label
++            .foregroundStyle(configuration.role == .destructive ? systemRed : Color.primary)
++            .lineLimit(1)
++            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++            .padding(.horizontal, 16)
++            .contentShape(Rectangle())
++            .onTapGesture {
++                dismiss()
++                configuration.trigger()
++            }
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+index 71c8b1e..11e28f8 100644
+--- a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
++++ b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+@@ -33,6 +33,7 @@ struct IrisPresentation: Equatable {
+         case fullScreenCover
+         case alert
+         case dialog
++        case menu
+     }
+ 
+     var id: AnyHashable
+@@ -69,9 +70,7 @@ struct IrisPresentationHost: ViewModifier {
+                             presentation.content.view
+                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                 .background(Color.white)
+-                        case .alert:
+-                            presentation.content.view
+-                        case .dialog:
++                        case .alert, .dialog, .menu:
+                             presentation.content.view
+                         }
+                     }
+@@ -84,10 +83,10 @@ struct IrisPresentationHost: ViewModifier {
+ }
+ 
+ /// Identifies a view that presents.
+-private final class PresenterID {}
++final class PresenterID {}
+ 
+ /// Presents `content` while `isPresented` is true.
+-private struct PresentationModifier<Presented>: ViewModifier where Presented: View {
++struct PresentationModifier<Presented>: ViewModifier where Presented: View {
+     var kind: IrisPresentation.Kind
+     @Binding var isPresented: Bool
+     /// What is presented, when it changes with the data presented: a new one is presented
+@@ -99,6 +98,20 @@ private struct PresentationModifier<Presented>: ViewModifier where Presented: Vi
+     @State private var presenter = PresenterID()
+     @Environment(\.self) private var environment
+ 
++    init(
++        kind: IrisPresentation.Kind,
++        isPresented: Binding<Bool>,
++        dataID: AnyHashable? = nil,
++        onDismiss: (() -> Void)? = nil,
++        presented: @escaping () -> Presented
++    ) {
++        self.kind = kind
++        _isPresented = isPresented
++        self.dataID = dataID
++        self.onDismiss = onDismiss
++        self.presented = presented
++    }
++
+     func body(content: Content) -> some View {
+         let presentation: IrisPresentation? = if isPresented {
+             makePresentation()

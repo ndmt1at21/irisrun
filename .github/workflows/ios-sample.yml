@@ -1,0 +1,51 @@
+name: iOS sample
+
+# The iOS sample app on OpenKit, as `irisrun start` builds it: OpenSwiftUI with the Iris
+# patches, the sample compiled against it, then examples/ios-swiftui/session.txt played
+# through the stdout renderer with every `# expect` checked (runtimes/ios/Scripts/check-sample.sh).
+# Building OpenSwiftUI takes a while, so this runs only when what it builds changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - runtimes/ios/**
+      - examples/ios-swiftui/**
+      - crates/render/**
+      - .github/workflows/ios-sample.yml
+  pull_request:
+    paths:
+      - runtimes/ios/**
+      - examples/ios-swiftui/**
+      - crates/render/**
+      - .github/workflows/ios-sample.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-sample:
+    runs-on: ubuntu-24.04
+    container: swift:6.4.1-noble
+    env:
+      # The image has clang but no cc.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+    steps:
+      - uses: actions/checkout@v7
+      - run: >-
+          apt-get update && apt-get install -y --no-install-recommends curl git cmake ninja-build
+          pkg-config python3 libfontconfig1-dev libfreetype-dev libssl-dev uuid-dev
+      - run: curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+      - run: crates/render/fetch-fonts.sh
+      - run: ~/.cargo/bin/cargo build -p irisrun-render --release --locked
+      # The checkouts and the OpenSwiftUI build, kept while the patches and pins stay the same.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/irisrun/p0-05
+          key: openkit-${{ hashFiles('runtimes/ios/Patches/**', 'runtimes/ios/Scripts/fetch-openswiftui.sh') }}
+      - run: runtimes/ios/Scripts/fetch-openswiftui.sh
+      - run: runtimes/ios/Scripts/check-sample.sh

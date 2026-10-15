@@ -1,0 +1,1255 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 18:34:48 +0700
+Subject: [PATCH 23/28] Keep navigation pages, push values and draw toolbars on
+ Linux
+
+NavigationStack keeps every page in the graph and shows the top one, so a
+page keeps its state under the pages pushed over it. It takes a path
+binding (NavigationPath or a collection), pushes values through
+navigationDestination(for:), isPresented and item destinations, and
+NavigationLink(value:). Each page has an iOS bar: the large or inline
+title, a back button titled with the page below, and toolbar items from
+ToolbarItem, ToolbarItemGroup, navigationBarItems or a plain toolbar,
+plus a bottom bar. dismiss pops a pushed page. Links in list rows show a
+chevron, and a Form's background shows behind the bar.
+---
+ .../View/Container/IrisContainers.swift       |  12 +
+ Sources/OpenSwiftUI/View/List/List.swift      |   3 +
+ .../View/Navigation/NavigationStack.swift     | 594 +++++++++++++++++-
+ .../View/Presentation/DismissAction.swift     |  83 +++
+ .../View/Toolbar/IrisToolbar.swift            | 418 ++++++++++++
+ 5 files changed, 1079 insertions(+), 31 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/View/Presentation/DismissAction.swift
+ create mode 100644 Sources/OpenSwiftUI/View/Toolbar/IrisToolbar.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+index 684667d..7965d98 100644
+--- a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
++++ b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+@@ -125,6 +125,12 @@ extension EnvironmentValues {
+         set { self[IrisLabelStyleKey.self] = newValue }
+     }
+ 
++    /// Iris: the view is a row of a list or a form, where a NavigationLink shows a chevron.
++    var irisListRow: Bool {
++        get { self[IrisListRowKey.self] }
++        set { self[IrisListRowKey.self] = newValue }
++    }
++
+     /// Iris: rows sit in the rounded cards of a grouped list, as in a Form.
+     var irisGroupedRows: Bool {
+         get { self[IrisGroupedRowsKey.self] }
+@@ -132,6 +138,10 @@ extension EnvironmentValues {
+     }
+ }
+ 
++private struct IrisListRowKey: EnvironmentKey {
++    static var defaultValue: Bool { false }
++}
++
+ private struct IrisGroupedRowsKey: EnvironmentKey {
+     static var defaultValue: Bool { false }
+ }
+@@ -284,6 +294,8 @@ public struct Form<Content>: View where Content: View {
+         }
+         .background(groupedBackground)
+         .environment(\.irisGroupedRows, true)
++        .environment(\.irisListRow, true)
++        .preference(key: IrisPageBackgroundKey.self, value: groupedBackground)
+     }
+ }
+ 
+diff --git a/Sources/OpenSwiftUI/View/List/List.swift b/Sources/OpenSwiftUI/View/List/List.swift
+index 3c2f8d2..61ad3ba 100644
+--- a/Sources/OpenSwiftUI/View/List/List.swift
++++ b/Sources/OpenSwiftUI/View/List/List.swift
+@@ -16,9 +16,12 @@ public struct List<SelectionValue, Content>: View where SelectionValue: Hashable
+     }
+ 
+     public var body: some View {
++        // Set outside the rows: views in a row do not see what is set on the row. (ponytail:
++        // find out why: Text does.)
+         _VariadicView.Tree(ListRows()) {
+             content
+         }
++        .environment(\.irisListRow, true)
+     }
+ }
+ 
+diff --git a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+index 22fac47..283bb4e 100644
+--- a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
++++ b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+@@ -4,52 +4,452 @@
+ //
+ //  Status: Iris
+ 
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
+ public import OpenSwiftUICore
+ 
+-// Iris: a minimal stack until upstream has navigation. One page shows at a time, the root
+-// or the last destination a NavigationLink pushed, under a bar with a back button and the
+-// page's title. No path binding, toolbar or transitions yet.
+-public struct NavigationStack<Root>: View where Root: View {
+-    @State private var path: [AnyView] = []
+-    @State private var title: Text?
++// Iris: a navigation stack drawn by SwiftUI with iOS's look, until upstream has navigation.
++// Every page stays in the view graph with the top one shown, so a page keeps its state under
++// the pages pushed over it (and is not told it disappeared). A page's bar shows its title,
++// large unless inline, a back button titled with the page below, and its toolbar items.
++// ponytail: no push transition or swipe back, and a view pushed by a NavigationLink keeps the
++// destination the link had when tapped.
++
++/// systemBlue.
++private let systemBlue = Color(red: 0, green: 122 / 255, blue: 1)
++
++// MARK: - NavigationPath
++
++/// A type-erased list of data representing the content of a navigation stack.
++public struct NavigationPath: Equatable {
++    var elements: [AnyHashable]
++
++    init(elements: [AnyHashable]) {
++        self.elements = elements
++    }
++
++    /// Creates a new, empty navigation path.
++    public init() {
++        elements = []
++    }
++
++    /// Creates a new navigation path from the contents of a sequence.
++    public init<S>(_ elements: S) where S: Sequence, S.Element: Hashable {
++        self.elements = elements.map { AnyHashable($0) }
++    }
++
++    /// The number of elements in this path.
++    public var count: Int { elements.count }
++
++    /// A Boolean that indicates whether this path is empty.
++    public var isEmpty: Bool { elements.isEmpty }
++
++    /// Appends a new value to the end of this path.
++    public mutating func append<V>(_ value: V) where V: Hashable {
++        elements.append(AnyHashable(value))
++    }
++
++    /// Removes values from the end of this path.
++    public mutating func removeLast(_ k: Int = 1) {
++        elements.removeLast(k)
++    }
++}
++
++// MARK: - NavigationStack
++
++/// A view that displays a root view and enables you to present additional views over the root
++/// view.
++public struct NavigationStack<Data, Root>: View where Root: View {
++    /// The values of the pages pushed by value, or nil when the stack keeps them itself: a
++    /// binding, not an optional one, so that a change updates the stack.
++    @Binding private var path: [AnyHashable]?
+     private var root: Root
++    @State private var model = IrisNavigationModel()
++
++    /// Creates a navigation stack that manages its own navigation state.
++    public init(@ViewBuilder root: () -> Root) where Data == NavigationPath {
++        _path = .constant(nil)
++        self.root = root()
++    }
+ 
+-    public init(@ViewBuilder root: () -> Root) {
++    /// Creates a navigation stack with heterogeneous navigation state that you can control.
++    public init(path: Binding<NavigationPath>, @ViewBuilder root: () -> Root) where Data == NavigationPath {
++        _path = Binding(
++            get: { path.wrappedValue.elements },
++            set: { path.wrappedValue = NavigationPath(elements: $0 ?? []) }
++        )
++        self.root = root()
++    }
++
++    /// Creates a navigation stack with homogeneous navigation state that you can control.
++    public init(path: Binding<Data>, @ViewBuilder root: () -> Root)
++        where Data: MutableCollection, Data: RandomAccessCollection, Data: RangeReplaceableCollection, Data.Element: Hashable
++    {
++        _path = Binding(
++            get: { path.wrappedValue.map { AnyHashable($0) } },
++            set: { path.wrappedValue = Data(($0 ?? []).compactMap { $0.base as? Data.Element }) }
++        )
+         self.root = root()
+     }
+ 
+     public var body: some View {
++        model.binding = path == nil ? nil : $path
++        let pages = model.pages(values: path ?? model.path)
++        return ZStack {
++            NavigationPage(index: 0, isTop: pages.isEmpty, model: model) {
++                root
++            }
++            ForEach(Array(pages.enumerated()), id: \.element.id) { offset, page in
++                NavigationPage(index: offset + 1, isTop: offset == pages.count - 1, model: model) {
++                    page.view
++                }
++            }
++        }
++        .environment(\.irisNavigator, model)
++        .onPreferenceChange(IrisNavigationDestinationsKey.self) { types in
++            if model.destinationTypes != types {
++                model.destinationTypes = types
++            }
++        }
++    }
++}
++
++// MARK: - Model
++
++/// Iris: the pages of a navigation stack beyond its root. Pages pushed by value come first,
++/// then pages pushed as views.
++final class IrisNavigationModel: Observable {
++    struct Page {
++        var id: AnyHashable
++        var view: AnyView
++    }
++
++    private struct PushedView {
++        var id: Int
++        var view: AnyView
++        var onPop: (() -> Void)?
++    }
++
++    private let registrar = ObservationRegistrar()
++
++    private var _path: [AnyHashable] = []
++    private var _views: [PushedView] = []
++    private var _destinationTypes: Set<ObjectIdentifier> = []
++    private var _titles: [Int: Text] = [:]
++
++    /// The values pushed when the stack has no path binding.
++    var path: [AnyHashable] {
++        get {
++            registrar.access(self, keyPath: \.path)
++            return _path
++        }
++        set {
++            registrar.withMutation(of: self, keyPath: \.path) { _path = newValue }
++        }
++    }
++
++    private var views: [PushedView] {
++        get {
++            registrar.access(self, keyPath: \.views)
++            return _views
++        }
++        set {
++            registrar.withMutation(of: self, keyPath: \.views) { _views = newValue }
++        }
++    }
++
++    /// The types `navigationDestination(for:)` declared a destination for.
++    var destinationTypes: Set<ObjectIdentifier> {
++        get {
++            registrar.access(self, keyPath: \.destinationTypes)
++            return _destinationTypes
++        }
++        set {
++            registrar.withMutation(of: self, keyPath: \.destinationTypes) { _destinationTypes = newValue }
++        }
++    }
++
++    /// The title of each page, for the back button of the page above it.
++    var titles: [Int: Text] {
++        get {
++            registrar.access(self, keyPath: \.titles)
++            return _titles
++        }
++        set {
++            registrar.withMutation(of: self, keyPath: \.titles) { _titles = newValue }
++        }
++    }
++
++    /// The stack's path binding, as of its last update.
++    var binding: Binding<[AnyHashable]?>?
++
++    /// The destinations declared for each type, as of their last update.
++    var destinations: [ObjectIdentifier: (AnyHashable) -> AnyView] = [:]
++
++    private var lastViewID = 0
++
++    private var values: [AnyHashable] {
++        get { binding?.wrappedValue ?? path }
++        set {
++            if let binding {
++                binding.wrappedValue = newValue
++            } else {
++                path = newValue
++            }
++        }
++    }
++
++    func pages(values: [AnyHashable]) -> [Page] {
++        _ = destinationTypes
++        var pages = values.enumerated().map { index, value in
++            // Empty until the destination's declaration has been seen.
++            let destination = destinations[ObjectIdentifier(type(of: value.base))]
++            return Page(id: AnyHashable([AnyHashable(index), value]), view: destination?(value) ?? AnyView(EmptyView()))
++        }
++        pages += views.map { Page(id: AnyHashable($0.id), view: $0.view) }
++        return pages
++    }
++
++    func push(_ value: AnyHashable) {
++        if _views.isEmpty {
++            values.append(value)
++        } else if let destination = destinations[ObjectIdentifier(type(of: value.base))] {
++            push(destination(value))
++        }
++    }
++
++    /// Pushes a view; `onPop` runs when it is popped.
++    @discardableResult
++    func push(_ view: AnyView, onPop: (() -> Void)? = nil) -> Int {
++        lastViewID += 1
++        views.append(PushedView(id: lastViewID, view: view, onPop: onPop))
++        return lastViewID
++    }
++
++    /// Pops the pages above the one at `index`, the root being 0.
++    func pop(to index: Int) {
++        let values = values
++        let keptViews = max(index - values.count, 0)
++        if _views.count > keptViews {
++            let popped = _views[keptViews...]
++            views.removeLast(_views.count - keptViews)
++            for view in popped.reversed() {
++                view.onPop?()
++            }
++        }
++        if values.count > index {
++            self.values = Array(values.prefix(max(index, 0)))
++        }
++    }
++
++    /// Pops the view pushed as `id`, and the pages above it.
++    func pop(view id: Int) {
++        guard let position = _views.firstIndex(where: { $0.id == id }) else { return }
++        pop(to: values.count + position)
++    }
++}
++
++extension EnvironmentValues {
++    /// Iris: the navigation stack around a view.
++    var irisNavigator: IrisNavigationModel? {
++        get { self[IrisNavigatorKey.self] }
++        set { self[IrisNavigatorKey.self] = newValue }
++    }
++}
++
++private struct IrisNavigatorKey: EnvironmentKey {
++    static var defaultValue: IrisNavigationModel? { nil }
++}
++
++// MARK: - Pages
++
++/// A page of a navigation stack with its bars.
++private struct NavigationPage<Content>: View where Content: View {
++    var index: Int
++    var isTop: Bool
++    var model: IrisNavigationModel
++    var content: Content
++
++    @State private var title: NavigationTitleStorage?
++    @State private var items: [_IrisToolbarItem] = []
++    @State private var bars = IrisNavigationBarStorage()
++    @State private var background: Color?
++
++    init(index: Int, isTop: Bool, model: IrisNavigationModel, @ViewBuilder content: () -> Content) {
++        self.index = index
++        self.isTop = isTop
++        self.model = model
++        self.content = content()
++    }
++
++    var body: some View {
++        VStack(spacing: 0) {
++            if bars.isHidden != true {
++                NavigationBar(
++                    title: title?.title,
++                    isLarge: title?.titleMode.map { $0.role != .inline } ?? true,
++                    backTitle: index > 0 && bars.isBackButtonHidden != true ? (model.titles[index - 1] ?? Text(verbatim: "Back")) : nil,
++                    items: items,
++                    pop: { model.pop(to: index - 1) }
++                )
++            }
++            content
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .onPreferenceChange(NavigationTitleKey.self) { storage in
++                    title = storage
++                    if model.titles[index] != storage?.title {
++                        model.titles[index] = storage?.title
++                    }
++                }
++                .onPreferenceChange(IrisToolbarKey.self) { items = $0 }
++                .onPreferenceChange(IrisNavigationBarKey.self) { bars = $0 }
++                .onPreferenceChange(IrisPageBackgroundKey.self) { background = $0 }
++            let bottom = items.filter { $0.placement == .bottom || $0.placement == .status }
++            if !bottom.isEmpty, bars.isBottomBarHidden != true {
++                BottomBar(items: bottom)
++            }
++        }
++        .background(background ?? Color.white)
++        // A page's bars are its own.
++        .transformPreference(NavigationTitleKey.self) { $0 = nil }
++        .transformPreference(IrisToolbarKey.self) { $0 = [] }
++        .transformPreference(IrisNavigationBarKey.self) { $0 = IrisNavigationBarStorage() }
++        .transformPreference(IrisPageBackgroundKey.self) { $0 = nil }
++        .modifier(PageEnvironment(index: index, model: model))
++        // Hit-testing skips a transparent view.
++        .opacity(isTop ? 1 : 0)
++    }
++}
++
++/// What a pushed page's views read: `dismiss` pops it.
++private struct PageEnvironment: ViewModifier {
++    var index: Int
++    var model: IrisNavigationModel
++
++    func body(content: Content) -> some View {
++        if index > 0 {
++            content
++                .environment(\.dismiss, DismissAction(id: AnyHashable([AnyHashable(ObjectIdentifier(model)), AnyHashable(index)])) { [model, index] in
++                    model.pop(to: index - 1)
++                })
++                .environment(\.isPresented, true)
++        } else {
++            content
++        }
++    }
++}
++
++private struct NavigationBar: View {
++    var title: Text?
++    var isLarge: Bool
++    var backTitle: Text?
++    var items: [_IrisToolbarItem]
++    var pop: () -> Void
++
++    var body: some View {
++        let principal = items.last { $0.placement == .principal }
+         VStack(alignment: .leading, spacing: 0) {
+-            HStack {
+-                if !path.isEmpty {
+-                    Button("‹ Back") { path.removeLast() }
++            ZStack {
++                if let principal {
++                    principal.view.view
++                } else if !isLarge, let title {
++                    title.font(.headline).lineLimit(1)
++                }
++                HStack(spacing: 16) {
++                    if let backTitle {
++                        Button(action: pop) {
++                            HStack(spacing: 6) {
++                                BackChevron()
++                                    .stroke(systemBlue, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
++                                    .frame(width: 10, height: 18)
++                                backTitle.lineLimit(1)
++                            }
++                        }
++                        .foregroundStyle(systemBlue)
++                    }
++                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
++                        if item.placement == .leading {
++                            item.view.view.foregroundStyle(systemBlue)
++                        }
++                    }
++                    Spacer(minLength: 0)
++                    ForEach(Array(items.enumerated()), id: \.offset) { _, item in
++                        if item.placement == .trailing {
++                            item.view.view.foregroundStyle(systemBlue)
++                        }
++                    }
+                 }
+-                Spacer()
+             }
+             .frame(height: 44)
+             .padding(.horizontal, 16)
+-            if let title {
+-                title.font(.largeTitle).padding(.horizontal, 16)
++            if isLarge, let title {
++                title
++                    .font(.largeTitle.bold())
++                    .lineLimit(1)
++                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
++                    .padding(.horizontal, 16)
+             }
+-            Group {
+-                if let page = path.last {
+-                    page
+-                } else {
+-                    root
++        }
++    }
++}
++
++private struct BottomBar: View {
++    var items: [_IrisToolbarItem]
++
++    var body: some View {
++        VStack(spacing: 0) {
++            Color(red: 0, green: 0, blue: 0, opacity: 0.3).frame(height: 0.33)
++            HStack(spacing: 16) {
++                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
++                    if item.placement == .status {
++                        Spacer(minLength: 0)
++                        item.view.view
++                        Spacer(minLength: 0)
++                    } else {
++                        item.view.view.foregroundStyle(systemBlue)
++                    }
+                 }
+             }
+-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+-            .onPreferenceChange(NavigationTitleKey.self) { title = $0?.title }
++            .frame(maxWidth: .infinity, minHeight: 49)
++            .padding(.horizontal, 16)
+         }
+-        .environment(\.navigationPath, $path)
++        .background(Color(red: 249 / 255, green: 249 / 255, blue: 249 / 255))
++    }
++}
++
++/// SF Symbols' chevron.backward.
++private struct BackChevron: Shape {
++    func path(in rect: CGRect) -> Path {
++        var path = Path()
++        path.addLines([
++            CGPoint(x: rect.maxX, y: rect.minY),
++            CGPoint(x: rect.minX, y: rect.midY),
++            CGPoint(x: rect.maxX, y: rect.maxY),
++        ])
++        return path
++    }
++}
++
++/// Iris: the color a page shows behind its bars, as a grouped list's background shows behind
++/// a transparent navigation bar.
++struct IrisPageBackgroundKey: PreferenceKey {
++    static var defaultValue: Color? { nil }
++
++    static func reduce(value: inout Color?, nextValue: () -> Color?) {
++        value = value ?? nextValue()
+     }
+ }
+ 
++// MARK: - NavigationLink
++
++/// A view that controls a navigation presentation.
+ public struct NavigationLink<Label, Destination>: View where Label: View, Destination: View {
+-    @Environment(\.navigationPath) private var path
+-    private var destination: Destination
++    @Environment(\.irisNavigator) private var navigator
++    private var destination: Destination?
++    private var value: AnyHashable?
+     private var label: Label
+ 
++    /// Creates a navigation link that presents the destination view.
+     public init(@ViewBuilder destination: () -> Destination, @ViewBuilder label: () -> Label) {
+         self.destination = destination()
+         self.label = label()
+@@ -57,13 +457,45 @@ public struct NavigationLink<Label, Destination>: View where Label: View, Destin
+ 
+     public var body: some View {
+         Button {
+-            path?.wrappedValue.append(AnyView(destination))
++            if let value {
++                navigator?.push(value)
++            } else if let destination {
++                navigator?.push(AnyView(destination))
++            }
+         } label: {
++            NavigationLinkLabel(label: label)
++        }
++    }
++}
++
++/// A link's label, with a chevron in a list row.
++private struct NavigationLinkLabel<Label>: View where Label: View {
++    var label: Label
++    @Environment(\.irisListRow) private var isListRow
++
++    var body: some View {
++        if isListRow {
++            HStack(spacing: 8) {
++                label
++                Spacer(minLength: 0)
++                DisclosureChevron()
++                    .stroke(Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.3), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
++                    .frame(width: 7, height: 12)
++            }
++        } else {
+             label
+         }
+     }
+ }
+ 
++extension NavigationLink where Destination == Never {
++    /// Creates a navigation link that presents the view corresponding to a value.
++    public init<P>(value: P?, @ViewBuilder label: () -> Label) where P: Hashable {
++        self.value = value.map { AnyHashable($0) }
++        self.label = label()
++    }
++}
++
+ extension NavigationLink where Label == Text {
+     public init(_ titleKey: LocalizedStringKey, @ViewBuilder destination: () -> Destination) {
+         self.init(destination: destination) { Text(titleKey) }
+@@ -75,28 +507,128 @@ extension NavigationLink where Label == Text {
+     }
+ }
+ 
++extension NavigationLink where Label == Text, Destination == Never {
++    /// Creates a navigation link that presents the view corresponding to a value, with a text
++    /// label that the link generates from a localized string key.
++    public init<P>(_ titleKey: LocalizedStringKey, value: P?) where P: Hashable {
++        self.init(value: value) { Text(titleKey) }
++    }
++
++    /// Creates a navigation link that presents the view corresponding to a value, with a text
++    /// label that the link generates from a title string.
++    @_disfavoredOverload
++    public init<S, P>(_ title: S, value: P?) where S: StringProtocol, P: Hashable {
++        self.init(value: value) { Text(title) }
++    }
++}
++
++/// The chevron at the end of a list row that navigates.
++private struct DisclosureChevron: Shape {
++    func path(in rect: CGRect) -> Path {
++        var path = Path()
++        path.addLines([
++            CGPoint(x: rect.minX, y: rect.minY),
++            CGPoint(x: rect.maxX, y: rect.midY),
++            CGPoint(x: rect.minX, y: rect.maxY),
++        ])
++        return path
++    }
++}
++
++// MARK: - Destinations
++
+ extension View {
++    /// Associates a destination view with a presented data type for use within a navigation
++    /// stack.
++    public func navigationDestination<D, C>(for data: D.Type, @ViewBuilder destination: @escaping (D) -> C) -> some View where D: Hashable, C: View {
++        modifier(NavigationDestinationModifier(destination: destination))
++    }
++
++    /// Associates a destination view with a binding that can be used to push the view onto a
++    /// navigation stack.
++    public func navigationDestination<V>(isPresented: Binding<Bool>, @ViewBuilder destination: () -> V) -> some View where V: View {
++        modifier(PresentedDestinationModifier(isPresented: isPresented, destination: destination()))
++    }
++
++    /// Associates a destination view with a bound value for use within a navigation stack.
++    public func navigationDestination<D, C>(item: Binding<D?>, @ViewBuilder destination: @escaping (D) -> C) -> some View where D: Hashable, C: View {
++        let isPresented = Binding(
++            get: { item.wrappedValue != nil },
++            set: { if !$0 { item.wrappedValue = nil } }
++        )
++        return modifier(PresentedDestinationModifier(isPresented: isPresented, destination: item.wrappedValue.map(destination)))
++    }
++
++    /// Sets the title in the navigation bar for this view.
+     public func navigationTitle(_ title: Text) -> some View {
+-        preference(key: NavigationTitleKey.self, value: NavigationTitleStorage(title: title))
++        transformPreference(NavigationTitleKey.self) { value in
++            var storage = NavigationTitleStorage(title: title)
++            storage.reduce(onto: value)
++            value = storage
++        }
+     }
+ 
++    /// Sets the title of this view's navigation bar with a localized string.
+     public func navigationTitle(_ titleKey: LocalizedStringKey) -> some View {
+         navigationTitle(Text(titleKey))
+     }
+ 
++    /// Sets the title of this view's navigation bar with a string.
+     @_disfavoredOverload
+     public func navigationTitle<S>(_ title: S) -> some View where S: StringProtocol {
+         navigationTitle(Text(title))
+     }
+ }
+ 
+-private struct NavigationPathKey: EnvironmentKey {
+-    static var defaultValue: Binding<[AnyView]>? { nil }
++struct IrisNavigationDestinationsKey: PreferenceKey {
++    static var defaultValue: Set<ObjectIdentifier> { [] }
++
++    static func reduce(value: inout Set<ObjectIdentifier>, nextValue: () -> Set<ObjectIdentifier>) {
++        value.formUnion(nextValue())
++    }
+ }
+ 
+-extension EnvironmentValues {
+-    fileprivate var navigationPath: Binding<[AnyView]>? {
+-        get { self[NavigationPathKey.self] }
+-        set { self[NavigationPathKey.self] = newValue }
++private struct NavigationDestinationModifier<D, C>: ViewModifier where D: Hashable, C: View {
++    var destination: (D) -> C
++    @Environment(\.irisNavigator) private var navigator
++
++    func body(content: Content) -> some View {
++        // The latest destination; the preference tells the stack when the types change.
++        navigator?.destinations[ObjectIdentifier(D.self)] = { [destination] value in
++            AnyView(destination(value.base as! D))
++        }
++        return content.preference(key: IrisNavigationDestinationsKey.self, value: [ObjectIdentifier(D.self)])
+     }
+ }
++
++/// Pushes `destination` while `isPresented` is true, and sets it false when popped.
++private struct PresentedDestinationModifier<V>: ViewModifier where V: View {
++    @Binding var isPresented: Bool
++    var destination: V?
++    @Environment(\.irisNavigator) private var navigator
++    @State private var pushed = PushedBox()
++
++    func body(content: Content) -> some View {
++        content
++            .onAppear { update(isPresented) }
++            .onChange(of: isPresented) { _, presented in update(presented) }
++    }
++
++    private func update(_ presented: Bool) {
++        guard let navigator else { return }
++        if presented, pushed.id == nil, let destination {
++            let binding = $isPresented
++            pushed.id = navigator.push(AnyView(destination)) { [pushed] in
++                pushed.id = nil
++                binding.wrappedValue = false
++            }
++        } else if !presented, let id = pushed.id {
++            pushed.id = nil
++            navigator.pop(view: id)
++        }
++    }
++}
++
++private final class PushedBox {
++    var id: Int?
++}
+diff --git a/Sources/OpenSwiftUI/View/Presentation/DismissAction.swift b/Sources/OpenSwiftUI/View/Presentation/DismissAction.swift
+new file mode 100644
+index 0000000..ed702ba
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Presentation/DismissAction.swift
+@@ -0,0 +1,83 @@
++//
++//  DismissAction.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import OpenSwiftUICore
++
++// Iris: dismissing what presents a view, until upstream has presentations. A navigation stack
++// sets the action for each page it pushed; sheets and covers set it for their content.
++
++/// An action that dismisses a presentation.
++public struct DismissAction {
++    var action: () -> Void
++
++    /// What the action dismisses. Actions for the same presentation compare equal, so that
++    /// remaking one does not update every view that reads it.
++    var id: AnyHashable?
++
++    init(id: AnyHashable?, action: @escaping () -> Void) {
++        self.id = id
++        self.action = action
++    }
++
++    /// Dismisses the current presentation.
++    public func callAsFunction() {
++        action()
++    }
++}
++
++extension DismissAction: Equatable {
++    public static func == (lhs: DismissAction, rhs: DismissAction) -> Bool {
++        lhs.id != nil && lhs.id == rhs.id
++    }
++}
++
++/// An indication whether a view is currently presented by another view.
++@available(*, deprecated, message: "Use EnvironmentValues.isPresented or EnvironmentValues.dismiss")
++public struct PresentationMode {
++    /// Indicates whether a view is currently presented.
++    public private(set) var isPresented: Bool
++
++    var dismissAction: DismissAction
++
++    /// Dismisses the view if it is currently presented.
++    public mutating func dismiss() {
++        guard isPresented else { return }
++        isPresented = false
++        dismissAction()
++    }
++}
++
++private struct DismissActionKey: EnvironmentKey {
++    static var defaultValue: DismissAction { DismissAction(id: nil) {} }
++}
++
++private struct IsPresentedKey: EnvironmentKey {
++    static var defaultValue: Bool { false }
++}
++
++extension EnvironmentValues {
++    /// An action that dismisses the current presentation: pops a pushed page, or dismisses a
++    /// sheet or a cover. It does nothing elsewhere.
++    public internal(set) var dismiss: DismissAction {
++        get { self[DismissActionKey.self] }
++        set { self[DismissActionKey.self] = newValue }
++    }
++
++    /// A Boolean value that indicates whether the view associated with this environment is
++    /// currently presented.
++    public internal(set) var isPresented: Bool {
++        get { self[IsPresentedKey.self] }
++        set { self[IsPresentedKey.self] = newValue }
++    }
++
++    /// A binding to the current presentation mode of the view associated with this
++    /// environment.
++    @available(*, deprecated, message: "Use isPresented or dismiss")
++    public var presentationMode: Binding<PresentationMode> {
++        let mode = PresentationMode(isPresented: isPresented, dismissAction: dismiss)
++        return Binding(get: { mode }, set: { _ in })
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Toolbar/IrisToolbar.swift b/Sources/OpenSwiftUI/View/Toolbar/IrisToolbar.swift
+new file mode 100644
+index 0000000..0836aa0
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Toolbar/IrisToolbar.swift
+@@ -0,0 +1,418 @@
++//
++//  IrisToolbar.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: toolbars, until upstream has them. A view's toolbar items travel up as a preference to
++// the navigation page around it, which draws them in its bars. Customizable toolbars, menus of
++// secondary items and the keyboard bar are not supported.
++
++// MARK: - ToolbarContent
++
++/// Conforming types represent items that can be placed in various locations in a toolbar.
++@MainActor
++@preconcurrency
++public protocol ToolbarContent {
++    associatedtype Body: ToolbarContent
++
++    /// The composition of content that comprise the toolbar content.
++    @ToolbarContentBuilder
++    var body: Body { get }
++
++    /// Iris: the items of this content, in order.
++    func _irisItems(into items: inout [_IrisToolbarItem])
++}
++
++extension ToolbarContent {
++    public func _irisItems(into items: inout [_IrisToolbarItem]) {
++        body._irisItems(into: &items)
++    }
++}
++
++/// Conforming types represent items that can be placed in various locations in a customizable
++/// toolbar. Iris: customization is not supported.
++public protocol CustomizableToolbarContent: ToolbarContent where Body: CustomizableToolbarContent {}
++
++extension Never: ToolbarContent, CustomizableToolbarContent {}
++
++/// Iris: an item of a toolbar, where it goes and what it shows.
++public struct _IrisToolbarItem {
++    var placement: ToolbarItemPlacement.Role
++    var view: IrisCarriedView
++}
++
++extension _IrisToolbarItem: Equatable {}
++
++/// A model that represents an item which can be placed in the toolbar or navigation bar.
++public struct ToolbarItem<ID, Content>: ToolbarContent where Content: View {
++    var placement: ToolbarItemPlacement
++    var content: Content
++
++    public var body: Never {
++        fatalError("ToolbarItem has no body")
++    }
++
++    public func _irisItems(into items: inout [_IrisToolbarItem]) {
++        items.append(_IrisToolbarItem(placement: placement.role, view: IrisCarriedView(content)))
++    }
++}
++
++extension ToolbarItem where ID == () {
++    /// Creates a toolbar item with the specified placement and content.
++    public init(placement: ToolbarItemPlacement = .automatic, @ViewBuilder content: () -> Content) {
++        self.placement = placement
++        self.content = content()
++    }
++}
++
++extension ToolbarItem: CustomizableToolbarContent where ID == String {
++    /// Creates a toolbar item with the specified placement and content, which allows for user
++    /// customization.
++    public init(id: String, placement: ToolbarItemPlacement = .automatic, @ViewBuilder content: () -> Content) {
++        self.placement = placement
++        self.content = content()
++    }
++}
++
++/// A model that represents a group of `ToolbarItem`s which can be placed in the toolbar or
++/// navigation bar.
++public struct ToolbarItemGroup<Content>: ToolbarContent where Content: View {
++    var placement: ToolbarItemPlacement
++    var content: Content
++
++    /// Creates a toolbar item group with a specified placement and content.
++    public init(placement: ToolbarItemPlacement = .automatic, @ViewBuilder content: () -> Content) {
++        self.placement = placement
++        self.content = content()
++    }
++
++    public var body: Never {
++        fatalError("ToolbarItemGroup has no body")
++    }
++
++    public func _irisItems(into items: inout [_IrisToolbarItem]) {
++        items.append(_IrisToolbarItem(
++            placement: placement.role,
++            view: IrisCarriedView(HStack(spacing: 16) { content })
++        ))
++    }
++}
++
++/// Toolbar content made of several pieces.
++public struct _IrisTupleToolbarContent<each Content: ToolbarContent>: ToolbarContent {
++    var content: (repeat each Content)
++
++    public var body: Never {
++        fatalError("_IrisTupleToolbarContent has no body")
++    }
++
++    public func _irisItems(into items: inout [_IrisToolbarItem]) {
++        for piece in repeat each content {
++            piece._irisItems(into: &items)
++        }
++    }
++}
++
++/// Toolbar content chosen by a condition.
++public enum _IrisConditionalToolbarContent<TrueContent, FalseContent>: ToolbarContent
++    where TrueContent: ToolbarContent, FalseContent: ToolbarContent
++{
++    case first(TrueContent)
++    case second(FalseContent)
++
++    public var body: Never {
++        fatalError("_IrisConditionalToolbarContent has no body")
++    }
++
++    public func _irisItems(into items: inout [_IrisToolbarItem]) {
++        switch self {
++        case let .first(content): content._irisItems(into: &items)
++        case let .second(content): content._irisItems(into: &items)
++        }
++    }
++}
++
++/// Toolbar content with no items.
++public struct _IrisEmptyToolbarContent: ToolbarContent {
++    public var body: Never {
++        fatalError("_IrisEmptyToolbarContent has no body")
++    }
++
++    public func _irisItems(into items: inout [_IrisToolbarItem]) {}
++}
++
++/// Constructs a toolbar item set from multi-expression closures.
++@resultBuilder
++public enum ToolbarContentBuilder {
++    public static func buildExpression<Content>(_ content: Content) -> Content where Content: ToolbarContent {
++        content
++    }
++
++    public static func buildBlock() -> _IrisEmptyToolbarContent {
++        _IrisEmptyToolbarContent()
++    }
++
++    public static func buildBlock<Content>(_ content: Content) -> Content where Content: ToolbarContent {
++        content
++    }
++
++    public static func buildBlock<each Content>(_ content: repeat each Content) -> _IrisTupleToolbarContent<repeat each Content> where repeat each Content: ToolbarContent {
++        _IrisTupleToolbarContent(content: (repeat each content))
++    }
++
++    public static func buildIf<Content>(_ content: Content?) -> _IrisConditionalToolbarContent<Content, _IrisEmptyToolbarContent> where Content: ToolbarContent {
++        content.map { .first($0) } ?? .second(_IrisEmptyToolbarContent())
++    }
++
++    public static func buildEither<TrueContent, FalseContent>(first: TrueContent) -> _IrisConditionalToolbarContent<TrueContent, FalseContent> {
++        .first(first)
++    }
++
++    public static func buildEither<TrueContent, FalseContent>(second: FalseContent) -> _IrisConditionalToolbarContent<TrueContent, FalseContent> {
++        .second(second)
++    }
++
++    public static func buildLimitedAvailability<Content>(_ content: Content) -> Content where Content: ToolbarContent {
++        content
++    }
++}
++
++// MARK: - Placement
++
++/// A structure that defines the placement of a toolbar item.
++public struct ToolbarItemPlacement {
++    enum Role: Equatable {
++        case leading, trailing, principal, bottom, status, keyboard
++    }
++
++    var role: Role
++
++    /// The system places the item automatically: in the trailing edge of the navigation bar
++    /// on iOS.
++    public static var automatic: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// The item represents a change in selection: leading in the navigation bar.
++    public static var navigation: ToolbarItemPlacement { ToolbarItemPlacement(role: .leading) }
++    /// The item represents a primary action.
++    public static var primaryAction: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// The item represents a secondary action. Iris: shown with the primary ones.
++    public static var secondaryAction: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// The item is placed in the principal item section: the center of the navigation bar.
++    public static var principal: ToolbarItemPlacement { ToolbarItemPlacement(role: .principal) }
++    /// The item represents a change in status for the current context.
++    public static var status: ToolbarItemPlacement { ToolbarItemPlacement(role: .status) }
++    /// The item represents a confirmation action for a modal interface.
++    public static var confirmationAction: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// The item represents a cancellation action for a modal interface.
++    public static var cancellationAction: ToolbarItemPlacement { ToolbarItemPlacement(role: .leading) }
++    /// The item represents a destructive action for a modal interface.
++    public static var destructiveAction: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// The item is placed in the keyboard section. Iris: not shown.
++    public static var keyboard: ToolbarItemPlacement { ToolbarItemPlacement(role: .keyboard) }
++    /// Places the item in the leading edge of the top bar.
++    public static var topBarLeading: ToolbarItemPlacement { ToolbarItemPlacement(role: .leading) }
++    /// Places the item in the trailing edge of the top bar.
++    public static var topBarTrailing: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// Places the item in the leading edge of the navigation bar.
++    public static var navigationBarLeading: ToolbarItemPlacement { ToolbarItemPlacement(role: .leading) }
++    /// Places the item in the trailing edge of the navigation bar.
++    public static var navigationBarTrailing: ToolbarItemPlacement { ToolbarItemPlacement(role: .trailing) }
++    /// Places the item in the bottom toolbar.
++    public static var bottomBar: ToolbarItemPlacement { ToolbarItemPlacement(role: .bottom) }
++}
++
++/// The placement of a toolbar.
++public struct ToolbarPlacement: Hashable {
++    enum Role: Hashable {
++        case automatic, navigationBar, bottomBar, tabBar
++    }
++
++    var role: Role
++
++    /// The primary toolbar.
++    public static var automatic: ToolbarPlacement { ToolbarPlacement(role: .automatic) }
++    /// The navigation bar.
++    public static var navigationBar: ToolbarPlacement { ToolbarPlacement(role: .navigationBar) }
++    /// The bottom toolbar.
++    public static var bottomBar: ToolbarPlacement { ToolbarPlacement(role: .bottomBar) }
++    /// The tab bar.
++    public static var tabBar: ToolbarPlacement { ToolbarPlacement(role: .tabBar) }
++}
++
++/// A configuration for a navigation bar that represents a view at the top of a navigation
++/// stack.
++public struct NavigationBarItem: Sendable {
++    /// A style for displaying the title of a navigation bar.
++    public enum TitleDisplayMode: Sendable {
++        case automatic
++        case inline
++        case large
++    }
++}
++
++// MARK: - Preferences
++
++/// Iris: a view a preference carries to the view that shows it, as SwiftUI carries toolbar
++/// items and presentations. Every value made counts as a change, so the view shown is the one
++/// made last.
++struct IrisCarriedView: Equatable {
++    var view: AnyView
++    private var seed: Int
++
++    init(_ view: some View) {
++        self.view = AnyView(view)
++        IrisCarriedView.lastSeed &+= 1
++        seed = IrisCarriedView.lastSeed
++    }
++
++    static func == (lhs: IrisCarriedView, rhs: IrisCarriedView) -> Bool {
++        lhs.seed == rhs.seed
++    }
++
++    nonisolated(unsafe) private static var lastSeed = 0
++}
++
++struct IrisToolbarKey: PreferenceKey {
++    static var defaultValue: [_IrisToolbarItem] { [] }
++
++    static func reduce(value: inout [_IrisToolbarItem], nextValue: () -> [_IrisToolbarItem]) {
++        value += nextValue()
++    }
++}
++
++/// Iris: what a page asks of its bars.
++struct IrisNavigationBarStorage: Equatable {
++    var isHidden: Bool?
++    var isBackButtonHidden: Bool?
++    var isBottomBarHidden: Bool?
++    var isTabBarHidden: Bool?
++
++    mutating func merge(_ other: IrisNavigationBarStorage) {
++        isHidden = isHidden ?? other.isHidden
++        isBackButtonHidden = isBackButtonHidden ?? other.isBackButtonHidden
++        isBottomBarHidden = isBottomBarHidden ?? other.isBottomBarHidden
++        isTabBarHidden = isTabBarHidden ?? other.isTabBarHidden
++    }
++}
++
++struct IrisNavigationBarKey: PreferenceKey {
++    static var defaultValue: IrisNavigationBarStorage { IrisNavigationBarStorage() }
++
++    static func reduce(value: inout IrisNavigationBarStorage, nextValue: () -> IrisNavigationBarStorage) {
++        value.merge(nextValue())
++    }
++}
++
++// MARK: - Modifiers
++
++extension View {
++    /// Populates the toolbar or navigation bar with the specified items.
++    public func toolbar<Content>(@ViewBuilder content: () -> Content) -> some View where Content: View {
++        toolbar {
++            ToolbarItemGroup(placement: .automatic, content: content)
++        }
++    }
++
++    /// Populates the toolbar or navigation bar with the specified items.
++    public func toolbar<Content>(@ToolbarContentBuilder content: () -> Content) -> some View where Content: ToolbarContent {
++        var items: [_IrisToolbarItem] = []
++        content()._irisItems(into: &items)
++        return transformPreference(IrisToolbarKey.self) { value in
++            value = items + value
++        }
++    }
++
++    /// Populates the toolbar or navigation bar with the specified items, allowing for user
++    /// customization. Iris: not customizable.
++    public func toolbar<Content>(id: String, @ToolbarContentBuilder content: () -> Content) -> some View where Content: CustomizableToolbarContent {
++        toolbar(content: content)
++    }
++
++    /// Specifies the visibility of a bar managed by OpenSwiftUI.
++    public func toolbar(_ visibility: Visibility, for bars: ToolbarPlacement...) -> some View {
++        let hidden: Bool? = switch visibility {
++        case .hidden: true
++        case .visible: false
++        default: nil
++        }
++        var storage = IrisNavigationBarStorage()
++        for bar in bars {
++            switch bar.role {
++            case .automatic, .navigationBar: storage.isHidden = hidden
++            case .bottomBar: storage.isBottomBarHidden = hidden
++            case .tabBar: storage.isTabBarHidden = hidden
++            }
++        }
++        return navigationBarStorage(storage)
++    }
++
++    /// Specifies the preferred visibility of backgrounds on a bar. Iris: bars keep their look.
++    public func toolbarBackground(_ visibility: Visibility, for bars: ToolbarPlacement...) -> some View {
++        self
++    }
++
++    /// Specifies the preferred shape style of the background of a bar. Iris: bars keep their
++    /// look.
++    public func toolbarBackground<S>(_ style: S, for bars: ToolbarPlacement...) -> some View where S: ShapeStyle {
++        self
++    }
++
++    /// Specifies the preferred color scheme of a bar. Iris: bars keep their look.
++    public func toolbarColorScheme(_ colorScheme: ColorScheme?, for bars: ToolbarPlacement...) -> some View {
++        self
++    }
++
++    /// Hides the navigation bar back button for the view.
++    public func navigationBarBackButtonHidden(_ hidesBackButton: Bool = true) -> some View {
++        navigationBarStorage(IrisNavigationBarStorage(isBackButtonHidden: hidesBackButton))
++    }
++
++    /// Hides the navigation bar for this view.
++    public func navigationBarHidden(_ hidden: Bool) -> some View {
++        navigationBarStorage(IrisNavigationBarStorage(isHidden: hidden))
++    }
++
++    /// Configures the title display mode for this view.
++    public func navigationBarTitleDisplayMode(_ displayMode: NavigationBarItem.TitleDisplayMode) -> some View {
++        let mode: ToolbarTitleDisplayMode = switch displayMode {
++        case .automatic: .automatic
++        case .inline: .inline
++        case .large: .large
++        }
++        return toolbarTitleDisplayMode(mode)
++    }
++
++    /// Sets the navigation bar items for this view.
++    public func navigationBarItems<L, T>(leading: L, trailing: T) -> some View where L: View, T: View {
++        toolbar {
++            ToolbarItem(placement: .navigationBarLeading) { leading }
++            ToolbarItem(placement: .navigationBarTrailing) { trailing }
++        }
++    }
++
++    /// Sets the navigation bar items for this view.
++    public func navigationBarItems<L>(leading: L) -> some View where L: View {
++        toolbar {
++            ToolbarItem(placement: .navigationBarLeading) { leading }
++        }
++    }
++
++    /// Sets the navigation bar items for this view.
++    public func navigationBarItems<T>(trailing: T) -> some View where T: View {
++        toolbar {
++            ToolbarItem(placement: .navigationBarTrailing) { trailing }
++        }
++    }
++
++    func navigationBarStorage(_ storage: IrisNavigationBarStorage) -> some View {
++        transformPreference(IrisNavigationBarKey.self) { value in
++            var outer = storage
++            outer.merge(value)
++            value = outer
++        }
++    }
++}

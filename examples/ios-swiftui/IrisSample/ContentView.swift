@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @State private var count = 0
     @State private var library = Library()
+    @State private var showsAbout = false
 
     var body: some View {
         NavigationStack {
@@ -15,11 +16,17 @@ struct ContentView: View {
                     }
                 }
                 ForEach(library.books) { book in
-                    NavigationLink {
-                        BookDetailView(book: book)
-                    } label: {
+                    NavigationLink(value: book.id) {
                         BookRow(book: book)
                     }
+                    .contextMenu {
+                        Button("Nhân bản") {
+                            library.duplicate(book)
+                        }
+                    }
+                }
+                .onDelete { offsets in
+                    library.books.remove(atOffsets: offsets)
                 }
                 Button("Add book") {
                     library.addBook()
@@ -35,6 +42,26 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Library")
+            .navigationDestination(for: UUID.self) { id in
+                if let book = library.books.first(where: { $0.id == id }) {
+                    BookDetailView(book: book)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Giới thiệu") {
+                        showsAbout = true
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Thêm") {
+                        library.addBook()
+                    }
+                }
+            }
+            .sheet(isPresented: $showsAbout) {
+                AboutView()
+            }
         }
     }
 }

@@ -23,4 +23,8 @@ final class Library {
     func addBook() {
         books.append(Book(title: "Book \(books.count + 1)"))
     }
+
+    func duplicate(_ book: Book) {
+        books.append(Book(title: "\(book.title) (bản sao)"))
+    }
 }

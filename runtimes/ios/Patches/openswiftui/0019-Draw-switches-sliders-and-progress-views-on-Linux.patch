@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 17:28:49 +0700
-Subject: [PATCH 19/22] Draw switches, sliders and progress views on Linux
+Subject: [PATCH 19/28] Draw switches, sliders and progress views on Linux
 
 Toggle and ProgressView crashed on Linux, where their styles ask UIKit for a
 UISwitch or a UIProgressView, and Slider's system style drew nothing. They

@@ -7,6 +7,7 @@ struct SettingsView: View {
     @State private var copies = 1
     @State private var appearance = Appearance.system
     @State private var sort = "Tên"
+    @State private var confirmsReset = false
 
     enum Appearance: String, CaseIterable {
         case light = "Sáng"
@@ -44,7 +45,20 @@ struct SettingsView: View {
                 Text("Chế độ: \(appearance.rawValue)")
             }
             ProgressView("Đã tải", value: downloaded)
+            Section {
+                Button("Khôi phục mặc định", role: .destructive) {
+                    confirmsReset = true
+                }
+            }
         }
         .navigationTitle("Cài đặt")
+        .confirmationDialog("Khôi phục cài đặt?", isPresented: $confirmsReset) {
+            Button("Khôi phục", role: .destructive) {
+                fontSize = 17
+                copies = 1
+            }
+        } message: {
+            Text("Cỡ chữ và số bản trở về giá trị đầu.")
+        }
     }
 }

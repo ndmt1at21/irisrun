@@ -1,0 +1,587 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 18:47:34 +0700
+Subject: [PATCH 24/28] Make buttons with button styles on Linux
+
+Button draws through the nearest buttonStyle, PrimitiveButtonStyle or
+ButtonStyle, with the label as the style's configuration.label, its role
+and the pressed state while a finger is down. The system styles look as
+on iOS: automatic and borderless in the tint (red when destructive),
+plain, bordered and borderedProminent with the control size and the
+border shape. A disabled button is gray and does nothing. Buttons get the
+role and system image initializers and Button(configuration).
+
+A view alias counts as unknown when its source is not in the count
+inputs, which a graph inputs modifier does not write to: counting it as
+nothing dropped buttons from lists.
+---
+ .../View/Configuration/ViewAlias.swift        |   4 +-
+ .../View/Control/Button/Button.swift          |  71 ++++-
+ .../Button/ButtonStyle/IrisButtonStyles.swift | 258 ++++++++++++++++++
+ .../TODO/BorderlessButtonStyle.swift          | 117 --------
+ .../ButtonStyle/TODO/PlainButtonStyle.swift   |  40 ---
+ .../View/Navigation/NavigationStack.swift     |   2 +-
+ 6 files changed, 330 insertions(+), 162 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift
+ delete mode 100644 Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/BorderlessButtonStyle.swift
+ delete mode 100644 Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/PlainButtonStyle.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Configuration/ViewAlias.swift b/Sources/OpenSwiftUI/View/Configuration/ViewAlias.swift
+index 9f804e3..8d3465b 100644
+--- a/Sources/OpenSwiftUI/View/Configuration/ViewAlias.swift
++++ b/Sources/OpenSwiftUI/View/Configuration/ViewAlias.swift
+@@ -46,8 +46,10 @@ extension ViewAlias {
+ 
+     nonisolated public static func _viewListCount(inputs: _ViewListCountInputs) -> Int? {
+         var inputs = inputs
++        // Iris: count inputs never see a source, as a graph inputs modifier does not write to
++        // them; 0 made lists drop the alias' views. The count is unknown instead.
+         guard let source = inputs.popLast(SourceInput<Self>.self) else {
+-            return 0
++            return nil
+         }
+         return source.formula.viewListCount(source: source, inputs: inputs)
+     }
+diff --git a/Sources/OpenSwiftUI/View/Control/Button/Button.swift b/Sources/OpenSwiftUI/View/Control/Button/Button.swift
+index 8f16459..7d9c51a 100644
+--- a/Sources/OpenSwiftUI/View/Control/Button/Button.swift
++++ b/Sources/OpenSwiftUI/View/Control/Button/Button.swift
+@@ -6,19 +6,41 @@
+ 
+ public import OpenSwiftUICore
+ 
+-// Iris: a tap on the label runs the action. Button styles, roles and the pressed state
+-// come with upstream's ButtonStyle work.
++// Iris: a button made by its style, the nearest `buttonStyle` or iOS's default, with the
++// label given to the style as `configuration.label`.
++
++/// A control that initiates an action.
+ public struct Button<Label>: View where Label: View {
+     private var action: () -> Void
+     private var label: Label
++    private var role: ButtonRole?
++    @Environment(\.isEnabled) private var isEnabled
+ 
++    /// Creates a button that displays a custom label.
+     public init(action: @escaping () -> Void, @ViewBuilder label: () -> Label) {
+         self.action = action
+         self.label = label()
+     }
+ 
++    /// Creates a button with a specified role that displays a custom label.
++    public init(role: ButtonRole?, action: @escaping () -> Void, @ViewBuilder label: () -> Label) {
++        self.role = role
++        self.action = action
++        self.label = label()
++    }
++
+     public var body: some View {
+-        label.onTapGesture(perform: action)
++        let action = action
++        let isEnabled = isEnabled
++        ResolvedButtonStyle(configuration: PrimitiveButtonStyleConfiguration(role: role) {
++            if isEnabled {
++                action()
++            }
++        })
++        .viewAlias(PrimitiveButtonStyleConfiguration.Label.self) {
++            label
++        }
++        ._trait(IrisCancelActionTrait.self, role == .cancel)
+     }
+ }
+ 
+@@ -31,4 +53,47 @@ extension Button where Label == Text {
+     public init<S>(_ title: S, action: @escaping () -> Void) where S: StringProtocol {
+         self.init(action: action) { Text(title) }
+     }
++
++    public init(_ titleKey: LocalizedStringKey, role: ButtonRole?, action: @escaping () -> Void) {
++        self.init(role: role, action: action) { Text(titleKey) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, role: ButtonRole?, action: @escaping () -> Void) where S: StringProtocol {
++        self.init(role: role, action: action) { Text(title) }
++    }
++}
++
++extension Button where Label == OpenSwiftUI.Label<Text, Image> {
++    /// Creates a button with a specified role that generates its label from a localized
++    /// string key and a system image.
++    public init(_ titleKey: LocalizedStringKey, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void) {
++        self.init(role: role, action: action) { OpenSwiftUI.Label(titleKey, systemImage: systemImage) }
++    }
++
++    @_disfavoredOverload
++    public init<S>(_ title: S, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void) where S: StringProtocol {
++        self.init(role: role, action: action) { OpenSwiftUI.Label(title, systemImage: systemImage) }
++    }
++
++    /// Creates a button that generates its label from a localized string key and an image
++    /// resource.
++    public init(_ titleKey: LocalizedStringKey, image name: String, role: ButtonRole? = nil, action: @escaping () -> Void) {
++        self.init(role: role, action: action) { OpenSwiftUI.Label(titleKey, image: name) }
++    }
++}
++
++extension Button where Label == PrimitiveButtonStyleConfiguration.Label {
++    /// Creates a button based on a configuration for a style with a custom appearance and
++    /// custom interaction behavior.
++    public init(_ configuration: PrimitiveButtonStyleConfiguration) {
++        self.init(role: configuration.role, action: configuration.trigger) {
++            configuration.label
++        }
++    }
++}
++
++/// Iris: a button with the cancel role, which a confirmation dialog shows apart.
++struct IrisCancelActionTrait: _ViewTraitKey {
++    static var defaultValue: Bool { false }
+ }
+diff --git a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift b/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift
+new file mode 100644
+index 0000000..119259e
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift
+@@ -0,0 +1,258 @@
++//
++//  IrisButtonStyles.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: button styles, until upstream has them: the style machinery of OpenSwiftUICore (a
++// styleable view finds the nearest style modifier) with iOS's system styles. A ButtonStyle
++// sees the button pressed while a finger is down on it.
++
++/// systemRed, a destructive button's color.
++private let systemRed = Color(red: 1, green: 59 / 255, blue: 48 / 255)
++/// tertiaryLabel, a disabled button's color.
++private let disabledLabel = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.3)
++/// tertiarySystemFill, a disabled bordered button's background.
++private let disabledFill = Color(red: 118 / 255, green: 118 / 255, blue: 128 / 255, opacity: 0.12)
++
++// MARK: - Resolution
++
++/// A button as its style draws it.
++struct ResolvedButtonStyle: StyleableView {
++    var configuration: PrimitiveButtonStyleConfiguration
++
++    static var defaultStyleModifier: PrimitiveButtonStyleModifier<DefaultButtonStyle> {
++        PrimitiveButtonStyleModifier(style: DefaultButtonStyle())
++    }
++}
++
++struct PrimitiveButtonStyleModifier<Style>: StyleModifier where Style: PrimitiveButtonStyle {
++    var style: Style
++
++    init(style: Style) {
++        self.style = style
++    }
++
++    func styleBody(configuration: PrimitiveButtonStyleConfiguration) -> Style.Body {
++        style.makeBody(configuration: configuration)
++    }
++}
++
++extension View {
++    /// Sets the style for buttons within this view to a button style with a custom
++    /// appearance and custom interaction behavior.
++    public func buttonStyle<S>(_ style: S) -> some View where S: PrimitiveButtonStyle {
++        modifier(PrimitiveButtonStyleModifier(style: style))
++    }
++
++    /// Sets the style for buttons within this view to a button style with a custom
++    /// appearance and standard interaction behavior.
++    public func buttonStyle<S>(_ style: S) -> some View where S: ButtonStyle {
++        modifier(PrimitiveButtonStyleModifier(style: IrisButtonStyleBridge(style: style)))
++    }
++
++    /// Sets the border shape for buttons in this view.
++    public func buttonBorderShape(_ shape: ButtonBorderShape) -> some View {
++        environment(\.irisButtonBorderShape, shape)
++    }
++}
++
++/// A ButtonStyle used as a primitive one: the button triggers on a tap and is pressed
++/// while a finger is down.
++struct IrisButtonStyleBridge<Style>: PrimitiveButtonStyle where Style: ButtonStyle {
++    var style: Style
++
++    func makeBody(configuration: Configuration) -> some View {
++        PressableButton(style: style, configuration: configuration)
++    }
++}
++
++private struct PressableButton<Style>: View where Style: ButtonStyle {
++    var style: Style
++    var configuration: PrimitiveButtonStyleConfiguration
++    @GestureState private var isPressed = false
++
++    var body: some View {
++        style.makeBody(configuration: ButtonStyleConfiguration(isPressed: isPressed, role: configuration.role))
++            .viewAlias(ButtonStyleConfiguration.Label.self) {
++                configuration.label
++            }
++            .onTapGesture {
++                configuration.trigger()
++            }
++            .simultaneousGesture(
++                DragGesture(minimumDistance: 0)
++                    .updating($isPressed) { _, pressed, _ in
++                        pressed = true
++                    }
++            )
++    }
++}
++
++// MARK: - System styles
++
++/// The default button style, based on the button's context: on iOS, a borderless button.
++public struct DefaultButtonStyle: PrimitiveButtonStyle {
++    public init() {}
++
++    public func makeBody(configuration: Configuration) -> some View {
++        PressableButton(style: BorderlessBase(), configuration: configuration)
++    }
++}
++
++extension PrimitiveButtonStyle where Self == DefaultButtonStyle {
++    public static var automatic: DefaultButtonStyle { DefaultButtonStyle() }
++}
++
++/// A button style that doesn't style or decorate its content while idle, but may apply a
++/// visual effect to indicate the pressed, focused, or enabled state of the button.
++public struct PlainButtonStyle: PrimitiveButtonStyle {
++    public init() {}
++
++    public func makeBody(configuration: Configuration) -> some View {
++        PressableButton(style: PlainBase(), configuration: configuration)
++    }
++}
++
++extension PrimitiveButtonStyle where Self == PlainButtonStyle {
++    public static var plain: PlainButtonStyle { PlainButtonStyle() }
++}
++
++/// A button style that doesn't apply a border.
++public struct BorderlessButtonStyle: PrimitiveButtonStyle {
++    public init() {}
++
++    public func makeBody(configuration: Configuration) -> some View {
++        PressableButton(style: BorderlessBase(), configuration: configuration)
++    }
++}
++
++extension PrimitiveButtonStyle where Self == BorderlessButtonStyle {
++    public static var borderless: BorderlessButtonStyle { BorderlessButtonStyle() }
++}
++
++/// A button style that applies standard border artwork based on the button's context.
++public struct BorderedButtonStyle: PrimitiveButtonStyle {
++    public init() {}
++
++    public func makeBody(configuration: Configuration) -> some View {
++        PressableButton(style: BorderedBase(isProminent: false), configuration: configuration)
++    }
++}
++
++extension PrimitiveButtonStyle where Self == BorderedButtonStyle {
++    public static var bordered: BorderedButtonStyle { BorderedButtonStyle() }
++}
++
++/// A button style that applies standard border prominent artwork based on the button's
++/// context.
++public struct BorderedProminentButtonStyle: PrimitiveButtonStyle {
++    public init() {}
++
++    public func makeBody(configuration: Configuration) -> some View {
++        PressableButton(style: BorderedBase(isProminent: true), configuration: configuration)
++    }
++}
++
++extension PrimitiveButtonStyle where Self == BorderedProminentButtonStyle {
++    public static var borderedProminent: BorderedProminentButtonStyle { BorderedProminentButtonStyle() }
++}
++
++/// The label in the tint, fading while pressed.
++private struct BorderlessBase: ButtonStyle {
++    @Environment(\.isEnabled) private var isEnabled
++    @Environment(\.tintColor) private var tint
++
++    func makeBody(configuration: Configuration) -> some View {
++        configuration.label
++            .foregroundStyle(isEnabled ? (configuration.role == .destructive ? systemRed : tint ?? Color.accentColor) : disabledLabel)
++            .opacity(configuration.isPressed ? 0.2 : 1)
++    }
++}
++
++private struct PlainBase: ButtonStyle {
++    @Environment(\.isEnabled) private var isEnabled
++
++    func makeBody(configuration: Configuration) -> some View {
++        configuration.label
++            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.5)
++    }
++}
++
++/// The label on a tinted fill: a light one, or a solid one with a white label.
++private struct BorderedBase: ButtonStyle {
++    var isProminent: Bool
++    @Environment(\.isEnabled) private var isEnabled
++    @Environment(\.tintColor) private var tint
++    @Environment(\.controlSize) private var controlSize
++    @Environment(\.irisButtonBorderShape) private var borderShape
++
++    func makeBody(configuration: Configuration) -> some View {
++        let color = configuration.role == .destructive ? systemRed : tint ?? Color.accentColor
++        let (horizontal, vertical, radius): (CGFloat, CGFloat, CGFloat) = switch controlSize {
++        case .mini: (8, 3, 5)
++        case .small: (10, 4, 6)
++        case .regular: (12, 7, 7)
++        case .large, .extraLarge: (20, 14, 12)
++        }
++        configuration.label
++            .foregroundStyle(isEnabled ? (isProminent ? Color.white : color) : disabledLabel)
++            .padding(.horizontal, horizontal)
++            .padding(.vertical, vertical)
++            .background {
++                let fill = isEnabled ? (isProminent ? color : color.opacity(0.15)) : disabledFill
++                switch borderShape.kind {
++                case .capsule:
++                    Capsule().fill(fill)
++                case .circle:
++                    Circle().fill(fill)
++                case let .roundedRectangle(cornerRadius):
++                    RoundedRectangle(cornerRadius: cornerRadius ?? radius).fill(fill)
++                }
++            }
++            .opacity(configuration.isPressed ? 0.7 : 1)
++    }
++}
++
++// MARK: - Border shape
++
++/// A shape used to draw a button's border.
++public struct ButtonBorderShape: Equatable, Sendable {
++    enum Kind: Equatable, Sendable {
++        case capsule
++        case circle
++        case roundedRectangle(CGFloat?)
++    }
++
++    var kind: Kind
++
++    /// A shape that defers to the system to determine an appropriate shape for the given
++    /// context and platform.
++    public static var automatic: ButtonBorderShape { ButtonBorderShape(kind: .roundedRectangle(nil)) }
++    /// A capsule shape.
++    public static var capsule: ButtonBorderShape { ButtonBorderShape(kind: .capsule) }
++    /// A circle shape.
++    public static var circle: ButtonBorderShape { ButtonBorderShape(kind: .circle) }
++    /// A rounded rectangle shape.
++    public static var roundedRectangle: ButtonBorderShape { ButtonBorderShape(kind: .roundedRectangle(nil)) }
++
++    /// A rounded rectangle shape.
++    public static func roundedRectangle(radius: CGFloat) -> ButtonBorderShape {
++        ButtonBorderShape(kind: .roundedRectangle(radius))
++    }
++}
++
++private struct ButtonBorderShapeKey: EnvironmentKey {
++    static var defaultValue: ButtonBorderShape { .automatic }
++}
++
++extension EnvironmentValues {
++    var irisButtonBorderShape: ButtonBorderShape {
++        get { self[ButtonBorderShapeKey.self] }
++        set { self[ButtonBorderShapeKey.self] = newValue }
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/BorderlessButtonStyle.swift b/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/BorderlessButtonStyle.swift
+deleted file mode 100644
+index f99f581..0000000
+--- a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/BorderlessButtonStyle.swift
++++ /dev/null
+@@ -1,117 +0,0 @@
+-//
+-//  BorderlessButtonStyle.swift
+-//  OpenSwiftUI
+-//
+-//  Audited for 3.5.2
+-//  Status: WIP
+-//  ID: 8946ABD13E6925C5D5FDD316D4A45F59
+-
+-@_spi(UIFrameworks) import OpenSwiftUICore
+-
+-@available(tvOS, unavailable)
+-public struct BorderlessButtonStyle: PrimitiveButtonStyle, ButtonStyleConvertible {
+-    /// Creates a borderless button style.
+-    public init() {}
+-
+-    /// Creates a view that represents the body of a button.
+-    ///
+-    /// The system calls this method for each ``Button`` instance in a view
+-    /// hierarchy where this style is the current button style.
+-    ///
+-    /// - Parameter configuration : The properties of the button.
+-    public func makeBody(configuration: Configuration) -> some View {
+-        EmptyView()
+-//        AccessibilityButtonShapeModifier()
+-//            .body(content: Button(configuration))
+-//            .buttonStyle(buttonStyleRepresentation)
+-    }
+-
+-    var buttonStyleRepresentation: some ButtonStyle {
+-        BorderlessButtonStyleBase()
+-    }
+-
+-//    @Environment(\.tintColor)
+-//    private var controlTint: Color?
+-}
+-
+-@available(tvOS, unavailable)
+-extension PrimitiveButtonStyle where Self == BorderlessButtonStyle {
+-    public static var borderless: BorderlessButtonStyle { BorderlessButtonStyle() }
+-}
+-
+-@available(tvOS, unavailable)
+-private struct BorderlessButtonStyleBase: ButtonStyle {
+-    @inline(__always)
+-    fileprivate init() {}
+-
+-//    @Environment(\.keyboardShortcut)
+-//    private var keyboardShortcut: KeyboardShortcut?
+-//
+-    @Environment(\.controlSize)
+-    private var controlSize: ControlSize
+-
+-    @Environment(\.isEnabled)
+-    private var isEnable: Bool
+-
+-    private var isDefault: Bool {
+-        #if os(watchOS)
+-        // TODO
+-        false
+-        #else
+-        let keyboardShortcut = KeyboardShortcut.defaultAction
+-        return keyboardShortcut == .defaultAction
+-        #endif
+-    }
+-
+-    private var defaultFont: Font {
+-        let style: Font.TextStyle = switch controlSize {
+-        case .mini: .subheadline
+-        case .small: .subheadline
+-        case .regular: .body
+-        case .large: .body
+-        case .extraLarge: .body
+-        }
+-//        let font = Font(provider: Font.TextStyleProvider(
+-//            textStyle: style,
+-//            design: .default,
+-//            weight: isDefault ? .regular : .semibold
+-//        ))
+-//        return font
+-        return .body
+-    }
+-
+-//    internal var accessibilityShowButtonShapes: Bool
+-
+-    fileprivate func makeBody(configuration: Configuration) -> some View {
+-        EmptyView()
+-//        HStack {
+-//            configuration.label
+-//        }
+-                .defaultFont(defaultFont)
+-//        .multilineTextAlignment(.center)
+-//        .buttonDefaultRenderingMode()
+-//        .defaultForegroundColor(isEnable ? (configuration.role == .destructive ? .red : .accentColor) : .gray)
+-                .modifier(OpacityButtonHighlightModifier(highlighted: configuration.isPressed))
+-    }
+-}
+-
+-struct OpacityButtonHighlightModifier: ViewModifier {
+-    var highlighted: Bool
+-
+-    @Environment(\.colorScheme)
+-    var colorScheme: ColorScheme
+-
+-    fileprivate var pressedOpacity: Double {
+-        switch colorScheme {
+-        case .light: 0.2
+-        case .dark: 0.4
+-        }
+-    }
+-
+-    func body(content: Content) -> some View {
+-        content
+-        // TODO: Fix visionOS build issue with opacity modifier
+-//            .opacity(highlighted ? pressedOpacity : 1.0)
+-//            .contentShape(Rectangle(), eoFill: false)
+-    }
+-}
+diff --git a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/PlainButtonStyle.swift b/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/PlainButtonStyle.swift
+deleted file mode 100644
+index 1a8649d..0000000
+--- a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/TODO/PlainButtonStyle.swift
++++ /dev/null
+@@ -1,40 +0,0 @@
+-//
+-//  PlainButtonStyle.swift
+-//  OpenSwiftUI
+-//
+-//  Audited for 3.5.2
+-//  Status: Blocked
+-//  ID: AEEE04F3F0E4AB1B61A885733139FBF6
+-
+-public struct PlainButtonStyle: PrimitiveButtonStyle {
+-    public init() {}
+-
+-    public func makeBody(configuration: Configuration) -> some View {
+-//        Button(configuration)
+-//            .buttonStyle(buttonStyleRepresentation)
+-        _openSwiftUIBaseClassAbstractMethod()
+-    }
+-}
+-
+-// MARK: ButtonStyleConvertible
+-
+-extension PlainButtonStyle: ButtonStyleConvertible {
+-    var buttonStyleRepresentation: some ButtonStyle { PlainButtonStyleBase() }
+-}
+-
+-extension PrimitiveButtonStyle where Self == PlainButtonStyle {
+-    public static var plain: PlainButtonStyle { PlainButtonStyle() }
+-}
+-
+-private struct PlainButtonStyleBase: ButtonStyle {
+-    @Environment(\.isEnabled)
+-    private var isEnabled: Bool
+-
+-    fileprivate func makeBody(configuration _: Configuration) -> some View {
+-//        HStack {
+-//            configuration.label
+-//        }
+-//        .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1.0) : 0.5)
+-        _openSwiftUIBaseClassAbstractMethod()
+-    }
+-}
+diff --git a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+index 283bb4e..5abc217 100644
+--- a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
++++ b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+@@ -476,7 +476,7 @@ private struct NavigationLinkLabel<Label>: View where Label: View {
+     var body: some View {
+         if isListRow {
+             HStack(spacing: 8) {
+-                label
++                label.foregroundStyle(Color.primary)
+                 Spacer(minLength: 0)
+                 DisclosureChevron()
+                     .stroke(Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.3), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))

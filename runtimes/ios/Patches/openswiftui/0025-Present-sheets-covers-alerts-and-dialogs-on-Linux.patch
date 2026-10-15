@@ -1,0 +1,851 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 18:47:34 +0700
+Subject: [PATCH 25/28] Present sheets, covers, alerts and dialogs on Linux
+
+A presented view travels up as a preference to a host at the root of the
+scene, which shows it over the app with the environment of the view that
+presented it, and dismiss for it. Sheets rest at their detents, show a
+drag indicator and close on a drag down; fullScreenCover covers the
+screen and popover is a sheet, as on an iPhone. Alerts and confirmation
+dialogs draw as on iOS, a dialog with its cancel button apart; an action
+dismisses them. The Alert and ActionSheet structures work through them.
+---
+ .../App/App/Stdout/StdoutApp.swift            |   2 +
+ .../View/Presentation/IrisPresentation.swift  | 813 ++++++++++++++++++
+ 2 files changed, 815 insertions(+)
+ create mode 100644 Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index 49d67e1..89dcdb0 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -53,7 +53,9 @@ func runStdoutApp(
+             .frame(width: options.surface.width, height: options.surface.height)
+             .rootEnvironment(scenePhase: .active, sceneID: item.id)
+         #else
++        // Iris: what the app's views present shows over the scene.
+         let rootView = item.value.view
++            .modifier(IrisPresentationHost())
+             .frame(width: options.surface.width, height: options.surface.height)
+         #endif
+         let host = StdoutRendererHost(
+diff --git a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+new file mode 100644
+index 0000000..71c8b1e
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+@@ -0,0 +1,813 @@
++//
++//  IrisPresentation.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: sheets, covers, alerts and confirmation dialogs, until upstream has presentations.
++// As in SwiftUI, a presented view travels up as a preference, here to the presentation host
++// at the root of the scene, which shows it over the app with the environment of the view
++// that presented it. ponytail: no appear or disappear animation yet.
++
++/// systemRed.
++private let systemRed = Color(red: 1, green: 59 / 255, blue: 48 / 255)
++/// secondaryLabel.
++private let secondaryLabel = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.6)
++/// separator.
++private let separator = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.29)
++/// The background of alerts and dialogs: a light material, opaque here.
++private let materialBackground = Color(red: 242 / 255, green: 242 / 255, blue: 242 / 255)
++/// The dimming behind a modal presentation.
++private let dimming = Color(red: 0, green: 0, blue: 0, opacity: 0.2)
++
++// MARK: - Presentations
++
++/// Iris: a view presented over the app.
++struct IrisPresentation: Equatable {
++    enum Kind: Equatable {
++        case sheet
++        case fullScreenCover
++        case alert
++        case dialog
++    }
++
++    var id: AnyHashable
++    var kind: Kind
++    var content: IrisCarriedView
++    var dismiss: () -> Void
++
++    static func == (lhs: IrisPresentation, rhs: IrisPresentation) -> Bool {
++        lhs.id == rhs.id && lhs.kind == rhs.kind && lhs.content == rhs.content
++    }
++}
++
++struct IrisPresentationKey: PreferenceKey {
++    static var defaultValue: [IrisPresentation] { [] }
++
++    static func reduce(value: inout [IrisPresentation], nextValue: () -> [IrisPresentation]) {
++        value += nextValue()
++    }
++}
++
++/// Iris: shows what the views of a scene present, each over the app and the ones before.
++struct IrisPresentationHost: ViewModifier {
++    @State private var presentations: [IrisPresentation] = []
++
++    func body(content: Content) -> some View {
++        content
++            .overlay {
++                ZStack {
++                    ForEach(presentations, id: \.id) { presentation in
++                        switch presentation.kind {
++                        case .sheet:
++                            SheetContainer(presentation: presentation)
++                        case .fullScreenCover:
++                            presentation.content.view
++                                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                                .background(Color.white)
++                        case .alert:
++                            presentation.content.view
++                        case .dialog:
++                            presentation.content.view
++                        }
++                    }
++                }
++            }
++            // After the overlay, to see what presented views present in turn.
++            .onPreferenceChange(IrisPresentationKey.self) { presentations = $0 }
++            .transformPreference(IrisPresentationKey.self) { $0 = [] }
++    }
++}
++
++/// Identifies a view that presents.
++private final class PresenterID {}
++
++/// Presents `content` while `isPresented` is true.
++private struct PresentationModifier<Presented>: ViewModifier where Presented: View {
++    var kind: IrisPresentation.Kind
++    @Binding var isPresented: Bool
++    /// What is presented, when it changes with the data presented: a new one is presented
++    /// as a new view.
++    var dataID: AnyHashable?
++    var onDismiss: (() -> Void)?
++    var presented: () -> Presented
++
++    @State private var presenter = PresenterID()
++    @Environment(\.self) private var environment
++
++    func body(content: Content) -> some View {
++        let presentation: IrisPresentation? = if isPresented {
++            makePresentation()
++        } else {
++            nil
++        }
++        content
++            .transformPreference(IrisPresentationKey.self) { value in
++                if let presentation {
++                    value.append(presentation)
++                }
++            }
++            .onChange(of: isPresented) { wasPresented, isPresented in
++                if wasPresented, !isPresented {
++                    onDismiss?()
++                }
++            }
++    }
++
++    private func makePresentation() -> IrisPresentation {
++        let binding = $isPresented
++        let id = AnyHashable([AnyHashable(ObjectIdentifier(presenter)), dataID ?? AnyHashable(0)])
++        let dismiss = DismissAction(id: id) {
++            binding.wrappedValue = false
++        }
++        var environment = environment
++        // What presented the view does not reach into it.
++        environment.irisNavigator = nil
++        environment.irisListRow = false
++        environment.irisGroupedRows = false
++        environment.dismiss = dismiss
++        environment.isPresented = true
++        let view = presented().environment(\.self, environment)
++        return IrisPresentation(id: id, kind: kind, content: IrisCarriedView(view), dismiss: dismiss.callAsFunction)
++    }
++}
++
++extension View {
++    /// Presents a sheet when a binding to a Boolean value that you provide is true.
++    public func sheet<Content>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil, @ViewBuilder content: @escaping () -> Content) -> some View where Content: View {
++        modifier(PresentationModifier(kind: .sheet, isPresented: isPresented, onDismiss: onDismiss, presented: content))
++    }
++
++    /// Presents a sheet using the given item as a data source for the sheet's content.
++    public func sheet<Item, Content>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil, @ViewBuilder content: @escaping (Item) -> Content) -> some View where Item: Identifiable, Content: View {
++        modifier(itemPresentation(.sheet, item: item, onDismiss: onDismiss, content: content))
++    }
++
++    /// Presents a modal view that covers as much of the screen as possible when binding to a
++    /// Boolean value you provide is true.
++    public func fullScreenCover<Content>(isPresented: Binding<Bool>, onDismiss: (() -> Void)? = nil, @ViewBuilder content: @escaping () -> Content) -> some View where Content: View {
++        modifier(PresentationModifier(kind: .fullScreenCover, isPresented: isPresented, onDismiss: onDismiss, presented: content))
++    }
++
++    /// Presents a modal view that covers as much of the screen as possible using the binding
++    /// you provide as a data source for the sheet's content.
++    public func fullScreenCover<Item, Content>(item: Binding<Item?>, onDismiss: (() -> Void)? = nil, @ViewBuilder content: @escaping (Item) -> Content) -> some View where Item: Identifiable, Content: View {
++        modifier(itemPresentation(.fullScreenCover, item: item, onDismiss: onDismiss, content: content))
++    }
++
++    /// Presents a popover when a given condition is true. Iris: a sheet, as on an iPhone.
++    public func popover<Content>(isPresented: Binding<Bool>, attachmentAnchor: PopoverAttachmentAnchor = .point(.center), arrowEdge: Edge? = nil, @ViewBuilder content: @escaping () -> Content) -> some View where Content: View {
++        sheet(isPresented: isPresented, content: content)
++    }
++
++    /// Presents a popover using the given item as a data source for the popover's content.
++    /// Iris: a sheet, as on an iPhone.
++    public func popover<Item, Content>(item: Binding<Item?>, attachmentAnchor: PopoverAttachmentAnchor = .point(.center), arrowEdge: Edge? = nil, @ViewBuilder content: @escaping (Item) -> Content) -> some View where Item: Identifiable, Content: View {
++        sheet(item: item, content: content)
++    }
++
++    fileprivate func itemPresentation<Item, Content>(
++        _ kind: IrisPresentation.Kind,
++        item: Binding<Item?>,
++        onDismiss: (() -> Void)?,
++        content: @escaping (Item) -> Content
++    ) -> PresentationModifier<Content?> where Item: Identifiable, Content: View {
++        let isPresented = Binding(
++            get: { item.wrappedValue != nil },
++            set: { if !$0 { item.wrappedValue = nil } }
++        )
++        let value = item.wrappedValue
++        return PresentationModifier(
++            kind: kind,
++            isPresented: isPresented,
++            dataID: value.map { AnyHashable($0.id) },
++            onDismiss: onDismiss,
++            presented: { value.map(content) }
++        )
++    }
++}
++
++/// An attachment anchor for a popover.
++public enum PopoverAttachmentAnchor {
++    case rect(Anchor<CGRect>.Source)
++    case point(UnitPoint)
++}
++
++// MARK: - Sheets
++
++/// A type that represents a height where a sheet naturally rests.
++public struct PresentationDetent: Hashable, Sendable {
++    enum Kind: Hashable, Sendable {
++        case medium
++        case large
++        case fraction(CGFloat)
++        case height(CGFloat)
++    }
++
++    var kind: Kind
++
++    /// The system detent for a sheet that's approximately half the height of the screen.
++    public static var medium: PresentationDetent { PresentationDetent(kind: .medium) }
++    /// The system detent for a sheet at full height.
++    public static var large: PresentationDetent { PresentationDetent(kind: .large) }
++
++    /// A custom detent with the specified fractional height.
++    public static func fraction(_ fraction: CGFloat) -> PresentationDetent {
++        PresentationDetent(kind: .fraction(fraction))
++    }
++
++    /// A custom detent with the specified height.
++    public static func height(_ height: CGFloat) -> PresentationDetent {
++        PresentationDetent(kind: .height(height))
++    }
++
++    func height(in full: CGFloat) -> CGFloat {
++        switch kind {
++        case .medium: full / 2
++        case .large: full
++        case let .fraction(fraction): full * fraction
++        case let .height(height): min(height, full)
++        }
++    }
++}
++
++/// Iris: what a sheet's content asks of the sheet.
++struct IrisSheetOptions: Equatable {
++    var detents: Set<PresentationDetent>?
++    var selection: Binding<PresentationDetent>?
++    var dragIndicator: Visibility?
++    var interactiveDismissDisabled: Bool?
++    var cornerRadius: CGFloat?
++    var background: Color?
++
++    mutating func merge(_ other: IrisSheetOptions) {
++        detents = detents ?? other.detents
++        selection = selection ?? other.selection
++        dragIndicator = dragIndicator ?? other.dragIndicator
++        interactiveDismissDisabled = interactiveDismissDisabled ?? other.interactiveDismissDisabled
++        cornerRadius = cornerRadius ?? other.cornerRadius
++        background = background ?? other.background
++    }
++
++    static func == (lhs: IrisSheetOptions, rhs: IrisSheetOptions) -> Bool {
++        lhs.detents == rhs.detents
++            && lhs.selection?.wrappedValue == rhs.selection?.wrappedValue
++            && lhs.dragIndicator == rhs.dragIndicator
++            && lhs.interactiveDismissDisabled == rhs.interactiveDismissDisabled
++            && lhs.cornerRadius == rhs.cornerRadius
++            && lhs.background == rhs.background
++    }
++}
++
++struct IrisSheetOptionsKey: PreferenceKey {
++    static var defaultValue: IrisSheetOptions { IrisSheetOptions() }
++
++    static func reduce(value: inout IrisSheetOptions, nextValue: () -> IrisSheetOptions) {
++        value.merge(nextValue())
++    }
++}
++
++extension View {
++    /// Sets the available detents for the enclosing sheet.
++    public func presentationDetents(_ detents: Set<PresentationDetent>) -> some View {
++        sheetOptions(IrisSheetOptions(detents: detents))
++    }
++
++    /// Sets the available detents for the enclosing sheet, giving you programmatic control of
++    /// the currently selected detent.
++    public func presentationDetents(_ detents: Set<PresentationDetent>, selection: Binding<PresentationDetent>) -> some View {
++        sheetOptions(IrisSheetOptions(detents: detents, selection: selection))
++    }
++
++    /// Sets the visibility of the drag indicator on top of a sheet.
++    public func presentationDragIndicator(_ visibility: Visibility) -> some View {
++        sheetOptions(IrisSheetOptions(dragIndicator: visibility))
++    }
++
++    /// Conditionally prevents interactive dismissal of presentations like popovers, sheets,
++    /// and inspectors.
++    public func interactiveDismissDisabled(_ isDisabled: Bool = true) -> some View {
++        sheetOptions(IrisSheetOptions(interactiveDismissDisabled: isDisabled))
++    }
++
++    /// Requests that the presentation have a specific corner radius.
++    public func presentationCornerRadius(_ cornerRadius: CGFloat?) -> some View {
++        sheetOptions(IrisSheetOptions(cornerRadius: cornerRadius))
++    }
++
++    /// Sets the presentation background of the enclosing sheet to a custom view. Iris: a
++    /// color only.
++    public func presentationBackground(_ color: Color) -> some View {
++        sheetOptions(IrisSheetOptions(background: color))
++    }
++
++    /// Controls whether people can interact with the view behind a presentation. Iris: they
++    /// cannot.
++    public func presentationBackgroundInteraction(_ interaction: PresentationBackgroundInteraction) -> some View {
++        self
++    }
++
++    /// Specifies how to adapt a presentation to compact size classes. Iris: no adaptation.
++    public func presentationCompactAdaptation(_ adaptation: PresentationAdaptation) -> some View {
++        self
++    }
++
++    func sheetOptions(_ options: IrisSheetOptions) -> some View {
++        transformPreference(IrisSheetOptionsKey.self) { value in
++            var outer = options
++            outer.merge(value)
++            value = outer
++        }
++    }
++}
++
++/// The kinds of interaction available to views behind a presentation.
++public struct PresentationBackgroundInteraction: Sendable {
++    public static var automatic: PresentationBackgroundInteraction { .init() }
++    public static var enabled: PresentationBackgroundInteraction { .init() }
++    public static var disabled: PresentationBackgroundInteraction { .init() }
++
++    public static func enabled(upThrough detent: PresentationDetent) -> PresentationBackgroundInteraction {
++        .init()
++    }
++}
++
++/// Strategies for adapting a presentation to a different size class.
++public struct PresentationAdaptation: Sendable {
++    public static var automatic: PresentationAdaptation { .init() }
++    public static var none: PresentationAdaptation { .init() }
++    public static var popover: PresentationAdaptation { .init() }
++    public static var sheet: PresentationAdaptation { .init() }
++    public static var fullScreenCover: PresentationAdaptation { .init() }
++}
++
++/// A page sheet: rounded at the top, 10 points below the top of the screen at full height,
++/// resting at its detents; a drag down dismisses it.
++private struct SheetContainer: View {
++    var presentation: IrisPresentation
++    @State private var options = IrisSheetOptions()
++    @State private var detent: PresentationDetent?
++    @GestureState private var drag: CGFloat = 0
++
++    var body: some View {
++        GeometryReader { proxy in
++            let full = max(proxy.size.height - 10, 0)
++            let detents = (options.detents ?? [.large]).sorted { $0.height(in: full) < $1.height(in: full) }
++            let current = options.selection?.wrappedValue ?? detent ?? detents.first ?? .large
++            let height = current.height(in: full)
++            let radius = options.cornerRadius ?? 10
++            let showsIndicator = options.dragIndicator == .visible || (options.dragIndicator != .hidden && detents.count > 1)
++            ZStack(alignment: .bottom) {
++                dimming
++                presentation.content.view
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++                    .onPreferenceChange(IrisSheetOptionsKey.self) { options = $0 }
++                    .padding(.bottom, radius)
++                    .frame(height: height + radius)
++                    .background(options.background ?? Color.white)
++                    .clipShape(RoundedRectangle(cornerRadius: radius))
++                    .overlay(alignment: .top) {
++                        if showsIndicator {
++                            Capsule()
++                                .fill(Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.3))
++                                .frame(width: 36, height: 5)
++                                .padding(.top, 5)
++                        }
++                    }
++                    .offset(y: radius + max(drag, -20))
++                    .gesture(
++                        DragGesture()
++                            .updating($drag) { value, drag, _ in
++                                drag = value.translation.height
++                            }
++                            .onEnded { value in
++                                settle(
++                                    from: height,
++                                    to: height - value.predictedEndTranslation.height,
++                                    detents: detents,
++                                    full: full
++                                )
++                            }
++                    )
++            }
++            .transformPreference(IrisSheetOptionsKey.self) { $0 = IrisSheetOptions() }
++        }
++    }
++
++    /// Rests the sheet at the detent closest to where a drag would take it, or dismisses it
++    /// when that is well below the lowest one.
++    private func settle(from height: CGFloat, to target: CGFloat, detents: [PresentationDetent], full: CGFloat) {
++        guard let lowest = detents.first else { return }
++        if target < lowest.height(in: full) / 2, options.interactiveDismissDisabled != true {
++            presentation.dismiss()
++            return
++        }
++        let closest = detents.min { abs($0.height(in: full) - target) < abs($1.height(in: full) - target) } ?? lowest
++        withAnimation(.spring(duration: 0.4)) {
++            if let selection = options.selection {
++                selection.wrappedValue = closest
++            } else {
++                detent = closest
++            }
++        }
++    }
++}
++
++// MARK: - Alerts and dialogs
++
++/// The look of a button in an alert or a dialog: its role picks the color and weight, and
++/// a tap dismisses the presentation before running the action.
++private struct ModalActionButtonStyle: PrimitiveButtonStyle {
++    var dismiss: () -> Void
++    var height: CGFloat
++    var font: Font
++    var showsCancel: Bool?
++
++    func makeBody(configuration: Configuration) -> some View {
++        let isCancel = configuration.role == .cancel
++        if showsCancel.map({ $0 == isCancel }) ?? true {
++            VStack(spacing: 0) {
++                separator.frame(height: 0.33)
++                configuration.label
++                    .font(isCancel ? font.weight(.semibold) : font)
++                    .foregroundStyle(configuration.role == .destructive ? systemRed : Color.accentColor)
++                    .lineLimit(1)
++                    .frame(maxWidth: .infinity, minHeight: height)
++                    .contentShape(Rectangle())
++                    .onTapGesture {
++                        dismiss()
++                        configuration.trigger()
++                    }
++            }
++        }
++    }
++}
++
++/// An alert: a title, a message and buttons in a 270-point card in the middle of the
++/// screen, two buttons side by side.
++private struct AlertView<Actions, Message>: View where Actions: View, Message: View {
++    var title: Text
++    var actions: Actions
++    var message: Message
++    var dismiss: () -> Void
++
++    var body: some View {
++        ZStack {
++            dimming
++            VStack(spacing: 0) {
++                VStack(spacing: 4) {
++                    title
++                        .font(.headline)
++                    message
++                        .font(.footnote)
++                }
++                .multilineTextAlignment(.center)
++                .padding(.horizontal, 16)
++                .padding(.top, 19)
++                .padding(.bottom, 17)
++                // The style outside the rows, for the buttons in them to see it.
++                _VariadicView.Tree(AlertActions()) {
++                    actions
++                }
++                .buttonStyle(ModalActionButtonStyle(dismiss: dismiss, height: 44, font: .body))
++            }
++            .frame(width: 270)
++            .background(RoundedRectangle(cornerRadius: 14).fill(materialBackground))
++        }
++    }
++}
++
++private struct AlertActions: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        if children.isEmpty {
++            Button("OK") {}
++        } else if children.count == 2 {
++            HStack(spacing: 0) {
++                children[0]
++                separator.frame(width: 0.33, height: 44.33)
++                children[1]
++            }
++        } else {
++            VStack(spacing: 0) {
++                children
++            }
++        }
++    }
++}
++
++/// A confirmation dialog: an action sheet at the bottom of the screen, its cancel button
++/// apart below the others. A tap outside cancels it.
++private struct DialogView<Actions, Message>: View where Actions: View, Message: View {
++    var title: Text?
++    var actions: Actions
++    var message: Message
++    var dismiss: () -> Void
++
++    var body: some View {
++        ZStack(alignment: .bottom) {
++            dimming
++                .onTapGesture(perform: dismiss)
++            VStack(spacing: 8) {
++                VStack(spacing: 0) {
++                    if let title {
++                        VStack(spacing: 4) {
++                            title
++                                .font(.footnote.weight(.semibold))
++                            message
++                                .font(.footnote)
++                        }
++                        .foregroundStyle(secondaryLabel)
++                        .multilineTextAlignment(.center)
++                        .padding(.horizontal, 16)
++                        .padding(.vertical, 14)
++                    }
++                    actions
++                        .buttonStyle(ModalActionButtonStyle(dismiss: dismiss, height: 57, font: .title3, showsCancel: false))
++                }
++                .background(RoundedRectangle(cornerRadius: 14).fill(materialBackground))
++                _VariadicView.Tree(DialogCancel()) {
++                    actions
++                }
++                .buttonStyle(ModalActionButtonStyle(dismiss: dismiss, height: 57, font: .title3, showsCancel: true))
++                .background(RoundedRectangle(cornerRadius: 14).fill(Color.white))
++                .clipShape(RoundedRectangle(cornerRadius: 14))
++            }
++            .padding(8)
++        }
++    }
++}
++
++/// The cancel button of a dialog: the one given, or one the system adds.
++private struct DialogCancel: _VariadicView_UnaryViewRoot {
++    func body(children: _VariadicView.Children) -> some View {
++        if children.contains(where: { $0[IrisCancelActionTrait.self] }) {
++            VStack(spacing: 0) {
++                children
++            }
++        } else {
++            Button("Cancel", role: .cancel) {}
++        }
++    }
++}
++
++
++extension View {
++    /// Presents an alert when a given condition is true, using a localized string key for
++    /// the title.
++    public func alert<A>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, @ViewBuilder actions: () -> A) -> some View where A: View {
++        alert(Text(titleKey), isPresented: isPresented, actions: actions) { EmptyView() }
++    }
++
++    /// Presents an alert when a given condition is true, using a string variable as a title.
++    @_disfavoredOverload
++    public func alert<S, A>(_ title: S, isPresented: Binding<Bool>, @ViewBuilder actions: () -> A) -> some View where S: StringProtocol, A: View {
++        alert(Text(title), isPresented: isPresented, actions: actions) { EmptyView() }
++    }
++
++    /// Presents an alert when a given condition is true, using a text view for the title.
++    public func alert<A>(_ title: Text, isPresented: Binding<Bool>, @ViewBuilder actions: () -> A) -> some View where A: View {
++        alert(title, isPresented: isPresented, actions: actions) { EmptyView() }
++    }
++
++    /// Presents an alert with a message when a given condition is true, using a localized
++    /// string key for a title.
++    public func alert<A, M>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M) -> some View where A: View, M: View {
++        alert(Text(titleKey), isPresented: isPresented, actions: actions, message: message)
++    }
++
++    /// Presents an alert with a message when a given condition is true, using a string
++    /// variable as a title.
++    @_disfavoredOverload
++    public func alert<S, A, M>(_ title: S, isPresented: Binding<Bool>, @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M) -> some View where S: StringProtocol, A: View, M: View {
++        alert(Text(title), isPresented: isPresented, actions: actions, message: message)
++    }
++
++    /// Presents an alert with a message when a given condition is true using a text view as
++    /// a title.
++    public func alert<A, M>(_ title: Text, isPresented: Binding<Bool>, @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M) -> some View where A: View, M: View {
++        let actions = actions()
++        let message = message()
++        let binding = isPresented
++        return modifier(PresentationModifier(kind: .alert, isPresented: isPresented, onDismiss: nil) {
++            AlertView(title: title, actions: actions, message: message) {
++                binding.wrappedValue = false
++            }
++        })
++    }
++
++    /// Presents an alert using the given data to produce the alert's content and a
++    /// localized string key for a title.
++    public func alert<A, M, T>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, presenting data: T?, @ViewBuilder actions: (T) -> A, @ViewBuilder message: (T) -> M) -> some View where A: View, M: View {
++        alert(Text(titleKey), isPresented: isPresented, presenting: data, actions: actions, message: message)
++    }
++
++    /// Presents an alert using the given data to produce the alert's content and a text
++    /// view as a title.
++    public func alert<A, M, T>(_ title: Text, isPresented: Binding<Bool>, presenting data: T?, @ViewBuilder actions: (T) -> A, @ViewBuilder message: (T) -> M) -> some View where A: View, M: View {
++        let presented = Binding(
++            get: { isPresented.wrappedValue && data != nil },
++            set: { isPresented.wrappedValue = $0 }
++        )
++        return alert(title, isPresented: presented) {
++            if let data { actions(data) }
++        } message: {
++            if let data { message(data) }
++        }
++    }
++
++    /// Presents an alert using the given data to produce the alert's content and a
++    /// localized string key for a title.
++    public func alert<A, T>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, presenting data: T?, @ViewBuilder actions: (T) -> A) -> some View where A: View {
++        alert(Text(titleKey), isPresented: isPresented, presenting: data, actions: actions) { _ in EmptyView() }
++    }
++
++    /// Presents a confirmation dialog when a given condition is true, using a localized
++    /// string key for the title.
++    public func confirmationDialog<A>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, @ViewBuilder actions: () -> A) -> some View where A: View {
++        confirmationDialog(Text(titleKey), isPresented: isPresented, titleVisibility: titleVisibility, actions: actions) { EmptyView() }
++    }
++
++    /// Presents a confirmation dialog when a given condition is true, using a string
++    /// variable for the title.
++    @_disfavoredOverload
++    public func confirmationDialog<S, A>(_ title: S, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, @ViewBuilder actions: () -> A) -> some View where S: StringProtocol, A: View {
++        confirmationDialog(Text(title), isPresented: isPresented, titleVisibility: titleVisibility, actions: actions) { EmptyView() }
++    }
++
++    /// Presents a confirmation dialog when a given condition is true, using a text view for
++    /// the title.
++    public func confirmationDialog<A>(_ title: Text, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, @ViewBuilder actions: () -> A) -> some View where A: View {
++        confirmationDialog(title, isPresented: isPresented, titleVisibility: titleVisibility, actions: actions) { EmptyView() }
++    }
++
++    /// Presents a confirmation dialog with a message when a given condition is true, using
++    /// a localized string key for the message.
++    public func confirmationDialog<A, M>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M) -> some View where A: View, M: View {
++        confirmationDialog(Text(titleKey), isPresented: isPresented, titleVisibility: titleVisibility, actions: actions, message: message)
++    }
++
++    /// Presents a confirmation dialog with a message when a given condition is true, using
++    /// a string variable for the title.
++    @_disfavoredOverload
++    public func confirmationDialog<S, A, M>(_ title: S, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M) -> some View where S: StringProtocol, A: View, M: View {
++        confirmationDialog(Text(title), isPresented: isPresented, titleVisibility: titleVisibility, actions: actions, message: message)
++    }
++
++    /// Presents a confirmation dialog with a message when a given condition is true, using
++    /// a text view for the title. On an iPhone, the title shows when asked or with a message.
++    public func confirmationDialog<A, M>(_ title: Text, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, @ViewBuilder actions: () -> A, @ViewBuilder message: () -> M) -> some View where A: View, M: View {
++        let actions = actions()
++        let message = message()
++        let showsTitle = titleVisibility == .visible || (titleVisibility == .automatic && !(message is EmptyView))
++        let binding = isPresented
++        return modifier(PresentationModifier(kind: .dialog, isPresented: isPresented, onDismiss: nil) {
++            DialogView(title: showsTitle ? title : nil, actions: actions, message: message) {
++                binding.wrappedValue = false
++            }
++        })
++    }
++
++    /// Presents a confirmation dialog using data to produce the dialog's content and a
++    /// localized string key for the title.
++    public func confirmationDialog<A, M, T>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, presenting data: T?, @ViewBuilder actions: (T) -> A, @ViewBuilder message: (T) -> M) -> some View where A: View, M: View {
++        let presented = Binding(
++            get: { isPresented.wrappedValue && data != nil },
++            set: { isPresented.wrappedValue = $0 }
++        )
++        return confirmationDialog(Text(titleKey), isPresented: presented, titleVisibility: titleVisibility) {
++            if let data { actions(data) }
++        } message: {
++            if let data { message(data) }
++        }
++    }
++
++    /// Presents a confirmation dialog using data to produce the dialog's content and a
++    /// localized string key for the title.
++    public func confirmationDialog<A, T>(_ titleKey: LocalizedStringKey, isPresented: Binding<Bool>, titleVisibility: Visibility = .automatic, presenting data: T?, @ViewBuilder actions: (T) -> A) -> some View where A: View {
++        confirmationDialog(titleKey, isPresented: isPresented, titleVisibility: titleVisibility, presenting: data, actions: actions) { _ in EmptyView() }
++    }
++}
++
++// MARK: - Alert and ActionSheet
++
++/// A representation of an alert presentation.
++public struct Alert {
++    var title: Text
++    var message: Text?
++    var buttons: [Button]
++
++    /// Creates an alert with one button.
++    public init(title: Text, message: Text? = nil, dismissButton: Button? = nil) {
++        self.title = title
++        self.message = message
++        buttons = dismissButton.map { [$0] } ?? []
++    }
++
++    /// Creates an alert with two buttons.
++    public init(title: Text, message: Text? = nil, primaryButton: Button, secondaryButton: Button) {
++        self.title = title
++        self.message = message
++        buttons = [primaryButton, secondaryButton]
++    }
++
++    /// A button representing an operation of an alert presentation.
++    public struct Button {
++        var label: Text
++        var role: ButtonRole?
++        var action: (() -> Void)?
++
++        /// Creates an alert button with the default style.
++        public static func `default`(_ label: Text, action: (() -> Void)? = {}) -> Button {
++            Button(label: label, role: nil, action: action)
++        }
++
++        /// Creates an alert button that indicates cancellation, with a custom label.
++        public static func cancel(_ label: Text, action: (() -> Void)? = {}) -> Button {
++            Button(label: label, role: .cancel, action: action)
++        }
++
++        /// Creates an alert button that indicates cancellation, with a system-provided label.
++        public static func cancel(_ action: (() -> Void)? = {}) -> Button {
++            Button(label: Text(verbatim: "Cancel"), role: .cancel, action: action)
++        }
++
++        /// Creates an alert button with a style that indicates a destructive action.
++        public static func destructive(_ label: Text, action: (() -> Void)? = {}) -> Button {
++            Button(label: label, role: .destructive, action: action)
++        }
++    }
++
++    var actions: some View {
++        ForEach(Array(buttons.enumerated()), id: \.offset) { _, button in
++            OpenSwiftUI.Button(role: button.role, action: { button.action?() }) {
++                button.label
++            }
++        }
++    }
++}
++
++/// A representation of an action sheet presentation.
++public struct ActionSheet {
++    var title: Text
++    var message: Text?
++    var buttons: [Alert.Button]
++
++    /// Creates an action sheet with the provided buttons.
++    public init(title: Text, message: Text? = nil, buttons: [Alert.Button] = [.cancel()]) {
++        self.title = title
++        self.message = message
++        self.buttons = buttons
++    }
++
++    public typealias Button = Alert.Button
++}
++
++extension View {
++    /// Presents an alert to the user.
++    public func alert(isPresented: Binding<Bool>, content: () -> Alert) -> some View {
++        let alert = content()
++        return self.alert(alert.title, isPresented: isPresented) {
++            alert.actions
++        } message: {
++            alert.message
++        }
++    }
++
++    /// Presents an alert to the user, using an item as the data source.
++    public func alert<Item>(item: Binding<Item?>, content: (Item) -> Alert) -> some View where Item: Identifiable {
++        let alert = item.wrappedValue.map(content)
++        let isPresented = Binding(
++            get: { item.wrappedValue != nil },
++            set: { if !$0 { item.wrappedValue = nil } }
++        )
++        return self.alert(alert?.title ?? Text(verbatim: ""), isPresented: isPresented) {
++            alert?.actions
++        } message: {
++            alert?.message
++        }
++    }
++
++    /// Presents an action sheet when a given condition is true.
++    public func actionSheet(isPresented: Binding<Bool>, content: () -> ActionSheet) -> some View {
++        let sheet = content()
++        let alert = Alert(title: sheet.title, message: sheet.message, dismissButton: nil)
++        let actions = Alert(title: sheet.title, message: nil, buttons: sheet.buttons).actions
++        return confirmationDialog(alert.title, isPresented: isPresented, titleVisibility: .visible) {
++            actions
++        } message: {
++            alert.message
++        }
++    }
++}
++
++extension Alert {
++    fileprivate init(title: Text, message: Text?, buttons: [Button]) {
++        self.title = title
++        self.message = message
++        self.buttons = buttons
++    }
++}

@@ -1,0 +1,322 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 19:23:36 +0700
+Subject: [PATCH 28/28] Scroll to views with ScrollViewReader on Linux
+
+A scroll view keeps where its targets are: the children of lazy stacks
+and the rows of lists, by the identifier of their ForEach element or
+their id. ScrollViewProxy.scrollTo scrolls the first scroll view in the
+reader that has the target, its anchor at the same point of the view or
+just enough to show it, animated inside withAnimation; a target not laid
+out yet is scrolled to once it is. An optional identifier stands for its
+value.
+---
+ .../View/Container/IrisContainers.swift       |  40 ++++-
+ .../OpenSwiftUI/View/Scroll/ScrollView.swift  |  38 ++++-
+ .../View/Scroll/ScrollViewReader.swift        | 149 ++++++++++++++++++
+ 3 files changed, 219 insertions(+), 8 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/View/Scroll/ScrollViewReader.swift
+
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+index 777fb4b..c64ea53 100644
+--- a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
++++ b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+@@ -307,11 +307,13 @@ struct IrisListRow: View {
+         let leading = row[IrisLeadingSwipeTrait.self]
+         let trailing = row[IrisTrailingSwipeTrait.self]
+         VStack(alignment: .leading, spacing: 0) {
+-            if leading != nil || trailing != nil {
+-                IrisSwipeRow(leading: leading, trailing: trailing, content: framed)
+-            } else {
+-                framed
+-            }
++            IrisScrollTarget(id: row.id, content: Group {
++                if leading != nil || trailing != nil {
++                    IrisSwipeRow(leading: leading, trailing: trailing, content: framed)
++                } else {
++                    framed
++                }
++            })
+             if separated, row[IrisRowSeparatorTrait.self] != .hidden {
+                 separator.frame(height: 0.5).padding(.leading, insets.leading)
+             }
+@@ -542,12 +544,36 @@ public struct LazyVStack<Content>: View where Content: View {
+     }
+ 
+     public var body: some View {
+-        VStack(alignment: alignment, spacing: spacing) {
++        _VariadicView.Tree(LazyStackRoot(axis: .vertical, horizontalAlignment: alignment, verticalAlignment: .center, spacing: spacing)) {
+             content
+         }
+     }
+ }
+ 
++/// The children of a lazy stack, each a target of ScrollViewProxy.
++private struct LazyStackRoot: _VariadicView_UnaryViewRoot {
++    var axis: Axis
++    var horizontalAlignment: HorizontalAlignment
++    var verticalAlignment: VerticalAlignment
++    var spacing: CGFloat?
++
++    func body(children: _VariadicView.Children) -> some View {
++        if axis == .vertical {
++            VStack(alignment: horizontalAlignment, spacing: spacing) {
++                ForEach(children) { child in
++                    IrisScrollTarget(id: child.id, content: child)
++                }
++            }
++        } else {
++            HStack(alignment: verticalAlignment, spacing: spacing) {
++                ForEach(children) { child in
++                    IrisScrollTarget(id: child.id, content: child)
++                }
++            }
++        }
++    }
++}
++
+ /// A view that arranges its children in a horizontal line. Iris: all children are made at once.
+ public struct LazyHStack<Content>: View where Content: View {
+     var alignment: VerticalAlignment
+@@ -566,7 +592,7 @@ public struct LazyHStack<Content>: View where Content: View {
+     }
+ 
+     public var body: some View {
+-        HStack(alignment: alignment, spacing: spacing) {
++        _VariadicView.Tree(LazyStackRoot(axis: .horizontal, horizontalAlignment: .center, verticalAlignment: alignment, spacing: spacing)) {
+             content
+         }
+     }
+diff --git a/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift b/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+index bb157d3..d0881a9 100644
+--- a/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
++++ b/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+@@ -33,6 +33,7 @@ public struct ScrollView<Content>: View where Content: View {
+     // A reference: gesture callbacks run several times between updates, and @State reads in
+     // them return the value of the last update.
+     @State private var scroll = ScrollState()
++    @Environment(\.irisScrollReader) private var reader
+ 
+     /// Creates a new instance that's scrollable in the direction of the given axis and can
+     /// show indicators while scrolling.
+@@ -43,8 +44,11 @@ public struct ScrollView<Content>: View where Content: View {
+     }
+ 
+     public var body: some View {
+-        GeometryReader { viewport in
++        reader?.add(scroll.targets)
++        return GeometryReader { viewport in
++            let _ = prepareTargets(viewport: viewport.size)
+             content
++                .environment(\.irisScrollTargets, scroll.targets)
+                 .fixedSize(horizontal: axes.contains(.horizontal), vertical: axes.contains(.vertical))
+                 // The content's own size: a frame would cap it at the size the view offers.
+                 .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
+@@ -55,6 +59,9 @@ public struct ScrollView<Content>: View where Content: View {
+                         scroll.offset = offset
+                     }
+                 }
++                .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { [targets = scroll.targets] origin in
++                    targets.contentOrigin = origin
++                }
+                 .frame(minWidth: viewport.size.width, minHeight: viewport.size.height, alignment: contentAlignment)
+                 .offset(x: -scroll.offset.x, y: -scroll.offset.y)
+                 .frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
+@@ -68,6 +75,34 @@ public struct ScrollView<Content>: View where Content: View {
+ 
+     /// Content shorter than the view sits at its top, narrower content in its middle, as in
+     /// SwiftUI.
++    /// How a ScrollViewProxy scrolls this view: to show a rect of the content, its anchor at
++    /// the same point of the view, or just enough without one.
++    private func prepareTargets(viewport: CGSize) {
++        scroll.targets.scroll = { [scroll, axes] rect, anchor in
++            func position(_ minimum: CGFloat, _ length: CGFloat, _ current: CGFloat, _ visible: CGFloat, _ unit: CGFloat?) -> CGFloat {
++                if let unit {
++                    return minimum + length * unit - visible * unit
++                }
++                if minimum < current {
++                    return minimum
++                }
++                if minimum + length > current + visible {
++                    return minimum + length - visible
++                }
++                return current
++            }
++            let current = scroll.offset
++            let content = scroll.contentSize
++            var target = CGPoint(
++                x: axes.contains(.horizontal) ? position(rect.minX, rect.width, current.x, viewport.width, anchor?.x) : 0,
++                y: axes.contains(.vertical) ? position(rect.minY, rect.height, current.y, viewport.height, anchor?.y) : 0
++            )
++            target.x = min(max(target.x, 0), max(content.width - viewport.width, 0))
++            target.y = min(max(target.y, 0), max(content.height - viewport.height, 0))
++            scroll.offset = target
++        }
++    }
++
+     private var contentAlignment: Alignment {
+         switch (axes.contains(.horizontal), axes.contains(.vertical)) {
+         case (true, true): .topLeading
+@@ -157,6 +192,7 @@ private final class ScrollState: Observable {
+     /// The offset when the current drag began.
+     var dragStart: CGPoint?
+     var contentSize = CGSize.zero
++    let targets = IrisScrollTargets()
+ }
+ 
+ // MARK: - HitTestClip
+diff --git a/Sources/OpenSwiftUI/View/Scroll/ScrollViewReader.swift b/Sources/OpenSwiftUI/View/Scroll/ScrollViewReader.swift
+new file mode 100644
+index 0000000..1305850
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/Scroll/ScrollViewReader.swift
+@@ -0,0 +1,149 @@
++//
++//  ScrollViewReader.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: scrolling to a view by its identifier, until upstream has it. A scroll view keeps where
++// its targets are: the children of lazy stacks and the rows of lists, by the identifier of
++// their ForEach element or their `id(_:)`. ponytail: children of a plain VStack are not targets.
++
++/// A proxy value that supports programmatic scrolling of the scrollable views within a view
++/// hierarchy.
++public struct ScrollViewProxy {
++    var reader: IrisScrollReader
++
++    /// Scans all scroll views contained by the proxy for the first with a child view with
++    /// identifier `id`, and then scrolls to that view.
++    public func scrollTo<ID>(_ id: ID, anchor: UnitPoint? = nil) where ID: Hashable {
++        // An optional identifier stands for its value; nil scrolls nowhere.
++        var value: any Hashable = id
++        while let optional = value as? any IrisOptional {
++            guard let wrapped = optional.irisWrapped else { return }
++            value = wrapped
++        }
++        reader.scrollTo(AnyHashable(value), anchor: anchor)
++    }
++}
++
++private protocol IrisOptional {
++    var irisWrapped: (any Hashable)? { get }
++}
++
++extension Optional: IrisOptional where Wrapped: Hashable {
++    fileprivate var irisWrapped: (any Hashable)? {
++        self
++    }
++}
++
++/// A view that provides programmatic scrolling, by working with a proxy to scroll to known
++/// child views.
++public struct ScrollViewReader<Content>: View where Content: View {
++    public var content: (ScrollViewProxy) -> Content
++    @State private var reader = IrisScrollReader()
++
++    public init(@ViewBuilder content: @escaping (ScrollViewProxy) -> Content) {
++        self.content = content
++    }
++
++    public var body: some View {
++        content(ScrollViewProxy(reader: reader))
++            .environment(\.irisScrollReader, reader)
++    }
++}
++
++/// The scroll views in a ScrollViewReader.
++final class IrisScrollReader {
++    private struct Weak {
++        weak var targets: IrisScrollTargets?
++    }
++
++    private var scrollViews: [Weak] = []
++
++    func add(_ targets: IrisScrollTargets) {
++        scrollViews.removeAll { $0.targets == nil }
++        if !scrollViews.contains(where: { $0.targets === targets }) {
++            scrollViews.append(Weak(targets: targets))
++        }
++    }
++
++    func scrollTo(_ id: AnyHashable, anchor: UnitPoint?) {
++        let all = scrollViews.compactMap(\.targets)
++        if all.contains(where: { $0.scrollTo(id, anchor: anchor) }) {
++            return
++        }
++        // Not laid out yet, as in onAppear: the first scroll view to lay it out scrolls.
++        for targets in all {
++            targets.pending = (id, anchor)
++        }
++    }
++}
++
++/// Where a scroll view's targets are, in global coordinates, with its content's origin.
++final class IrisScrollTargets {
++    var frames: [AnyHashable: CGRect] = [:]
++    var contentOrigin = CGPoint.zero
++    var pending: (id: AnyHashable, anchor: UnitPoint?)?
++    /// Scrolls to show a rect of the content, in the content's coordinates.
++    var scroll: ((CGRect, UnitPoint?) -> Void)?
++
++    func register(_ id: AnyHashable, frame: CGRect) {
++        frames[id] = frame
++        if let pending, pending.id == id {
++            self.pending = nil
++            scroll?(frame.offsetBy(dx: -contentOrigin.x, dy: -contentOrigin.y), pending.anchor)
++        }
++    }
++
++    func scrollTo(_ id: AnyHashable, anchor: UnitPoint?) -> Bool {
++        guard let frame = frames[id] else { return false }
++        scroll?(frame.offsetBy(dx: -contentOrigin.x, dy: -contentOrigin.y), anchor)
++        return true
++    }
++}
++
++/// A child of a lazy stack or a list row, which a ScrollViewProxy can scroll to.
++struct IrisScrollTarget<Content>: View where Content: View {
++    var id: AnyHashable
++    var content: Content
++    @Environment(\.irisScrollTargets) private var targets
++
++    init(id: AnyHashable, content: Content) {
++        self.id = id
++        self.content = content
++    }
++
++    var body: some View {
++        if let targets {
++            content.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { [id] frame in
++                targets.register(id, frame: frame)
++            }
++        } else {
++            content
++        }
++    }
++}
++
++extension EnvironmentValues {
++    var irisScrollReader: IrisScrollReader? {
++        get { self[IrisScrollReaderKey.self] }
++        set { self[IrisScrollReaderKey.self] = newValue }
++    }
++
++    var irisScrollTargets: IrisScrollTargets? {
++        get { self[IrisScrollTargetsKey.self] }
++        set { self[IrisScrollTargetsKey.self] = newValue }
++    }
++}
++
++private struct IrisScrollReaderKey: EnvironmentKey {
++    static var defaultValue: IrisScrollReader? { nil }
++}
++
++private struct IrisScrollTargetsKey: EnvironmentKey {
++    static var defaultValue: IrisScrollTargets? { nil }
++}

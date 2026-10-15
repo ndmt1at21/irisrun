@@ -1,0 +1,827 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 19:12:48 +0700
+Subject: [PATCH 27/28] Style lists, swipe rows and turn hit testing off on
+ Linux
+
+A list is inset grouped by default, as on iOS, or grouped or plain by
+listStyle; rows outside a section share a card, with separators between
+rows. listRowBackground, listRowSeparator, listRowInsets and
+scrollContentBackground work, List takes data, and a list row shows its
+swipeActions on a sideways drag, onDelete adding a Delete one.
+allowsHitTesting(false) keeps touches from a view and what it contains.
+
+A whole list row is its NavigationLink. A button's pressed state no longer
+holds the touch once the finger moves, so rows and scroll views around
+buttons get their drags. The stdout app lays out at the scale of the
+frames it draws, so hairlines stay, and gets a swipe command.
+---
+ .../App/App/Stdout/StdoutApp.swift            |  33 +-
+ .../Event/IrisAllowsHitTesting.swift          |  65 ++++
+ .../View/Container/IrisContainers.swift       | 141 ++++++--
+ .../Button/ButtonStyle/IrisButtonStyles.swift |  23 +-
+ .../View/List/IrisListStyles.swift            | 315 ++++++++++++++++++
+ Sources/OpenSwiftUI/View/List/List.swift      |  50 ++-
+ .../View/Navigation/NavigationStack.swift     |   2 +
+ 7 files changed, 579 insertions(+), 50 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/Event/IrisAllowsHitTesting.swift
+ create mode 100644 Sources/OpenSwiftUI/View/List/IrisListStyles.swift
+
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index bc9e4d0..631019c 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -58,9 +58,14 @@ func runStdoutApp(
+             .modifier(IrisPresentationHost())
+             .frame(width: options.surface.width, height: options.surface.height)
+         #endif
++        var hostEnvironment = item.environment
++        #if !canImport(Darwin)
++        // Iris: layout rounds to the pixels of the frames drawn, so hairlines stay.
++        hostEnvironment.displayScale = CGFloat(scale)
++        #endif
+         let host = StdoutRendererHost(
+             rootView: rootView,
+-            environment: item.environment,
++            environment: hostEnvironment,
+             options: options
+         )
+         #if !canImport(Darwin)
+@@ -169,6 +174,7 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+ ///     tap <text>                  touches the middle of the first text that reads <text>
+ ///     tap <x> <y>                 touches a point
+ ///     hold <text> | <x> <y>       touches and holds for 0.6 s, as a long press
++///     swipe <text>                drags the row of a text 200 points to the left
+ ///     drag <x1> <y1> <x2> <y2>    moves a finger between two points and holds it before lifting
+ ///     fling <x1> <y1> <x2> <y2>   the same, lifting while moving, so scrolling keeps going
+ ///     type <text>                 commits text from the input method at the caret
+@@ -197,13 +203,24 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+             host.render(interval: 0.6, targetTimestamp: nil)
+         }
+         input.touch([.init(id: 0, phase: .ended, location: point)])
+-    case "drag", "fling":
+-        guard numbers.count == 4 else {
+-            print("usage: \(name) <x1> <y1> <x2> <y2>")
+-            return
++    case "drag", "fling", "swipe":
++        let from: CGPoint
++        let to: CGPoint
++        if name == "swipe" {
++            guard let frame = Update.ensure({ host.viewGraph.displayList().0 }).stdoutFrame(ofText: argument) else {
++                print("no text \"\(argument)\" on screen")
++                return
++            }
++            from = CGPoint(x: min(frame.maxX + 120, host.options.surface.width - 20), y: frame.midY)
++            to = CGPoint(x: from.x - 200, y: frame.midY)
++        } else {
++            guard numbers.count == 4 else {
++                print("usage: \(name) <x1> <y1> <x2> <y2>")
++                return
++            }
++            from = CGPoint(x: numbers[0], y: numbers[1])
++            to = CGPoint(x: numbers[2], y: numbers[3])
+         }
+-        let from = CGPoint(x: numbers[0], y: numbers[1])
+-        let to = CGPoint(x: numbers[2], y: numbers[3])
+         // Ten moves a frame apart, on a clock of its own so that velocities do not depend on
+         // how fast this machine runs.
+         var time = Time.systemUptime
+@@ -214,7 +231,7 @@ private func run<Content>(_ command: Substring, in host: StdoutRendererHost<Cont
+             let point = CGPoint(x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress)
+             input.touch([.init(id: 0, phase: .moved, location: point)], at: time)
+         }
+-        if name == "drag" {
++        if name != "fling" {
+             time += 0.25
+             input.touch([.init(id: 0, phase: .stationary, location: to)], at: time)
+         }
+diff --git a/Sources/OpenSwiftUI/Event/IrisAllowsHitTesting.swift b/Sources/OpenSwiftUI/Event/IrisAllowsHitTesting.swift
+new file mode 100644
+index 0000000..c7b3aab
+--- /dev/null
++++ b/Sources/OpenSwiftUI/Event/IrisAllowsHitTesting.swift
+@@ -0,0 +1,65 @@
++//
++//  IrisAllowsHitTesting.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++import OpenAttributeGraphShims
++
++// Iris: allowsHitTesting, until upstream has it: a responder around the view's responders that
++// hit-testing skips, with everything in it, when the view does not allow it.
++
++extension View {
++    /// Configures whether this view participates in hit test operations.
++    public func allowsHitTesting(_ enabled: Bool) -> some View {
++        modifier(AllowsHitTestingModifier(enabled: enabled))
++    }
++}
++
++private struct AllowsHitTestingModifier: ViewModifier, MultiViewModifier, PrimitiveViewModifier {
++    var enabled: Bool
++
++    nonisolated static func _makeView(
++        modifier: _GraphValue<Self>,
++        inputs: _ViewInputs,
++        body: @escaping (_Graph, _ViewInputs) -> _ViewOutputs
++    ) -> _ViewOutputs {
++        var outputs = body(_Graph(), inputs)
++        if inputs.preferences.requiresViewResponders {
++            let responder = HitTestingResponder(inputs: inputs)
++            outputs.preferences.viewResponders = Attribute(HitTestingFilter(
++                modifier: modifier.value,
++                children: .init(outputs.preferences.viewResponders),
++                responder: responder
++            ))
++        }
++        return outputs
++    }
++}
++
++private final class HitTestingResponder: DefaultLayoutViewResponder {
++    var enabled = true
++
++    override var allowsHitTesting: Bool { enabled }
++}
++
++private struct HitTestingFilter: StatefulRule {
++    @Attribute var modifier: AllowsHitTestingModifier
++    @OptionalAttribute var children: [ViewResponder]?
++    let responder: HitTestingResponder
++
++    typealias Value = [ViewResponder]
++
++    func updateValue() {
++        responder.enabled = modifier.enabled
++        if let (children, changed) = $children?.changedValue(), changed {
++            responder.children = children
++        }
++        if !hasValue {
++            value = [responder]
++        }
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+index a37497d..777fb4b 100644
+--- a/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
++++ b/Sources/OpenSwiftUI/View/Container/IrisContainers.swift
+@@ -163,6 +163,7 @@ public struct Section<Parent, Content, Footer>: View where Parent: View, Content
+     var content: Content
+     var footer: Footer
+     @Environment(\.irisGroupedRows) private var isGrouped
++    @Environment(\.irisListStyle) private var listStyle
+ 
+     public init(@ViewBuilder content: () -> Content, @ViewBuilder header: () -> Parent, @ViewBuilder footer: () -> Footer) {
+         self.header = header()
+@@ -182,10 +183,10 @@ public struct Section<Parent, Content, Footer>: View where Parent: View, Content
+                 .font(.footnote)
+                 .foregroundStyle(.secondary)
+                 .textCase(.uppercase)
+-                .padding(.horizontal, isGrouped ? 32 : 16)
++                .padding(.horizontal, isGrouped && listStyle != .grouped ? 32 : 16)
+                 .padding(.top, isGrouped ? 0 : 8)
+             if isGrouped {
+-                _VariadicView.Tree(IrisCardRows()) {
++                _VariadicView.Tree(IrisCardRows(isInset: listStyle != .grouped)) {
+                     content
+                 }
+             } else {
+@@ -196,7 +197,7 @@ public struct Section<Parent, Content, Footer>: View where Parent: View, Content
+             footer
+                 .font(.footnote)
+                 .foregroundStyle(.secondary)
+-                .padding(.horizontal, isGrouped ? 32 : 16)
++                .padding(.horizontal, isGrouped && listStyle != .grouped ? 32 : 16)
+         }
+         ._trait(IrisSectionTrait.self, true)
+     }
+@@ -245,6 +246,7 @@ struct IrisSectionTrait: _ViewTraitKey {
+ }
+ 
+ /// Rows of a plain list: at least 44 points tall, with the list's margins.
++/// Rows of a plain list: full width, a separator under each but the last.
+ struct IrisPlainRows: _VariadicView_UnaryViewRoot {
+     func body(children: _VariadicView.Children) -> some View {
+         VStack(alignment: .leading, spacing: 0) {
+@@ -252,31 +254,68 @@ struct IrisPlainRows: _VariadicView_UnaryViewRoot {
+                 if row[IrisSectionTrait.self] {
+                     row
+                 } else {
+-                    row
+-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+-                        .padding(.horizontal, 16)
++                    IrisListRow(row: row, separated: row.id != children.last?.id)
+                 }
+             }
+         }
+     }
+ }
+ 
+-/// Rows in a white rounded card, with separators between them, as an inset grouped list
+-/// draws a section.
++/// Rows in a white card, rounded and inset unless the list is grouped, with separators
++/// between them, as a grouped list draws a section.
+ struct IrisCardRows: _VariadicView_UnaryViewRoot {
++    var isInset = true
++
+     func body(children: _VariadicView.Children) -> some View {
++        IrisCard(rows: Array(children), isInset: isInset)
++    }
++}
++
++/// A card of rows.
++struct IrisCard: View {
++    var rows: [_VariadicView.Children.Element]
++    var isInset: Bool
++
++    var body: some View {
+         VStack(alignment: .leading, spacing: 0) {
+-            ForEach(children) { row in
+-                row
+-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+-                    .padding(.horizontal, 16)
+-                if row.id != children.last?.id {
+-                    separator.frame(height: 0.5).padding(.leading, 16)
+-                }
++            ForEach(rows) { row in
++                IrisListRow(row: row, separated: row.id != rows.last?.id)
++            }
++        }
++        .background(Color.white)
++        .clipShape(RoundedRectangle(cornerRadius: isInset ? 10 : 0))
++        .padding(.horizontal, isInset ? 16 : 0)
++    }
++}
++
++/// A row of a list: at least 44 points high, its insets, background and separator as
++/// `listRowInsets`, `listRowBackground` and `listRowSeparator` set them.
++struct IrisListRow: View {
++    var row: _VariadicView.Children.Element
++    var separated: Bool
++
++    private var framed: some View {
++        let insets = row[IrisRowInsetsTrait.self] ?? EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
++        return row
++            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
++            .padding(insets)
++            .background(row[IrisRowBackgroundTrait.self])
++    }
++
++    var body: some View {
++        let insets = row[IrisRowInsetsTrait.self] ?? EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
++        let leading = row[IrisLeadingSwipeTrait.self]
++        let trailing = row[IrisTrailingSwipeTrait.self]
++        VStack(alignment: .leading, spacing: 0) {
++            if leading != nil || trailing != nil {
++                IrisSwipeRow(leading: leading, trailing: trailing, content: framed)
++            } else {
++                framed
++            }
++            if separated, row[IrisRowSeparatorTrait.self] != .hidden {
++                separator.frame(height: 0.5).padding(.leading, insets.leading)
+             }
+         }
+-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+-        .padding(.horizontal, 16)
+     }
+ }
+ 
+@@ -294,33 +333,73 @@ public struct Form<Content>: View where Content: View {
+     }
+ 
+     public var body: some View {
++        IrisGroupedList(isInset: true) {
++            content
++        }
++    }
++}
++
++/// Sections in cards on the grouped background, the cards rounded and inset or full width;
++/// rows outside a section share a card.
++struct IrisGroupedList<Content>: View where Content: View {
++    var isInset: Bool
++    var content: Content
++    @Environment(\.irisContentBackground) private var contentBackground
++
++    init(isInset: Bool, @ViewBuilder content: () -> Content) {
++        self.isInset = isInset
++        self.content = content()
++    }
++
++    var body: some View {
++        let background = contentBackground == .hidden ? nil : groupedBackground
+         ScrollView {
+-            _VariadicView.Tree(IrisFormRoot()) {
++            _VariadicView.Tree(IrisFormRoot(isInset: isInset)) {
+                 content
+             }
+             .padding(.vertical, 20)
+         }
+-        .background(groupedBackground)
++        .background(background)
+         .environment(\.irisGroupedRows, true)
+         .environment(\.irisListRow, true)
+-        .preference(key: IrisPageBackgroundKey.self, value: groupedBackground)
++        .environment(\.irisListStyle, isInset ? .insetGrouped : .grouped)
++        .preference(key: IrisPageBackgroundKey.self, value: background)
+     }
+ }
+ 
+ private struct IrisFormRoot: _VariadicView_UnaryViewRoot {
++    var isInset: Bool
++
++    private enum Run {
++        case section(_VariadicView.Children.Element)
++        case rows([_VariadicView.Children.Element])
++
++        var id: AnyHashable {
++            switch self {
++            case let .section(child): child.id
++            case let .rows(rows): rows[0].id
++            }
++        }
++    }
++
+     func body(children: _VariadicView.Children) -> some View {
+-        VStack(alignment: .leading, spacing: 28) {
+-            ForEach(children) { child in
+-                if child[IrisSectionTrait.self] {
++        var runs: [Run] = []
++        for child in children {
++            if child[IrisSectionTrait.self] {
++                runs.append(.section(child))
++            } else if case let .rows(rows)? = runs.last {
++                runs[runs.count - 1] = .rows(rows + [child])
++            } else {
++                runs.append(.rows([child]))
++            }
++        }
++        return VStack(alignment: .leading, spacing: 28) {
++            ForEach(runs, id: \.id) { run in
++                switch run {
++                case let .section(child):
+                     child
+-                } else {
+-                    VStack(spacing: 0) {
+-                        child
+-                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+-                            .padding(.horizontal, 16)
+-                    }
+-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+-                    .padding(.horizontal, 16)
++                case let .rows(rows):
++                    IrisCard(rows: rows, isInset: isInset)
+                 }
+             }
+         }
+diff --git a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift b/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift
+index 119259e..a54f26b 100644
+--- a/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift
++++ b/Sources/OpenSwiftUI/View/Control/Button/ButtonStyle/IrisButtonStyles.swift
+@@ -85,14 +85,31 @@ private struct PressableButton<Style>: View where Style: ButtonStyle {
+                 configuration.trigger()
+             }
+             .simultaneousGesture(
+-                DragGesture(minimumDistance: 0)
+-                    .updating($isPressed) { _, pressed, _ in
+-                        pressed = true
++                PressGesture()
++                    .updating($isPressed) { pressed, isPressed, _ in
++                        isPressed = pressed
+                     }
+             )
+     }
+ }
+ 
++/// Active while a finger is down without moving away, failing once it moves 10 points, so
++/// that the views around the button can take the drag.
++private struct PressGesture: Gesture {
++    var body: some Gesture<Bool> {
++        EventListener<TappableEvent>()
++            .mapPhase { phase -> GesturePhase<Bool> in
++                switch phase {
++                case .possible: .possible(nil)
++                case .active: .active(true)
++                case .ended: .ended(false)
++                case .failed: .failed
++                }
++            }
++            .gated(by: DistanceGesture(maximumDistance: 10).coordinateSpace(.global))
++    }
++}
++
+ // MARK: - System styles
+ 
+ /// The default button style, based on the button's context: on iOS, a borderless button.
+diff --git a/Sources/OpenSwiftUI/View/List/IrisListStyles.swift b/Sources/OpenSwiftUI/View/List/IrisListStyles.swift
+new file mode 100644
+index 0000000..0faa0d9
+--- /dev/null
++++ b/Sources/OpenSwiftUI/View/List/IrisListStyles.swift
+@@ -0,0 +1,315 @@
++//
++//  IrisListStyles.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++public import Foundation
++@_spi(ForOpenSwiftUIOnly)
++public import OpenSwiftUICore
++
++// Iris: list styles, row modifiers and swipe actions, until upstream has List. A list is
++// inset grouped by default, as on iOS. Custom list styles are not supported.
++
++/// systemRed.
++private let systemRed = Color(red: 1, green: 59 / 255, blue: 48 / 255)
++/// systemGray, a swipe action's default color.
++private let systemGray = Color(red: 142 / 255, green: 142 / 255, blue: 147 / 255)
++
++// MARK: - List styles
++
++/// A protocol that describes the behavior and appearance of a list.
++public protocol ListStyle {}
++
++/// The list style that describes a platform's default behavior and appearance for a list:
++/// inset grouped on iOS.
++public struct DefaultListStyle: ListStyle { public init() {} }
++/// The list style that describes the behavior and appearance of a plain list.
++public struct PlainListStyle: ListStyle { public init() {} }
++/// The list style that describes the behavior and appearance of a grouped list.
++public struct GroupedListStyle: ListStyle { public init() {} }
++/// The list style that describes the behavior and appearance of an inset grouped list.
++public struct InsetGroupedListStyle: ListStyle { public init() {} }
++/// The list style that describes the behavior and appearance of an inset list.
++public struct InsetListStyle: ListStyle { public init() {} }
++/// The list style that describes the behavior and appearance of a sidebar list.
++public struct SidebarListStyle: ListStyle { public init() {} }
++
++extension ListStyle where Self == DefaultListStyle {
++    public static var automatic: DefaultListStyle { .init() }
++}
++
++extension ListStyle where Self == PlainListStyle {
++    public static var plain: PlainListStyle { .init() }
++}
++
++extension ListStyle where Self == GroupedListStyle {
++    public static var grouped: GroupedListStyle { .init() }
++}
++
++extension ListStyle where Self == InsetGroupedListStyle {
++    public static var insetGrouped: InsetGroupedListStyle { .init() }
++}
++
++extension ListStyle where Self == InsetListStyle {
++    public static var inset: InsetListStyle { .init() }
++}
++
++extension ListStyle where Self == SidebarListStyle {
++    public static var sidebar: SidebarListStyle { .init() }
++}
++
++enum IrisListStyle {
++    case insetGrouped, grouped, plain
++}
++
++extension View {
++    /// Sets the style for lists within this view.
++    public func listStyle<S>(_ style: S) -> some View where S: ListStyle {
++        let kind: IrisListStyle = switch style {
++        case is PlainListStyle, is InsetListStyle: .plain
++        case is GroupedListStyle: .grouped
++        default: .insetGrouped
++        }
++        return environment(\.irisListStyle, kind)
++    }
++
++    /// Specifies the visibility of the background for scrollable views within this view.
++    public func scrollContentBackground(_ visibility: Visibility) -> some View {
++        environment(\.irisContentBackground, visibility)
++    }
++
++    /// Places a custom background view behind a list row item.
++    public func listRowBackground<V>(_ view: V?) -> some View where V: View {
++        _trait(IrisRowBackgroundTrait.self, view.map { AnyView($0) })
++    }
++
++    /// Sets the display mode for the separator associated with this specific row.
++    public func listRowSeparator(_ visibility: Visibility, edges: VerticalEdge.Set = .all) -> some View {
++        _trait(IrisRowSeparatorTrait.self, visibility)
++    }
++
++    /// Sets the tint color associated with a row. Iris: rows keep their separators' color.
++    public func listRowSeparatorTint(_ color: Color?, edges: VerticalEdge.Set = .all) -> some View {
++        self
++    }
++
++    /// Applies an inset to the rows in a list.
++    public func listRowInsets(_ insets: EdgeInsets?) -> some View {
++        _trait(IrisRowInsetsTrait.self, insets)
++    }
++
++    /// Sets whether to hide the separator associated with a list section. Iris: sections have
++    /// none.
++    public func listSectionSeparator(_ visibility: Visibility, edges: VerticalEdge.Set = .all) -> some View {
++        self
++    }
++}
++
++extension EnvironmentValues {
++    var irisListStyle: IrisListStyle {
++        get { self[IrisListStyleKey.self] }
++        set { self[IrisListStyleKey.self] = newValue }
++    }
++
++    var irisContentBackground: Visibility {
++        get { self[IrisContentBackgroundKey.self] }
++        set { self[IrisContentBackgroundKey.self] = newValue }
++    }
++}
++
++private struct IrisListStyleKey: EnvironmentKey {
++    static var defaultValue: IrisListStyle { .insetGrouped }
++}
++
++private struct IrisContentBackgroundKey: EnvironmentKey {
++    static var defaultValue: Visibility { .automatic }
++}
++
++struct IrisRowBackgroundTrait: _ViewTraitKey {
++    static var defaultValue: AnyView? { nil }
++}
++
++struct IrisRowSeparatorTrait: _ViewTraitKey {
++    static var defaultValue: Visibility { .automatic }
++}
++
++struct IrisRowInsetsTrait: _ViewTraitKey {
++    static var defaultValue: EdgeInsets? { nil }
++}
++
++// MARK: - Swipe actions
++
++extension View {
++    /// Adds custom swipe actions to a row in a list: a drag from the other edge towards
++    /// `edge`'s opposite reveals them at `edge`.
++    public func swipeActions<T>(edge: HorizontalEdge = .trailing, allowsFullSwipe: Bool = true, @ViewBuilder content: () -> T) -> some View where T: View {
++        let actions = AnyView(content())
++        return Group {
++            if edge == .trailing {
++                _trait(IrisTrailingSwipeTrait.self, actions)
++            } else {
++                _trait(IrisLeadingSwipeTrait.self, actions)
++            }
++        }
++    }
++}
++
++struct IrisTrailingSwipeTrait: _ViewTraitKey {
++    static var defaultValue: AnyView? { nil }
++}
++
++struct IrisLeadingSwipeTrait: _ViewTraitKey {
++    static var defaultValue: AnyView? { nil }
++}
++
++/// How far the actions are revealed, kept apart from the view's state so gestures read the
++/// latest value.
++private final class SwipeState {
++    var revealed: CGFloat = 0
++    var leadingWidth: CGFloat = 0
++    var trailingWidth: CGFloat = 0
++}
++
++/// A list row with swipe actions: dragging it sideways reveals the actions of the edge it
++/// moves away from, as tall as the row.
++struct IrisSwipeRow<Content>: View where Content: View {
++    var leading: AnyView?
++    var trailing: AnyView?
++    var content: Content
++    @State private var offset: CGFloat = 0
++    @State private var state = SwipeState()
++    @GestureState private var drag: CGFloat = 0
++
++    init(leading: AnyView?, trailing: AnyView?, content: Content) {
++        self.leading = leading
++        self.trailing = trailing
++        self.content = content
++    }
++
++    var body: some View {
++        let position = offset + drag
++        let allowed = min(max(position, trailing == nil ? 0 : -.infinity), leading == nil ? 0 : .infinity)
++        content
++            .offset(x: allowed)
++            .overlay(alignment: .trailing) {
++                actions(trailing, width: max(-allowed, 0)) { [state] in state.trailingWidth = $0 }
++            }
++            .overlay(alignment: .leading) {
++                actions(leading, width: max(allowed, 0)) { [state] in state.leadingWidth = $0 }
++            }
++            .contentShape(Rectangle())
++            .gesture(
++                DragGesture(minimumDistance: 10)
++                    .updating($drag) { value, drag, _ in
++                        drag = value.translation.width
++                    }
++                    .onEnded { value in
++                        // Rest open when dragged past half the actions, closed otherwise.
++                        let travel = state.revealed + value.translation.width
++                        if trailing != nil, -travel > state.trailingWidth / 2 {
++                            state.revealed = -state.trailingWidth
++                        } else if leading != nil, travel > state.leadingWidth / 2 {
++                            state.revealed = state.leadingWidth
++                        } else {
++                            state.revealed = 0
++                        }
++                        withAnimation(.easeOut(duration: 0.25)) {
++                            offset = state.revealed
++                        }
++                    }
++            )
++    }
++
++    @ViewBuilder
++    private func actions(_ actions: AnyView?, width: CGFloat, measured: @escaping (CGFloat) -> Void) -> some View {
++        if let actions {
++            HStack(spacing: 0) {
++                actions
++            }
++            .buttonStyle(SwipeActionButtonStyle {
++                state.revealed = 0
++                withAnimation(.easeOut(duration: 0.25)) {
++                    offset = 0
++                }
++            })
++            .fixedSize(horizontal: true, vertical: false)
++            .frame(maxHeight: .infinity)
++            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { measured($0) }
++            .frame(width: width)
++            .clipped()
++            .opacity(width > 0 ? 1 : 0)
++        }
++    }
++}
++
++/// A swipe action: its label in white on the tint, red when destructive, as tall as the row.
++private struct SwipeActionButtonStyle: PrimitiveButtonStyle {
++    var close: () -> Void
++    @Environment(\.tintColor) private var tint
++
++    func makeBody(configuration: Configuration) -> some View {
++        configuration.label
++            .labelStyle(.titleOnly)
++            .foregroundStyle(Color.white)
++            .lineLimit(1)
++            .padding(.horizontal, 12)
++            .frame(minWidth: 74, maxHeight: .infinity)
++            .background(configuration.role == .destructive ? systemRed : tint ?? systemGray)
++            .contentShape(Rectangle())
++            .onTapGesture {
++                close()
++                configuration.trigger()
++            }
++    }
++}
++
++// MARK: - Deleting and moving
++
++extension ForEach where Content: View {
++    /// Sets the deletion action for the dynamic view: each row gets a Delete swipe action.
++    public func onDelete(perform action: ((IndexSet) -> Void)?) -> ForEach<Data, ID, IrisDeletableRow<Content>> {
++        let data = data
++        let content = content
++        let idGenerator = idGenerator
++        let rowIDs: ForEach<Data, ID, IrisDeletableRow<Content>>.IDGenerator = switch idGenerator {
++        case let .keyPath(keyPath): .keyPath(keyPath)
++        case .offset: .offset
++        }
++        return ForEach<Data, ID, IrisDeletableRow<Content>>(data, idGenerator: rowIDs) { element in
++            IrisDeletableRow(content: content(element)) {
++                if let action, let offset = Self.offset(of: element, in: data, idGenerator: idGenerator) {
++                    action(IndexSet(integer: offset))
++                }
++            }
++        }
++    }
++
++    /// Sets the move action for the dynamic view. Iris: rows cannot be moved yet.
++    public func onMove(perform action: ((IndexSet, Int) -> Void)?) -> ForEach<Data, ID, Content> {
++        self
++    }
++
++    private static func offset(of element: Data.Element, in data: Data, idGenerator: IDGenerator) -> Int? {
++        switch idGenerator {
++        case let .keyPath(keyPath):
++            let id = element[keyPath: keyPath]
++            return data.firstIndex { $0[keyPath: keyPath] == id }.map { data.distance(from: data.startIndex, to: $0) }
++        case .offset:
++            guard let value = element as? Int, let first = data.first as? Int else { return nil }
++            return value - first
++        }
++    }
++}
++
++/// A row of a ForEach with onDelete: the row with a Delete swipe action.
++public struct IrisDeletableRow<Content>: View where Content: View {
++    var content: Content
++    var delete: () -> Void
++
++    public var body: some View {
++        content.swipeActions {
++            Button("Delete", role: .destructive, action: delete)
++        }
++    }
++}
+diff --git a/Sources/OpenSwiftUI/View/List/List.swift b/Sources/OpenSwiftUI/View/List/List.swift
+index 61ad3ba..9ff12e1 100644
+--- a/Sources/OpenSwiftUI/View/List/List.swift
++++ b/Sources/OpenSwiftUI/View/List/List.swift
+@@ -6,26 +6,60 @@
+ 
+ public import OpenSwiftUICore
+ 
+-// Iris: rows in a plain stack in a scroll view until upstream has List: no separators,
+-// selection or list styles yet.
++// Iris: a list drawn by SwiftUI until upstream has List: inset grouped by default, as on iOS,
++// or grouped or plain by `listStyle`. No selection or editing yet.
+ public struct List<SelectionValue, Content>: View where SelectionValue: Hashable, Content: View {
+     private var content: Content
++    @Environment(\.irisListStyle) private var style
+ 
+     public init(@ViewBuilder content: () -> Content) where SelectionValue == Never {
+         self.content = content()
+     }
+ 
+     public var body: some View {
+-        // Set outside the rows: views in a row do not see what is set on the row. (ponytail:
+-        // find out why: Text does.)
+-        _VariadicView.Tree(ListRows()) {
+-            content
++        switch style {
++        case .insetGrouped, .grouped:
++            IrisGroupedList(isInset: style == .insetGrouped) {
++                content
++            }
++        case .plain:
++            // Set outside the rows: views in a row do not see what is set on the row. (ponytail:
++            // find out why: Text does.)
++            _VariadicView.Tree(PlainListRows()) {
++                content
++            }
++            .environment(\.irisListRow, true)
++            .environment(\.irisGroupedRows, false)
+         }
+-        .environment(\.irisListRow, true)
+     }
+ }
+ 
+-private struct ListRows: _VariadicView_UnaryViewRoot {
++extension List where SelectionValue == Never {
++    /// Creates a list that computes its rows on demand from an underlying collection of
++    /// identifiable data.
++    public init<Data, RowContent>(_ data: Data, @ViewBuilder rowContent: @escaping (Data.Element) -> RowContent)
++        where Content == ForEach<Data, Data.Element.ID, RowContent>, Data: RandomAccessCollection, RowContent: View, Data.Element: Identifiable
++    {
++        self.init { ForEach(data, content: rowContent) }
++    }
++
++    /// Creates a list that identifies its rows based on a key path to the identifier of the
++    /// underlying data.
++    public init<Data, ID, RowContent>(_ data: Data, id: KeyPath<Data.Element, ID>, @ViewBuilder rowContent: @escaping (Data.Element) -> RowContent)
++        where Content == ForEach<Data, ID, RowContent>, Data: RandomAccessCollection, ID: Hashable, RowContent: View
++    {
++        self.init { ForEach(data, id: id, content: rowContent) }
++    }
++
++    /// Creates a list that computes its views on demand over a constant range.
++    public init<RowContent>(_ data: Range<Int>, @ViewBuilder rowContent: @escaping (Int) -> RowContent)
++        where Content == ForEach<Range<Int>, Int, RowContent>, RowContent: View
++    {
++        self.init { ForEach(data, content: rowContent) }
++    }
++}
++
++private struct PlainListRows: _VariadicView_UnaryViewRoot {
+     func body(children: _VariadicView.Children) -> some View {
+         ScrollView {
+             IrisPlainRows().body(children: children)
+diff --git a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+index 5abc217..0d64fb7 100644
+--- a/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
++++ b/Sources/OpenSwiftUI/View/Navigation/NavigationStack.swift
+@@ -482,6 +482,8 @@ private struct NavigationLinkLabel<Label>: View where Label: View {
+                     .stroke(Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.3), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                     .frame(width: 7, height: 12)
+             }
++            // The whole row is the link, as a table view cell is.
++            .contentShape(Rectangle())
+         } else {
+             label
+         }
