@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 16:43:13 +0700
-Subject: [PATCH 17/37] Add gradients, and draw them and drop shadows with the
+Subject: [PATCH 17/38] Add gradients, and draw them and drop shadows with the
  render core
 
 Gradient was an empty stub and no gradient style existed. Gradient now has

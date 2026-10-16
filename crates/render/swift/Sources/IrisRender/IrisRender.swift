@@ -711,6 +711,29 @@ public final class Layer {
     public func removeAllAnimations() {
         iris_layer_remove_animations(raw, id)
     }
+
+    /// The value of `like`'s property as the layer shows it at the scene's
+    /// time, as a presentation layer has it: an animation's while one runs,
+    /// else the layer's own.
+    public func shown(_ like: Animation.Value) -> Animation.Value {
+        let property = switch like {
+        case .opacity: IRIS_PROPERTY_OPACITY
+        case .frame: IRIS_PROPERTY_FRAME
+        case .transform: IRIS_PROPERTY_TRANSFORM
+        case .backgroundColor: IRIS_PROPERTY_BACKGROUND_COLOR
+        case .cornerRadius: IRIS_PROPERTY_CORNER_RADIUS
+        }
+        var n = [Float](repeating: 0, count: 6)
+        var color: UInt32 = 0
+        guard iris_layer_shown_value(raw, id, property, &n, &color) else { return like }
+        return switch like {
+        case .opacity: .opacity(n[0])
+        case .frame: .frame(Rect(x: n[0], y: n[1], width: n[2], height: n[3]))
+        case .transform: .transform(n)
+        case .backgroundColor: .backgroundColor(color)
+        case .cornerRadius: .cornerRadius(n[0])
+        }
+    }
 }
 
 // MARK: - Layout

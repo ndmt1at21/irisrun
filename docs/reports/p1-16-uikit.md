@@ -545,7 +545,7 @@ Phần cuối của đợt 3, theo [bàn giao](../plans/p1-16-handoff.md) của 
 ### Quyết định
 
 - **Ràng buộc như của UIKit, giữ ở stack view, dựng lại ngay:** mỗi khi arrangement đổi (thêm, bỏ, chèn view, thuộc tính, custom spacing, view ẩn hay hiện, intrinsic size khi proportionally), stack view bỏ hết ràng buộc và guide cũ rồi dựng lại, không so khác biệt (O(n) ràng buộc mỗi lần đổi). Dựng ngay thay vì đợi lượt update constraints vì `PlatformViewHost` (patch `0037`) chỉ đo bằng `systemLayoutSizeFitting` những view đã có constraint: stack view trả về từ `makeUIView` phải có constraint ngay (thấy khi đọc lại patch, trước khi gặp lỗi). Ràng buộc một item (`UISV-hiding`) cũng nằm ở stack view, không ở view được xếp (dùng `addConstraints`, không dùng `activate`).
-- **View ẩn ra khỏi chuỗi spacing:** chuỗi spacing chỉ nối các view hiện. View ẩn dài 0 và đặt ở giữa khoảng spacing nó sẽ có (sau view hiện cuối thì sát view đó, trước view hiện đầu thì ở mép), như TZStackView (bản viết lại UIStackView có test so khung với UIKit). Engine bỏ ràng buộc bắt buộc thêm sau khi mâu thuẫn, nên khi app đặt chiều cao bắt buộc cho view bị ẩn thì `UISV-hiding` bị bỏ (UIKit thường bỏ ràng buộc của app); vì view ẩn ở ngoài chuỗi, các view khác vẫn khít lại, chỉ khung của view ẩn (không nhìn thấy) khác.
+- **View ẩn ra khỏi chuỗi spacing:** chuỗi spacing chỉ nối các view hiện. View ẩn dài 0 và đặt ở giữa khoảng spacing nó sẽ có (sau view hiện cuối thì sát view đó, trước view hiện đầu thì ở mép), như TZStackView (bản viết lại UIStackView có test so khung với UIKit). Engine bỏ ràng buộc bắt buộc thêm sau khi mâu thuẫn, nên khi app đặt chiều cao bắt buộc cho view bị ẩn thì `UISV-hiding` bị bỏ (theo các log hay gặp, UIKit bỏ ràng buộc của app); vì view ẩn ở ngoài chuỗi, các view khác vẫn khít lại, chỉ khung của view ẩn (không nhìn thấy) khác.
 - **Guide thay view phụ:** spanner và khoảng chia đều là `UILayoutGuide` của stack view, như UIKit từ iOS 9.
 - **Căn theo baseline:** hàng căn theo `firstBaseline`/`lastBaseline` có spanner bao mọi view, view có chữ cao nhất chạm mép trên; cột căn theo baseline coi như fill (tài liệu Apple: chỉ hợp lệ cho hàng).
 - **Priority của stack view theo các mức UIKit dùng** (999, 998… cho tỉ lệ, 150 cho equal centering, 51 cho spanning fit, 25 cho ambiguity suppression). Với trọng số mũ của 3a, các cấu hình trong test và trang mẫu cho cùng khung như thứ tự từ điển của UIKit.
@@ -574,23 +574,23 @@ Phần cuối của đợt 3, theo [bàn giao](../plans/p1-16-handoff.md) của 
 | Test: `UISV-hiding` không có trong `constraints` của stack view | `NSLayoutConstraint.activate` đặt ràng buộc một item vào chính item đó | Stack view `addConstraints` lên chính nó |
 | Cảnh báo "non-'@objc' class method declared in extension cannot be overridden" | `open class func` trong extension | `public class func` (không ai override method lớp này) |
 | Stack view trong representable sẽ không được đo | Ràng buộc dựng trong lượt update constraints, còn patch `0037` chỉ đo view đã có constraint | Dựng lại ngay khi arrangement đổi |
-| Trong Device UI, ảnh chụp 120 ms sau khi chạm "Phóng to" chưa thấy animation | Device UI hiện frame chậm (khoảng 20 frame/giây ở máy dev), không phải lỗi của animation | Ghi mọi frame thiết bị gửi bằng client WebSocket: 18 frame trong 300 ms, khung đổi dần |
+| Trong Device UI, ảnh chụp 120 ms sau khi chạm "Phóng to" chưa thấy animation | Device UI hiện frame chậm (10–20 frame/giây ở máy dev), không phải lỗi của animation | Ghi mọi frame thiết bị gửi bằng client WebSocket: 18 frame trong 300 ms, khung đổi dần |
 
 ### Số đo
 
 | Mục | Số đo | Ghi chú |
 | --- | --- | --- |
-| `swift test` | 96 test (7 mới): OpenUIKit 75, IrisBuild 13, ObjCRewriteTests 6, Swift5AppTests 1, IrisProtocol 1 | Màn 300 view (debug): layout đầu 65 ms, đổi constant 1,9 ms, như 3a |
+| `swift test` | 96 test (7 mới): OpenUIKit 75, IrisBuild 13, ObjCRewriteTests 6, Swift5AppTests 1, IrisProtocol 1 | Màn 300 view (debug): layout đầu 65–107 ms, đổi constant 1,9–4,2 ms qua các lượt; trước khi sửa, cùng phiên: 70 ms và 3,2 ms. Đường của engine không đổi, chênh lệch do máy bận |
 | `cargo test -p irisrun-render` | 20 test (1 test mở rộng cho fill backwards) | `cargo fmt --check`, `clippy -D warnings` sạch |
 | `check-sample.sh examples/ios-uikit` | 124 điểm (10 mới) ở chế độ stdout và frame | 67/72 PNG giống 3a: frame 1 (đèn timer chạy theo thời gian thật, đã biết từ 7a), 68–70 (trang Layout đổi), 71 (bước mới) |
 | … với `IRISRUN_SCREEN=iphone-se` | 27 điểm (mới) ở hai chế độ | 5 PNG 750 × 1334 |
 | App kiểm tra representable | 13 điểm, 12/12 PNG giống 3a | |
 | `check-sample.sh` (SwiftUI) | 68 điểm, 97/97 PNG giống 3a từng pixel | |
-| Một bước trên trang Layout | update STEP_UPDATE ms, vẽ và PNG STEP_DRAW ms | 3x ở iPhone 14, 2x ở SE |
-| Device UI (iPhone 14) | Animation "Phóng to", ẩn thẻ, "Đặt lại": thiết bị gửi 18 frame trong 300 ms (60 frame/giây); Device UI hiện khoảng 20 frame/giây | Ảnh và frame ở `~/.cache/irisrun/p1-16/3b/live/` |
+| Một bước trên trang Layout | Update 5–8 ms ở iPhone 14, 4–7 ms ở SE; vẽ và PNG 170–240 ms ở 3x, 50–95 ms ở 2x | Lượt chạy cuối, máy bận (lượt đầu: vẽ và PNG ở 3x 83–100 ms, update 2–4 ms) |
+| Device UI (iPhone 14) | Animation "Phóng to", ẩn thẻ, "Đặt lại": thiết bị gửi 18 frame trong 300 ms (60 frame/giây); Device UI hiện 10–20 frame/giây | Ảnh và frame ở `~/.cache/irisrun/p1-16/3b/live/` |
 | Device UI (`IRISRUN_SCREEN=iphone-se`) | Ghi "iPhone SE (3rd generation) · iOS 18.0"; chạm trang Layout, "Phóng to", ẩn thẻ đúng | Khung máy của Device UI vẫn dáng iPhone 14, ảnh 750 × 1334 bị kéo giãn vào đó (`apps/web`, P1-28) |
 | `DeviceConfig.display` (client WebSocket) | 750 × 1334 @2 → `DeviceInfo` "iPhone SE (3rd generation)", frame 750 × 1334, trang layout lại; 1170 × 2532 @3 → iPhone 14, frame 780 × 1688; 2532 × 1170 (ngang) → log, giữ màn | |
-| Code | `UIStackView.swift` 293 dòng; `UIView.swift` +91, `CALayer.swift` +43, IrisHost +73, `UIScreen`/`UIWindow`/`Host` +18; render core +28; CLI +7; test +288; trang mẫu +42, kịch bản SE 49 dòng | |
+| Code | `UIStackView.swift` 289 dòng; `UIView.swift` +91, `CALayer.swift` +43, IrisHost +71, `UIScreen`/`UIWindow`/`Host` +13; render core +29; CLI +7; `check-sample.sh` +6; test +293; trang mẫu +42, `session.txt` +19, kịch bản SE 49 dòng | |
 
 ### Giới hạn và việc tiếp
 
@@ -607,3 +607,98 @@ Tiêu chí của plan: "Màn dựng toàn bằng constraint hiện như iOS ở 
 - **Bằng chứng:** trang "Layout" của app mẫu UIKit dựng toàn bằng constraint (anchor, API item/attribute, layout guide, margin, safe area, priority, hugging/compression, nhãn nhiều dòng, baseline, hai stack view) và không có số nào theo cỡ màn hình. `# expect frame` kiểm khung của nó ở iPhone 14 (`session.txt`) và iPhone SE (`session-iphone-se.txt`, 27 điểm): ở SE cùng cấu trúc với bề rộng 343 điểm, nút rộng 165,5, thẻ 109, hộp co lại vừa chỗ, chân trang cách đáy 12 điểm vì không có home indicator. PNG cả hai cỡ như iOS. Trong Device UI, cả hai cỡ chạm được, animation của `layoutIfNeeded()` và của stack view chạy 60 frame/giây ở thiết bị.
 - 96 test, app mẫu UIKit 124 điểm (iPhone 14) và 27 điểm (SE), app kiểm tra representable 13, app mẫu SwiftUI 68 với PNG giống từng pixel.
 - **Còn lại:** view controller (đợt 4, kế tiếp; xem [bàn giao](../plans/p1-16-handoff.md)), bảng (đợt 5), storyboard (đợt 6); priority theo thứ tự từ điển (chờ app cần); các giới hạn ở mục "Giới hạn và việc tiếp" của 3a và 3b.
+
+## Đợt 4a: vòng đời xuất hiện, `present`/`dismiss` đầy đủ, phần còn lại của `UIView.animate` (16/10)
+
+Đợt 4 (view controller, tiêu chí "App nhiều màn điều hướng được") chia hai phần: 4a là phần này, 4b là `UINavigationController`, `UITabBarController`, app mẫu nhiều màn và "Đợt 4: tổng kết" ([bàn giao](../plans/p1-16-handoff.md)).
+
+### Kết luận
+
+- **Callback xuất hiện theo thứ tự của UIKit:** `viewWillAppear`/`viewDidAppear`/`viewWillDisappear`/`viewDidDisappear(_ animated:)` cho gốc cửa sổ (will khi cửa sổ hiện, trong `makeKeyAndVisible`; did ở lượt sau, sau lượt layout đầu, như log quen thuộc của iOS), khi đổi gốc (cũ will → mới will → cũ did → mới did), khi cửa sổ ẩn, khi `present` (A willDisappear → B willAppear → B didAppear → A didDisappear → completion) và `dismiss` (B willDisappear → A willAppear → B didDisappear → A didAppear → completion). Sheet, over full screen, over current context giữ view controller bên dưới trên màn nên nó không nghe gì, như iOS 13+. `isBeingPresented`, `isBeingDismissed`, `isMovingToParent`, `isMovingFromParent` đúng trong các callback đó.
+- **View controller con:** `beginAppearanceTransition`/`endAppearanceTransition` (gọi thừa thì không làm gì), `shouldAutomaticallyForwardAppearanceMethods`; cha chuyển callback cho con có view nằm trong view của cha, sau callback của chính nó. View của con vào hay rời cửa sổ ngoài một chuyển cảnh (container đang hiện thêm con, bỏ con) thì con xuất hiện hay biến mất theo view, như UIKit. Nhờ đó view controller trong `UIViewControllerRepresentable` có callback mà `PlatformViewHost` không phải gọi gì.
+- **Một chỗ chung cho chuyển cảnh xuất hiện:** `UIViewController.irisTransition(from:to:animated:…)` gọi will, đổi view, chạy animation bằng `UIView.animate`, rồi did và completion. `present`, `dismiss`, đổi gốc cửa sổ, ẩn hiện cửa sổ đều đi qua nó; 4b dùng nó cho push, pop, đổi tab.
+- **`present`/`dismiss` đầy đủ trên iPhone:** `.automatic`, `.pageSheet`, `.formSheet`, `.popover` thành sheet kiểu iOS 13+: thẻ bo góc 10 điểm, đỉnh dưới safe area 10 điểm (57 ở iPhone 14, 30 ở SE), chạm đáy màn hình, safe area của nó 0/34 (0/0 ở SE); view bên dưới lùi lại (thu nhỏ, đỉnh ở safe area, bo góc) và tối đi; kéo xuống để đóng, trừ khi `isModalInPresentation` hay delegate từ chối. `.fullScreen` (view bên dưới rời cửa sổ khi chuyển cảnh xong, quay lại trước khi đóng), `.overFullScreen`, `.overCurrentContext`/`.currentContext` (trong khung của view controller có `definesPresentationContext`). `coverVertical` trượt lên, `crossDissolve` (và flip, curl) hiện dần. Completion chạy sau animation; kịch bản nhảy tới cuối như 3b. `presentedViewController`/`presentingViewController` lồng nhau và đi qua tổ tiên như tài liệu UIKit; `dismiss` từ giữa chuỗi gỡ cả những cái phía trên, chỉ cái trên cùng có chuyển cảnh.
+- **`UIPresentationController`, `UISheetPresentationController`:** `presentationController` (tạo khi hỏi, để đặt delegate trước khi present), `UIAdaptivePresentationControllerDelegate` (should/will/did dismiss, did attempt), `sheetPresentationController` với detent `.medium()`/`.large()`, `selectedDetentIdentifier`, grabber, bán kính góc; kéo dừng ở detent gần nhất.
+- **Phần còn lại của `UIView.animate`:** `transition(with:…)`, `transition(from:to:…)` (hiện dần), `animateKeyframes`/`addKeyframe`, view được xếp của stack view ẩn trong animation hiện tới hết animation, view đang animate không nhận chạm trừ khi có `allowUserInteraction`, animation ngắt animation khác bắt đầu từ giá trị đang hiện (`beginFromCurrentState`, và mặc định từ iOS 8) nhờ render core có thêm `iris_layer_shown_value`. Bán kính góc animate trong block như iOS 11+.
+- **SwiftUI trong hosting controller không phải gốc cửa sổ** (con, hay của representable) trình bày sheet, fullScreenCover, alert, confirmationDialog qua `present` của UIKit, mỗi cái trong một hosting controller riêng phủ cả cửa sổ (patch `openswiftui/0038`). Gốc cửa sổ vẫn vẽ chúng trên nội dung như trước: app mẫu SwiftUI giữ 68 điểm, 97 PNG giống từng pixel.
+- **Mẫu:** app mẫu UIKit có trang "Modal" (segment thứ sáu): sheet, kéo đóng, chặn kéo, full screen với sheet lồng và "Đóng tất cả", overlay hiện dần, view controller con, thẻ SwiftUI trình bày qua UIKit; một nhãn ghi chuỗi callback. `session.txt` 149 điểm (25 mới), `session-iphone-se.txt` 31 (4 mới), `Tests/Apps/Representables` 14 (1 mới). Trong Device UI sheet trượt lên, kéo xuống đóng, sheet SwiftUI phủ cả cửa sổ.
+
+### Đã làm
+
+| Phần | Ở đâu |
+| --- | --- |
+| Trạng thái xuất hiện (4 trạng thái như UIKit), 4 callback, `begin/endAppearanceTransition`, chuyển cho con, con theo view vào/rời cửa sổ, `isMovingToParent`/`isMovingFromParent`; `irisTransition` dùng chung | `Sources/OpenUIKit/UIViewController.swift` |
+| `present`/`dismiss` theo kiểu trên iPhone, ngữ cảnh trình bày, chuỗi lồng nhau, `isBeingPresented`/`isBeingDismissed`, `presentationController`, `sheetPresentationController` | `UIViewController.swift` |
+| `UIPresentationController` (container `UITransitionView`, view bên dưới rời và quay lại cửa sổ, trượt, hiện dần), `UISheetPresentationController` (thẻ `UIDropShadowView`, `UIDimmingView`, lùi view bên dưới, detent, grabber, kéo), delegate | `Sources/OpenUIKit/UIPresentationController.swift` (mới) |
+| Gốc cửa sổ xuất hiện khi cửa sổ hiện, biến mất khi ẩn, đổi gốc có callback | `UIWindow.swift` |
+| View báo view controller khi vào/rời cửa sổ; hit-test bỏ view đang animate; view ẩn trong stack view hiện tới hết animation; `transition(with:)`, `transition(from:to:)`, option `transition…`, `animateKeyframes`, `addKeyframe`, `KeyframeAnimationOptions` | `UIView.swift` |
+| Biến đổi và bán kính góc chỉ để vẽ (`irisPresentationTransform`, `irisPresentationCornerRadius`); animation bắt đầu từ giá trị đang hiện; bán kính góc animate; hạn chạm và hạn ẩn; `IrisAnimationTiming.end`, `allowsUserInteraction` | `CALayer.swift` |
+| Alert hiện dần (`.overFullScreen`, `crossDissolve`) | `UIAlertController.swift` |
+| Completion của animation kết thúc ngay (mọi animation trong kịch bản) vào một danh sách theo thứ tự (`IrisCompletions`): mỗi cái chạy ở lượt main queue sau nó, hoặc host của kịch bản chạy những cái còn chờ (sau một lượt layout) trước khi chụp màn, cả sau khởi động | `UIView.swift`, `Host.swift` |
+| Render core: giá trị một layer đang hiện (`Scene::shown_value`, `iris_layer_shown_value`, `Layer.shown(_:)`); test mở rộng | `crates/render/src/lib.rs`, `ffi.rs`, `tests.rs`, `include/irisrun_render.h`, `swift/Sources/IrisRender` |
+| Hosting view không phải gốc trình bày qua UIKit (`IrisPresentationPresenter`, `IrisPresentationView`); chú thích của `PlatformViewHost` | patch `openswiftui/0038` (+78 −18) |
+| Test: 10 test mới (gốc cửa sổ và đổi gốc, full screen, sheet với kéo, chặn kéo và detent, chuỗi lồng nhau, over current context, view controller đã đóng được giải phóng, con và container tự chuyển callback, chạm khi animate và animation ngắt nhau, transition và keyframe, view ẩn trong stack view); test alert chờ handler sau khi đóng; các test giữ cửa sổ qua nhiều lượt chạy nối tiếp (suite `OnScreen`) | `Tests/OpenUIKitTests/AppearanceTests.swift` (mới), `TextInputTests.swift` |
+| App mẫu: segment "Modal", `ModalPage`, `ModalScreen`, `ChildCard`, `PresentingCard` (SwiftUI), log callback của màn gốc; 25 + 4 điểm | `examples/ios-uikit` |
+| Representables: view controller ghi callback xuất hiện, nút "Xuất hiện", 1 điểm | `Tests/Apps/Representables` |
+
+### Quyết định
+
+- **Callback chạy theo trạng thái, không theo lời gọi:** mỗi view controller giữ một trong bốn trạng thái như UIKit; `begin`/`end` gọi thừa không làm gì. Container chuyển callback cho con có view nằm trong view của nó. View của con vào hay rời cửa sổ khi cha đã hiện thì con nhận will và did ngay (cả `UIViewControllerRepresentable`, không cần sửa `PlatformViewHost`); khi cha đang xuất hiện thì con nhận will ngay và did cùng cha.
+- **Một hàm chuyển cảnh cho mọi đường:** thứ tự will là bên biến mất rồi bên xuất hiện; did cũng vậy, trừ `present` (bên được trình bày trước), đúng các log của UIKit. Đổi view trước animation nằm trong `prepare`, sau animation trong `finish`. Không animation (và trong kịch bản), mọi thứ tới `finish` chạy ngay, did và completion ở lượt sau của main queue.
+- **Ai trình bày:** đỉnh của cây view controller, hay với kiểu over/current context thì tổ tiên gần nhất có `definesPresentationContext`, như UIKit; `presentedViewController` và `presentingViewController` đi qua tổ tiên.
+- **Gỡ liên kết khi view đã đi:** `dismiss` xoá quan hệ trình bày khi view của nó rời cửa sổ, trước `viewDidDisappear`, như UIKit; chỉ từ chối `dismiss` khi view còn đang trong animation ("while a presentation or dismiss is in progress"). Kịch bản và chuyển cảnh không animation vì vậy present và dismiss nối nhau trong một lượt được.
+- **Container theo tên của UIKit:** `UITransitionView` (phủ cửa sổ, hay khung của ngữ cảnh), `UIDimmingView`, `UIDropShadowView` hiện trong mô tả màn hình. `.fullScreen`/`.currentContext` gỡ view bên dưới khỏi cửa sổ sau chuyển cảnh (nó cũng không còn trong mô tả màn hình và `tap <chữ>` không tìm thấy), đặt lại đúng chỗ cũ trước khi đóng.
+- **Thẻ của sheet** cao hơn khung của nó một bán kính góc để góc dưới nằm ngoài màn hình, như sheet SwiftUI của Iris (patch `0025`); view controller được trình bày nằm trong khung đó.
+- **View bên dưới sheet lùi lại bằng biến đổi chỉ để vẽ** (thu nhỏ 16 điểm mỗi bên, đỉnh ở safe area, bo góc 10): biến đổi thật sẽ đổi safe area và layout của nó (iOS giữ nguyên safe area của view đó). Trượt ra khi đóng cũng chỉ để vẽ, nên view không layout lại trên đường đi.
+- **Animation cho view mới bằng animation của render core trao thẳng cho layer:** render layer mới không có giá trị cũ để `UIView.animate` bắt đầu từ đó; trượt ra và lùi lại thì qua `UIView.animate`.
+- **Kéo sheet:** pan trên thẻ; thả ở chiều cao dự đoán (dời + vận tốc × 0,2 s) dưới nửa detent thấp nhất thì đóng, không thì về detent gần nhất. Không được đóng thì lò xo cao su và delegate nghe `presentationControllerDidAttemptToDismiss` khi kéo bắt đầu.
+- **Animation bắt đầu từ giá trị đang hiện:** `CALayer.draw(in:)` hỏi render core giá trị đang hiện khi thêm animation, cho mọi animation (từ iOS 8 animation của UIKit cộng dồn nên nhìn giống `beginFromCurrentState`). Một hàm C ABI mới, không cần đọc lại animation ở Swift.
+- **SwiftUI qua UIKit:** hosting view không phải gốc cửa sổ trình bày mỗi presentation trong một `UIHostingController` `.overFullScreen`, nền trong, không animation, nội dung vẽ bằng chính container của SwiftUI ở gốc (`IrisPresentationView`), nên sheet, alert, dialog trông như ở gốc và vẫn có detent, kéo đóng. Gốc giữ đường cũ để PNG không đổi. Menu vẫn vẽ trong hosting view vì nó đặt mình theo toạ độ của nội dung.
+- **Completion của UIKit có trước màn của kịch bản:** completion của animation kết thúc ngay (mọi animation trong kịch bản, cũng là did… và completion của chuyển cảnh) vào danh sách `IrisCompletions`; mỗi cái chạy ở lượt main queue sau nó như trước, và host chạy những cái còn chờ, sau một lượt layout, trước khi chụp màn (cả màn đầu: `viewDidAppear` của gốc, và việc app làm trong đó như trình bày onboarding, có trước lệnh đầu). Một lượt `RunLoop.main.run(until: Date())` sau lệnh có lúc xử lý nguồn khác rồi trả về, để main queue sang lệnh sau. Chạy run loop tới khi main queue hết (thử trước) làm hỏng focus của form đăng nhập trong app mẫu SwiftUI: việc SwiftUI tự xếp chạy trước commit, ngoài chỗ hosting view đối chiếu focus; nên chỉ completion của UIKit đi đường riêng, main queue giữ một lượt như trước.
+- **Alert hiện dần như 2b:** `UIAlertController` là `.overFullScreen` + `crossDissolve` (0,25 s); handler vẫn chạy sau khi alert đóng.
+
+### Chỗ khác iOS
+
+- `presentationControllerWillDismiss` đến khi thả tay và sheet sẽ đóng; iOS gọi nó (và `viewWillDisappear`) khi kéo bắt đầu, rồi nếu thả tay mà sheet ở lại thì gọi `viewWillAppear`/`viewDidAppear` lại.
+- Thời gian và đường cong chuyển cảnh là ước lượng: trình bày 0,4 s ease-out, đóng 0,3 s, hiện dần 0,25 s (iOS dùng lò xo). Tỉ lệ lùi của view bên dưới và độ tối (đen 20%, như sheet SwiftUI của Iris) cũng là ước lượng.
+- Alert hiện dần, không co từ lớn về; action sheet hiện dần, không trượt lên. Sheet lồng nhau: view bên dưới cùng không lùi thêm.
+- Sheet SwiftUI từ hosting controller nhúng là container SwiftUI của Iris (view bên dưới không lùi lại), không animation; sheet ở gốc app SwiftUI vẫn không đi qua UIKit.
+- `transition(with:)`: chỉ nội dung mới hiện dần, nội dung cũ không mờ đi; flip và curl cũng hiện dần.
+- Keyframe nối nhau đổi cùng một thuộc tính của một view: chỉ keyframe cuối chạy.
+- `isBeingPresented`/`isBeingDismissed` chỉ đúng cho chính view controller được trình bày, không cho con của nó.
+- Trong kịch bản (và chuyển cảnh không animation), `dismiss` ngay sau `present` trong cùng lượt được nhận; UIKit từ chối khi animation còn chạy.
+- Không có `transitioningDelegate`, presentation controller tuỳ biến, popover thật (popover thành sheet như trên iPhone), hỏi delegate về kiểu thích ứng, `UIViewPropertyAnimator`.
+
+### Lỗi gặp và cách sửa
+
+| Lỗi | Nguyên nhân | Sửa |
+| --- | --- | --- |
+| Alert SwiftUI sau khi đóng sheet SwiftUI không hiện ("already presenting") | Sheet đóng trong một lượt commit; một commit xếp từ trước chạy trước completion của dismiss, lúc quan hệ trình bày còn | Gỡ quan hệ khi view đã đi (trước `viewDidDisappear`, như UIKit); chỉ từ chối dismiss khi animation còn chạy |
+| Test alert: chạm nút đóng không có tác dụng | Completion của present chưa chạy nên dismiss bị từ chối | Cùng cách sửa trên |
+| Test kéo sheet lúc được lúc không | Test async chạy xen nhau; cửa sổ mới hơn của test khác nằm trên và nhận chạm (bàn giao đã cảnh báo) | Suite `OnScreen` `.serialized` cho các test giữ cửa sổ qua nhiều lượt |
+| Tìm view bên dưới sheet tạo một presentation controller thừa cho màn gốc | `presentationController` tạo khi được hỏi, như UIKit | `irisPresentation`: chỉ khi đang được trình bày |
+| Delegate không nghe đổi detent | So sau khi block animate đã đặt detent mới | So trước |
+| `# expect` detent 434 thay vì 433,5 | Chia số nguyên trong test | `753.0 / 2` |
+| Chế độ frame: frame 55 thiếu "Đã đăng nhập: Nguyễn Thị Ánh" (một lần, chế độ stdout đạt) | Handler của alert giờ chạy trong completion của dismiss, ở lượt sau của main queue; một lượt run loop sau lệnh có lúc trả về mà chưa chạy main queue | `IrisCompletions`: host chạy completion còn chờ trước khi chụp màn |
+| Thử chạy run loop tới khi main queue hết: app mẫu SwiftUI mất focus ở form đăng nhập (6 điểm hỏng) | Việc SwiftUI tự xếp (focus của `onAppear`) chạy trước commit, ngoài `reconcilingFocus` của hosting view, nên hosting view không thành first responder | Giữ một lượt run loop như trước; chỉ completion của UIKit đi danh sách riêng |
+| View controller đã trình bày (hay đã hỏi `presentationController`) không bao giờ được giải phóng | View controller giữ presentation controller, presentation controller giữ lại view controller | Presentation controller giữ view controller yếu; test kiểm view controller đã đóng được giải phóng (test hỏng khi giữ mạnh) |
+
+### Số đo
+
+| Mục | Số đo | Ghi chú |
+| --- | --- | --- |
+| `swift test` | 106 test (10 mới): OpenUIKit 85, IrisBuild 13, ObjCRewriteTests 6, Swift5AppTests 1, IrisProtocol 1 | |
+| `cargo test -p irisrun-render` | 20 test (2 mở rộng cho `shown_value`) | `cargo fmt --check`, `clippy -D warnings` sạch |
+| `check-sample.sh examples/ios-uikit` | 149 điểm (25 mới) ở chế độ stdout và frame | 72 PNG cũ chỉ khác 3b ở segmented control (6 segment; khung khác nằm trong 27–375 × 106–140 điểm), frame 1 thêm đèn timer (chạy theo thời gian thật, đã biết từ 7a); 24 PNG mới (72–95) |
+| … với `IRISRUN_SCREEN=iphone-se` | 31 điểm (4 mới) | 5 PNG cũ chỉ khác ở segmented control (frame 1–2 thêm đèn timer); 3 mới |
+| App kiểm tra representable | 14 điểm (1 mới) | Frame 1–11 chỉ khác ở nút "Xuất hiện" mới; frame 0 thêm cả nút "Ghim" (view UIKit dựng bằng constraint), trước đây chỉ hiện từ frame 1 vì việc main queue của lúc khởi động chạy sau lệnh đầu; 1 PNG mới |
+| `check-sample.sh` (SwiftUI) | 68 điểm, 97/97 PNG giống 3b từng pixel | Cả frame 0 sau khi chạy main queue trước màn đầu |
+| Device UI (iPhone 14) | Sheet: thiết bị gửi 15 frame trong 800 ms khi trình bày (thẻ trượt lên, view bên dưới lùi, tối, bo góc), 12 frame trong 700 ms khi kéo đóng (thẻ theo tay rồi trượt ra từ chỗ thả); chuột trong Device UI kéo sheet xuống đóng; sheet SwiftUI của thẻ nhúng phủ cả cửa sổ | Ảnh và frame ở `~/.cache/irisrun/p1-16/4a/live/` |
+| Code | OpenUIKit: `UIPresentationController.swift` 478 dòng (mới), `UIViewController.swift` +324 −30, `UIView.swift` +169 −19, `CALayer.swift` +68 −12, `UIWindow.swift` +17 −5, `Host.swift` +7 −1; render core +132 −9 (cả test); patch `0038` +78 −18; `AppearanceTests.swift` 399 dòng; `ModalPage.swift` 355 dòng, `session.txt` +67 | |
+
+### Giới hạn và việc tiếp
+
+- **4b:** `UINavigationController`, `UINavigationBar`, `UIBarButtonItem`, `UITabBarController`, `UITabBar`, app mẫu nhiều màn, "Đợt 4: tổng kết" ([bàn giao](../plans/p1-16-handoff.md)).
+- **Trình bày:** đường huỷ của kéo đóng tương tác (callback lại khi thả mà sheet ở lại), presentation controller tuỳ biến và `transitioningDelegate`, popover, `adaptivePresentationStyle`, detent tuỳ biến, detent không làm tối, cuộn trong sheet mở rộng sheet, `viewWillTransition(to:with:)`.
+- **Animation:** `UIViewPropertyAnimator` (5/65 app trong corpus), timing lò xo, keyframe nhiều đoạn cùng thuộc tính (cần animation nhiều đoạn trong render core), cross-dissolve giữ nội dung cũ (giữ render layer cũ làm ảnh chụp).
+- **SwiftUI:** presentation qua UIKit chưa animation; menu của hosting view nhúng vẫn trong vùng của nó; gốc app SwiftUI chưa trình bày qua UIKit.

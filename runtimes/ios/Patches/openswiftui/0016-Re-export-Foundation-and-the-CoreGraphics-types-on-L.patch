@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 16:28:49 +0700
-Subject: [PATCH 16/37] Re-export Foundation and the CoreGraphics types on
+Subject: [PATCH 16/38] Re-export Foundation and the CoreGraphics types on
  Linux
 
 On Apple platforms import SwiftUI brings CoreGraphics and Foundation along, so

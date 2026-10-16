@@ -93,13 +93,16 @@ open class UIWindow: UIView {
 
     // MARK: Root view controller
 
+    /// The view controller whose view fills the window. A new one takes the old one's place, the
+    /// old disappearing and the new appearing, as in UIKit.
     open var rootViewController: UIViewController? {
         didSet {
             guard rootViewController !== oldValue else { return }
-            if let view = oldValue?.viewIfLoaded, view.superview === self {
-                view.removeFromSuperview()
-            }
-            installRootView()
+            let old = oldValue?.viewIfLoaded?.superview === self ? oldValue : nil
+            UIViewController.irisTransition(from: old.map { [$0] } ?? [], to: isHidden ? [] : rootViewController.map { [$0] } ?? [], animated: false, prepare: {
+                old?.view.removeFromSuperview()
+                self.installRootView()
+            })
         }
     }
 
@@ -111,6 +114,12 @@ open class UIWindow: UIView {
         view.frame = bounds
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(view)
+    }
+
+    /// The root view controller appears as the window shows, and disappears as it hides.
+    private func rootVisibilityChanged() {
+        guard let controller = rootViewController else { return }
+        UIViewController.irisTransition(from: isHidden ? [controller] : [], to: isHidden ? [] : [controller], animated: false, prepare: installRootView)
     }
 
     // MARK: Iris: the screen
@@ -131,11 +140,14 @@ open class UIWindow: UIView {
     /// Puts a window on screen by its level, or takes it off.
     private static func update(_ window: UIWindow) {
         let before = visible.map(ObjectIdentifier.init)
+        let wasVisible = before.contains(ObjectIdentifier(window))
         visible.removeAll { $0 === window }
         if !window.isHidden {
             let index = visible.firstIndex { $0.windowLevel.rawValue > window.windowLevel.rawValue } ?? visible.count
             visible.insert(window, at: index)
-            window.installRootView()
+        }
+        if wasVisible == window.isHidden {
+            window.rootVisibilityChanged()
         }
         if visible.map(ObjectIdentifier.init) != before {
             LayerCommit.roots = visible.map(\.layer)

@@ -316,6 +316,11 @@ bool iris_layer_clear_content(IrisScene *scene, IrisLayer layer);
 // Starts an animation, replacing one of the same property.
 bool iris_layer_add_animation(IrisScene *scene, IrisLayer layer, const IrisAnimation *animation);
 bool iris_layer_remove_animations(IrisScene *scene, IrisLayer layer);
+// The value of a property as the layer shows it at the scene's time, as a
+// presentation layer has it: an animation's while one runs, else the layer's
+// own; into value[6] as IrisAnimation's from, or *color. Either may be NULL.
+bool iris_layer_shown_value(const IrisScene *scene, IrisLayer layer, IrisProperty property,
+                            float *value, uint32_t *color);
 
 // ---- Layout
 //

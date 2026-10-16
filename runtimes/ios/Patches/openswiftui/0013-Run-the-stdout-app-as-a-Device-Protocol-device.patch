@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 13:07:02 +0700
-Subject: [PATCH 13/37] Run the stdout app as a Device Protocol device
+Subject: [PATCH 13/38] Run the stdout app as a Device Protocol device
 
 With IRISRUN_DEVICE=stdio the app speaks Iris's Device Protocol on stdio, as
 irisrun start runs it: size-delimited HostMessage envelopes come in on stdin

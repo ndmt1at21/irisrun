@@ -47,3 +47,12 @@ tap Đặt lại
 # expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
 # expect frame "UIKit" x:117.0 y:0.0 w:109.0 h:35.0
 # expect frame "Priority box" x:94.0 y:313.0 w:187.5 h:164.0
+# A page sheet: 10 points below the 20-point status bar, so 637 points high, with no home
+# indicator for its safe area to keep clear of. A drag down dismisses it.
+tap Modal
+tap Thẻ
+# expect Sheet willAppear presented → Sheet didAppear presented → presented
+# expect frame "Sheet" x:0.0 y:0.0 w:375.0 h:637.0
+# expect Safe area: 0, 0
+drag 187 300 187 660
+# expect Sheet willAppear presented → Sheet didAppear presented → presented → will dismiss → Sheet willDisappear dismissed → Sheet didDisappear dismissed → did dismiss

@@ -83,6 +83,10 @@ final class UIKitHost {
             }
             fflush(nil)
         }
+        // What the launch left on the main queue, such as the root view controller's viewDidAppear,
+        // runs before the first screen, as on a phone before the first touch.
+        RunLoop.main.run(until: Date())
+        IrisCompletions.runBeforeScreen()
         show(updatedIn: .zero)
         while let line = readLine() {
             let command = line.drop { $0 == " " }
@@ -97,8 +101,10 @@ final class UIKitHost {
                     irisScriptTime += $0
                 }
             )
-            // What the command queued on the main queue runs before the screen is taken.
+            // What the command queued on the main queue runs before the screen is taken, and
+            // UIKit's completions, which that turn of the run loop may leave for later.
             RunLoop.main.run(until: Date())
+            IrisCompletions.runBeforeScreen()
             show(updatedIn: .now - start)
         }
         exit(0)

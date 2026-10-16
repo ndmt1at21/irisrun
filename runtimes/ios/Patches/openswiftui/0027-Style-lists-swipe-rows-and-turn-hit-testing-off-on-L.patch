@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 19:12:48 +0700
-Subject: [PATCH 27/37] Style lists, swipe rows and turn hit testing off on
+Subject: [PATCH 27/38] Style lists, swipe rows and turn hit testing off on
  Linux
 
 A list is inset grouped by default, as on iOS, or grouped or plain by

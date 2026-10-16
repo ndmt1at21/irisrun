@@ -38,3 +38,8 @@ tap UIKit chạm: 1
 tap Ghim
 # expect Ghim chặt
 # expect cố định 51x31, giãn 300x60, không nén 200x20, lớn dần 74x30, nén 100x20, ràng buộc 92x50, sizeThatFits 120x40, ôm 51x31
+# The view controller's appearance callbacks: it appears with the hosting controller at first,
+# and on its own when its view comes back, moving to its parent until didMove(toParent:); it
+# disappears as its view leaves the window.
+tap Xuất hiện
+# expect Nhật ký: willAppear(moving) didAppear willDisappear didDisappear willAppear(moving) didAppear(moving)

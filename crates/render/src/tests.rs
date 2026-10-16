@@ -612,6 +612,16 @@ fn animates_on_the_scene_clock() {
     assert!(scene.is_animating());
 
     scene.set_time(6.0);
+    assert_eq!(
+        scene.shown_value(id, Value::Opacity(0.0)),
+        Some(Value::Opacity(0.5)),
+        "what shows midway, for an animation that interrupts"
+    );
+    assert_eq!(
+        scene.shown_value(id, Value::CornerRadius(9.0)),
+        Some(Value::CornerRadius(0.0)),
+        "the layer's own value where nothing animates"
+    );
     let gray = pixel(&scene.render(), 25, 25);
     assert!((120..=135).contains(&gray.r()), "half faded in: {gray:?}");
 

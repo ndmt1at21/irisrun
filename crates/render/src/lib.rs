@@ -644,6 +644,21 @@ impl Scene {
         true
     }
 
+    /// The value of `like`'s property as the layer shows it at the scene's
+    /// time, as a presentation layer has it: an animation's while one runs,
+    /// else the layer's own. A new animation starts from it, so one that
+    /// interrupts another goes on from where that one got.
+    pub fn shown_value(&self, id: LayerId, like: Value) -> Option<Value> {
+        let layer = self.shown(self.node(id)?);
+        Some(match like {
+            Value::Opacity(_) => Value::Opacity(layer.opacity),
+            Value::Frame(_) => Value::Frame(layer.frame),
+            Value::Transform(_) => Value::Transform(layer.transform),
+            Value::BackgroundColor(_) => Value::BackgroundColor(layer.background_color),
+            Value::CornerRadius(_) => Value::CornerRadius(layer.corner_radius),
+        })
+    }
+
     /// Whether an animation is still to run, so frames still change.
     pub fn is_animating(&self) -> bool {
         self.slots

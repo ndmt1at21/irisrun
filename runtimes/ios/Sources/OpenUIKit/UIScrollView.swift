@@ -7,8 +7,7 @@ import IrisRender
 /// content stretches and springs back. On a device the motion runs frame by frame, telling the
 /// delegate as it goes; a script shows where it ends.
 // ponytail: no zooming (pinch, zoomScale, viewForZooming), refresh control, directional lock or
-// scroll-to-top; a fling stops at an edge instead of overshooting it, and the offset doesn't
-// move when the safe area changes.
+// scroll-to-top; a fling stops at an edge instead of overshooting it.
 @preconcurrency @MainActor
 open class UIScrollView: UIView {
     public override init(frame: CGRect) {
@@ -57,6 +56,7 @@ open class UIScrollView: UIView {
             setNeedsLayout()
             updateIndicators()
             delegate?.scrollViewDidScroll(self)
+            barsFollowScrolling()
         }
     }
 
@@ -104,12 +104,13 @@ open class UIScrollView: UIView {
     open var automaticallyAdjustsScrollIndicatorInsets = true
 
     /// The content inset with the safe area along the axes it adjusts: those that scroll, for
-    /// the automatic behaviors; both, or neither.
+    /// the automatic behaviors, and always vertically for the content of a view controller in a
+    /// navigation or tab bar controller with the automatic one; both, or neither.
     open var adjustedContentInset: UIEdgeInsets {
         let safe = contentInsetAdjustmentBehavior == .never ? .zero : safeAreaInsets
         var inset = contentInset
         let both = contentInsetAdjustmentBehavior == .always
-        if both || contentSize.height + contentInset.top + contentInset.bottom > bounds.height || alwaysBounceVertical {
+        if both || isBarContent || contentSize.height + contentInset.top + contentInset.bottom > bounds.height || alwaysBounceVertical {
             inset.top += safe.top
             inset.bottom += safe.bottom
         }
@@ -122,6 +123,44 @@ open class UIScrollView: UIView {
 
     open func adjustedContentInsetDidChange() {
         delegate?.scrollViewDidChangeAdjustedContentInset(self)
+    }
+
+    /// The scroll view whose content runs under the bars of the view controller it is in.
+    private var barsController: UIViewController? {
+        guard let controller = viewController ?? superview?.viewController, controller.contentScrollView(for: .top) === self else { return nil }
+        return controller
+    }
+
+    private var isBarContent: Bool {
+        guard contentInsetAdjustmentBehavior == .automatic, let controller = barsController else { return false }
+        return controller.navigationController != nil || controller.tabBarController != nil
+    }
+
+    /// The bars over the content show their scroll edge appearance while it is at their edge.
+    private func barsFollowScrolling() {
+        guard let controller = barsController else { return }
+        controller.navigationController?.navigationBar.setNeedsLayout()
+        controller.tabBarController?.tabBar.setNeedsLayout()
+    }
+
+    /// The adjusted content inset when the scroll view last laid out.
+    private var laidOutInset: UIEdgeInsets?
+
+    /// At rest at its top or leading edge, the content stays there as the adjusted content inset
+    /// changes, as when the scroll view comes under a navigation bar, as UIKit keeps it.
+    override open func layoutSubviews() {
+        super.layoutSubviews()
+        let inset = adjustedContentInset
+        guard inset != laidOutInset else { return }
+        let old = laidOutInset ?? .zero
+        laidOutInset = inset
+        if !isTracking, !isDecelerating, !isScrollAnimating {
+            var offset = contentOffset
+            if offset.y == -old.top { offset.y = -inset.top }
+            if offset.x == -old.left { offset.x = -inset.left }
+            if offset != contentOffset { contentOffset = offset }
+        }
+        adjustedContentInsetDidChange()
     }
 
     // MARK: Scrolling

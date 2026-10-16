@@ -2,8 +2,8 @@ import Foundation
 import IrisHost
 
 /// A rectangle on screen and the views inside it, drawn by its layer.
-// ponytail: no drawing with Core Graphics in draw(_:), no transitions, keyframe or property
-// animators, and no traits yet; they come with the later steps of P1-16.
+// ponytail: no drawing with Core Graphics in draw(_:), no property animators and no traits yet;
+// they come with the later steps of P1-16.
 @preconcurrency @MainActor
 open class UIView: UIResponder, @preconcurrency NSCoding {
     open class var layerClass: AnyClass {
@@ -177,9 +177,11 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
         bounds.contains(point)
     }
 
-    /// The front-most view at a point in this view's coordinates that takes touches.
+    /// The front-most view at a point in this view's coordinates that takes touches; not one that
+    /// an animation without `allowUserInteraction` is moving, as in UIKit.
     open func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard isUserInteractionEnabled, !isHidden, alpha >= 0.01, self.point(inside: point, with: event) else {
+        guard isUserInteractionEnabled, !isHidden, alpha >= 0.01, self.point(inside: point, with: event),
+              layer.irisTouchesBlockedUntil <= ProcessInfo.processInfo.systemUptime else {
             return nil
         }
         for subview in subviews.reversed() {
@@ -206,8 +208,12 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
         set {
             guard newValue != layer.isHidden else { return }
             layer.isHidden = newValue
-            // A stack view gives the room of an arranged view to the others while it is hidden.
-            (superview as? UIStackView)?.irisArrangedSubviewHiddenDidChange(self)
+            // A stack view gives the room of an arranged view to the others while it is hidden;
+            // hidden in an animation, the view shows until its room has closed.
+            if let stackView = superview as? UIStackView, stackView.arrangedSubviews.contains(where: { $0 === self }) {
+                if newValue { layer.irisShowUntilAnimationEnds() }
+                stackView.irisArrangedSubviewHiddenDidChange(self)
+            }
         }
     }
 
@@ -242,16 +248,38 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
 
     // MARK: Safe area
 
-    /// How far the screen's safe area (clear of the Dynamic Island and the home indicator) is
-    /// inside the view's bounds.
-    // ponytail: from the window's frame on the screen; no additionalSafeAreaInsets, and
-    // safeAreaInsetsDidChange is called only for views whose safeAreaLayoutGuide constraints
-    // use.
+    /// How far the safe area is inside the view's bounds: the screen's (clear of the Dynamic
+    /// Island and the home indicator), less what the view controllers of this view and the views
+    /// around it add (`additionalSafeAreaInsets`, and the bars of containers), as in UIKit.
+    // ponytail: from the window's frame on the screen; safeAreaInsetsDidChange is called only for
+    // views whose safeAreaLayoutGuide constraints use.
     open var safeAreaInsets: UIEdgeInsets {
         guard let window else { return .zero }
-        let safe = window.bounds.inset(by: window.safeAreaInsets)
-        let frame = convert(bounds, to: window)
-        return UIEdgeInsets(
+        var safe = window.bounds.inset(by: window.safeAreaInsets)
+        // From the top down, a view controller's view adds its insets to those it gets from
+        // around it, and what is inside it gets what is inside those.
+        var adding: [UIView] = []
+        var view: UIView? = self
+        while let current = view, current !== window {
+            if let added = current.viewController?.irisAddedSafeArea, added != .zero {
+                adding.append(current)
+            }
+            view = current.superview
+        }
+        for current in adding.reversed() {
+            let frame = current.convert(current.bounds, to: window)
+            let (outer, added) = (UIView.insets(of: frame, inside: safe), current.viewController!.irisAddedSafeArea)
+            safe = frame.inset(by: UIEdgeInsets(
+                top: max(0, outer.top + added.top), left: max(0, outer.left + added.left),
+                bottom: max(0, outer.bottom + added.bottom), right: max(0, outer.right + added.right)
+            ))
+        }
+        return UIView.insets(of: convert(bounds, to: window), inside: safe)
+    }
+
+    /// How far `safe` is inside `frame` at each edge, from none to all of the frame.
+    private static func insets(of frame: CGRect, inside safe: CGRect) -> UIEdgeInsets {
+        UIEdgeInsets(
             top: max(0, min(safe.minY - frame.minY, frame.height)), left: max(0, min(safe.minX - frame.minX, frame.width)),
             bottom: max(0, min(frame.maxY - safe.maxY, frame.height)), right: max(0, min(frame.maxX - safe.maxX, frame.width))
         )
@@ -407,7 +435,7 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
             view.willMove(toSuperview: self)
         }
         if newWindow !== oldWindow {
-            view.forEachInTree { $0.willMove(toWindow: newWindow) }
+            view.treeWillMove(toWindow: newWindow)
         }
         let moved = view.superview === self
         if let superview = view.superview {
@@ -424,7 +452,7 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
             layer.addSublayer(view.layer)
         }
         if newWindow !== oldWindow {
-            view.forEachInTree { $0.didMoveToWindow() }
+            view.treeDidMoveToWindow()
         }
         if !moved {
             view.didMoveToSuperview()
@@ -481,13 +509,13 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
         superview.willRemoveSubview(self)
         willMove(toSuperview: nil)
         if oldWindow != nil {
-            forEachInTree { $0.willMove(toWindow: nil) }
+            treeWillMove(toWindow: nil)
         }
         superview.subviews.removeAll { $0 === self }
         self.superview = nil
         layer.removeFromSuperlayer()
         if oldWindow != nil {
-            forEachInTree { $0.didMoveToWindow() }
+            treeDidMoveToWindow()
             // A first responder that leaves its window resigns, as in UIKit.
             if let first = UIResponder.first as? UIView, first.isDescendant(of: self) {
                 UIResponder.forceResign()
@@ -525,6 +553,22 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
         body(self)
         for subview in subviews {
             subview.forEachInTree(body)
+        }
+    }
+
+    /// This view and the views inside it go to another window: they hear of it, and so do their
+    /// view controllers, which may appear or disappear with them.
+    private func treeWillMove(toWindow window: UIWindow?) {
+        forEachInTree {
+            $0.willMove(toWindow: window)
+            $0.viewController?.irisViewWillMove(toWindow: window)
+        }
+    }
+
+    private func treeDidMoveToWindow() {
+        forEachInTree {
+            $0.didMoveToWindow()
+            $0.viewController?.irisViewDidMoveToWindow()
         }
     }
 
@@ -904,14 +948,13 @@ extension UIView {
 // MARK: Animations
 
 extension UIView {
-    /// Animates the changes `animations` makes to frames, transforms, alpha and background
-    /// colors of views, also the frames a `layoutIfNeeded()` in it sets, from what shows to the
-    /// new values, which views take at once, as in UIKit. `completion` runs once the animation
-    /// is over: on a device after its delay and duration (never for one that repeats); in a
-    /// script, which shows where animations end, on the main queue's next turn.
-    // ponytail: `finished` is always true; no beginFromCurrentState (an animation starts from
-    // the last value drawn), no user interaction rules, and an arranged view hides at once
-    // rather than at the end; the rest of UIView's animation API comes with step 4.
+    /// Animates the changes `animations` makes to frames, transforms, alpha, background colors
+    /// and corner radii of views, also the frames a `layoutIfNeeded()` in it sets, from what shows
+    /// to the new values, which views take at once, as in UIKit; the views it animates take no
+    /// touches meanwhile unless the options allow user interaction. `completion` runs once the
+    /// animation is over: on a device after its delay and duration (never for one that
+    /// repeats); in a script, which shows where animations end, on the main queue's next turn.
+    // ponytail: `finished` is always true.
     public class func animate(
         withDuration duration: TimeInterval, delay: TimeInterval, options: UIView.AnimationOptions = [],
         animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil
@@ -957,7 +1000,7 @@ extension UIView {
         if irisAnimates, timing.duration > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + timing.delay + timing.duration * (timing.autoreverses ? 2 : 1), execute: finish)
         } else {
-            DispatchQueue.main.async(execute: finish)
+            IrisCompletions.add { unsafeCompletion(true) }
         }
     }
 
@@ -983,6 +1026,135 @@ extension UIView {
         public static let curveEaseIn = AnimationOptions(rawValue: 1 << 16)
         public static let curveEaseOut = AnimationOptions(rawValue: 2 << 16)
         public static let curveLinear = AnimationOptions(rawValue: 3 << 16)
+        public static let transitionFlipFromLeft = AnimationOptions(rawValue: 1 << 20)
+        public static let transitionFlipFromRight = AnimationOptions(rawValue: 2 << 20)
+        public static let transitionCurlUp = AnimationOptions(rawValue: 3 << 20)
+        public static let transitionCurlDown = AnimationOptions(rawValue: 4 << 20)
+        public static let transitionCrossDissolve = AnimationOptions(rawValue: 5 << 20)
+        public static let transitionFlipFromTop = AnimationOptions(rawValue: 6 << 20)
+        public static let transitionFlipFromBottom = AnimationOptions(rawValue: 7 << 20)
+    }
+
+    // MARK: Transitions
+
+    /// Runs `animations`, which change `view` or the views inside it, with a transition of the
+    /// view that the options name: what it shows next fades in. Changes in the block animate
+    /// as in `animate` only with `allowAnimatedContent`; UIKit otherwise animates snapshots.
+    // ponytail: the old content does not fade out, as the render core keeps no snapshot, and
+    // flips and curls fade (no 3D transforms); keep the old render layers for a cross-fade.
+    public class func transition(
+        with view: UIView, duration: TimeInterval, options: UIView.AnimationOptions = [],
+        animations: (() -> Void)?, completion: ((Bool) -> Void)? = nil
+    ) {
+        let timing = IrisAnimationTiming(duration: duration, options: options)
+        if options.contains(.allowAnimatedContent) {
+            animate(timing, animations: animations ?? {}, completion: completion)
+        } else {
+            performWithoutAnimation { animations?() }
+            animate(timing, animations: {}, completion: completion)
+        }
+        view.layer.irisTransition(options, timing)
+    }
+
+    /// Puts `toView` in place of `fromView` in its superview, or with `showHideTransitionViews`
+    /// hides `fromView` and shows `toView`, with the transition the options name: `toView`
+    /// fades in.
+    public class func transition(
+        from fromView: UIView, to toView: UIView, duration: TimeInterval, options: UIView.AnimationOptions = [],
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        if options.contains(.showHideTransitionViews) {
+            fromView.isHidden = true
+            toView.isHidden = false
+        } else if let superview = fromView.superview {
+            superview.insertSubview(toView, aboveSubview: fromView)
+            fromView.removeFromSuperview()
+        }
+        let timing = IrisAnimationTiming(duration: duration, options: options)
+        toView.layer.irisTransition(options, timing)
+        animate(timing, animations: {}, completion: completion)
+    }
+
+    // MARK: Keyframes
+
+    /// Animates the keyframes that `animations` adds, each over its part of the duration,
+    /// linearly as the default calculation mode goes.
+    // ponytail: keyframes that change one property of a view one after another play as the last
+    // of them alone, as the render core runs one animation per property; multi-step
+    // animations in the render core if apps need them.
+    public class func animateKeyframes(
+        withDuration duration: TimeInterval, delay: TimeInterval, options: UIView.KeyframeAnimationOptions = [],
+        animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil
+    ) {
+        let options = AnimationOptions(rawValue: options.rawValue & 0xFFFF).union(.curveLinear)
+        animate(IrisAnimationTiming(duration: duration, delay: delay, options: options), animations: animations, completion: completion)
+    }
+
+    /// A keyframe of the keyframe animation running now: what `animations` changes animates
+    /// from `frameStartTime` for `frameDuration`, both fractions of the animation's duration.
+    public class func addKeyframe(withRelativeStartTime frameStartTime: Double, relativeDuration frameDuration: Double, animations: @escaping () -> Void) {
+        guard let outer = IrisAnimationTiming.current else { return animations() }
+        var keyframe = outer
+        keyframe.delay += outer.duration * frameStartTime
+        keyframe.duration = outer.duration * frameDuration
+        IrisAnimationTiming.current = keyframe
+        animations()
+        IrisAnimationTiming.current = outer
+    }
+
+    public struct KeyframeAnimationOptions: OptionSet, Sendable {
+        public let rawValue: UInt
+
+        public init(rawValue: UInt) {
+            self.rawValue = rawValue
+        }
+
+        public static let layoutSubviews = KeyframeAnimationOptions(rawValue: 1 << 0)
+        public static let allowUserInteraction = KeyframeAnimationOptions(rawValue: 1 << 1)
+        public static let beginFromCurrentState = KeyframeAnimationOptions(rawValue: 1 << 2)
+        public static let `repeat` = KeyframeAnimationOptions(rawValue: 1 << 3)
+        public static let autoreverse = KeyframeAnimationOptions(rawValue: 1 << 4)
+        public static let overrideInheritedDuration = KeyframeAnimationOptions(rawValue: 1 << 5)
+        public static let overrideInheritedOptions = KeyframeAnimationOptions(rawValue: 1 << 9)
+        public static let calculationModeLinear = KeyframeAnimationOptions(rawValue: 0 << 10)
+        public static let calculationModeDiscrete = KeyframeAnimationOptions(rawValue: 1 << 10)
+        public static let calculationModePaced = KeyframeAnimationOptions(rawValue: 2 << 10)
+        public static let calculationModeCubic = KeyframeAnimationOptions(rawValue: 3 << 10)
+        public static let calculationModeCubicPaced = KeyframeAnimationOptions(rawValue: 4 << 10)
+    }
+}
+
+/// Iris: the completions of animations that end at once, as every one does in a script. Each runs
+/// on the main queue's turn after it came, as UIKit runs them once the transaction is committed;
+/// a script's host runs those still waiting before it takes the screen, after a layout, as one
+/// turn of the run loop may not reach the main queue.
+@MainActor
+enum IrisCompletions {
+    private static var pending: [(number: Int, completion: () -> Void)] = []
+    private static var added = 0
+
+    static func add(_ completion: @escaping () -> Void) {
+        added += 1
+        let number = added
+        pending.append((number, completion))
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { run(through: number) }
+        }
+    }
+
+    /// Runs the completions up to `number`, in order.
+    private static func run(through number: Int) {
+        while let next = pending.first, next.number <= number {
+            pending.removeFirst()
+            next.completion()
+        }
+    }
+
+    /// For a script's host: lays out, then runs every completion still waiting, and those they add.
+    static func runBeforeScreen() {
+        guard !pending.isEmpty else { return }
+        LayerCommit.commit()
+        run(through: .max)
     }
 }
 

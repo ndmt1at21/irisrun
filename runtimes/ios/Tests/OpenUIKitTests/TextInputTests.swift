@@ -319,44 +319,50 @@ private final class ScrollLog: NSObject, UIScrollViewDelegate {
     #expect(scrollView.contentOffset.x == 390)
 }
 
-@MainActor @Test func alertsShowTheirActionsAndRunTheHandlerOnceDismissed() {
-    makeScene()
-    let screen = Screen()
-    defer { screen.close() }
-    let controller = UIViewController()
-    screen.window.rootViewController = controller
-    let alert = UIAlertController(title: "Xin chào, Việt!", message: "Bạn đã đăng nhập.", preferredStyle: .alert)
-    var handled: [String] = []
-    alert.addAction(UIAlertAction(title: "Đóng", style: .default) { _ in
-        handled.append("close, presented: \(controller.presentedViewController != nil)")
-    })
-    alert.addAction(UIAlertAction(title: "Huỷ", style: .cancel) { _ in handled.append("cancel") })
-    alert.addTextField { $0.placeholder = "Ghi chú" }
-    controller.present(alert, animated: true)
-    #expect(controller.presentedViewController === alert && alert.presentingViewController === controller)
-    #expect(alert.textFields?.first?.isFirstResponder == true, "the first field takes the keyboard")
-    alert.view.layoutIfNeeded()
-    // A 270-point card in the middle, cancel on the left of two buttons.
-    let close = view("Đóng", in: alert.view)!.superview!
-    let cancel = view("Huỷ", in: alert.view)!.superview!
-    let card = close.superview!
-    #expect(card.frame.width == 270 && abs(card.frame.midX - 195) < 0.5 && abs(card.frame.midY - 422) < 0.5)
-    #expect(cancel.frame.minX == 0 && close.frame.minX == 135 && close.frame.height == 44)
-    let center = close.convert(CGPoint(x: close.bounds.midX, y: close.bounds.midY), to: nil)
-    screen.tap(center.x, center.y)
-    #expect(handled == ["close, presented: false"] && alert.viewIfLoaded?.superview == nil && controller.presentedViewController == nil)
+extension OnScreen {
+    @Test func alertsShowTheirActionsAndRunTheHandlerOnceDismissed() async throws {
+        makeScene()
+        let screen = Screen()
+        defer { screen.close() }
+        let controller = UIViewController()
+        screen.window.rootViewController = controller
+        let alert = UIAlertController(title: "Xin chào, Việt!", message: "Bạn đã đăng nhập.", preferredStyle: .alert)
+        var handled: [String] = []
+        alert.addAction(UIAlertAction(title: "Đóng", style: .default) { _ in
+            handled.append("close, presented: \(controller.presentedViewController != nil)")
+        })
+        alert.addAction(UIAlertAction(title: "Huỷ", style: .cancel) { _ in handled.append("cancel") })
+        alert.addTextField { $0.placeholder = "Ghi chú" }
+        controller.present(alert, animated: true)
+        #expect(controller.presentedViewController === alert && alert.presentingViewController === controller)
+        #expect(alert.textFields?.first?.isFirstResponder == true, "the first field takes the keyboard")
+        alert.view.layoutIfNeeded()
+        // A 270-point card in the middle, cancel on the left of two buttons.
+        let close = view("Đóng", in: alert.view)!.superview!
+        let cancel = view("Huỷ", in: alert.view)!.superview!
+        let card = close.superview!
+        #expect(card.frame.width == 270 && abs(card.frame.midX - 195) < 0.5 && abs(card.frame.midY - 422) < 0.5)
+        #expect(cancel.frame.minX == 0 && close.frame.minX == 135 && close.frame.height == 44)
+        let center = close.convert(CGPoint(x: close.bounds.midX, y: close.bounds.midY), to: nil)
+        screen.tap(center.x, center.y)
+        // A script shows the alert gone at once; the handler runs once the dismissal is over.
+        #expect(alert.viewIfLoaded?.window == nil && handled.isEmpty)
+        try await Task.sleep(for: .milliseconds(10))
+        #expect(handled == ["close, presented: false"] && controller.presentedViewController == nil)
 
-    // An action sheet sits on the bottom of the safe area, its cancel button apart; a tap
-    // outside cancels it.
-    let sheet = UIAlertController(title: nil, message: "Xoá ghi chú?", preferredStyle: .actionSheet)
-    sheet.addAction(UIAlertAction(title: "Huỷ bỏ", style: .cancel) { _ in handled.append("sheet cancel") })
-    sheet.addAction(UIAlertAction(title: "Xoá", style: .destructive))
-    controller.present(sheet, animated: false)
-    sheet.view.layoutIfNeeded()
-    let delete = view("Xoá", in: sheet.view)!
-    let cancelSheet = view("Huỷ bỏ", in: sheet.view)!.superview!.superview!
-    #expect((delete as? UILabel)?.textColor == .systemRed && delete.superview!.frame.height == 57)
-    #expect(cancelSheet.frame == CGRect(x: 8, y: 844 - 34 - 57, width: 374, height: 57))
-    screen.tap(195, 200)
-    #expect(handled.last == "sheet cancel" && controller.presentedViewController == nil)
+        // An action sheet sits on the bottom of the safe area, its cancel button apart; a tap
+        // outside cancels it.
+        let sheet = UIAlertController(title: nil, message: "Xoá ghi chú?", preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Huỷ bỏ", style: .cancel) { _ in handled.append("sheet cancel") })
+        sheet.addAction(UIAlertAction(title: "Xoá", style: .destructive))
+        controller.present(sheet, animated: false)
+        sheet.view.layoutIfNeeded()
+        let delete = view("Xoá", in: sheet.view)!
+        let cancelSheet = view("Huỷ bỏ", in: sheet.view)!.superview!.superview!
+        #expect((delete as? UILabel)?.textColor == .systemRed && delete.superview!.frame.height == 57)
+        #expect(cancelSheet.frame == CGRect(x: 8, y: 844 - 34 - 57, width: 374, height: 57))
+        screen.tap(195, 200)
+        try await Task.sleep(for: .milliseconds(10))
+        #expect(handled.last == "sheet cancel" && controller.presentedViewController == nil)
+    }
 }

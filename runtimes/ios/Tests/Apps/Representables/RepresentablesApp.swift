@@ -3,7 +3,7 @@ import UIKit
 
 // What SwiftUI does with UIKit views and view controllers it embeds, shown as text for
 // session.txt to check: when it makes, updates and dismantles them, how it sizes them, which
-// side a touch goes to, and the view controller's parent. A folder without an Xcode project,
+// side a touch goes to, and the view controller's parent and appearance callbacks. A folder without an Xcode project,
 // so it also runs by the Info.plist irisrun-ios-build makes for such apps.
 
 @main
@@ -20,6 +20,8 @@ struct RepresentablesApp: App {
 final class Journal {
     static let shared = Journal()
     var entries: [String] = []
+    /// The view controller's appearance callbacks.
+    var appearance: [String] = []
 }
 
 struct Checks: View {
@@ -37,6 +39,7 @@ struct Checks: View {
                 Button("Khác") { other += 1 }
                 Button(shows ? "Ẩn" : "Hiện") { shows.toggle() }
                 Button("Nhật ký") { journal = Journal.shared.entries.joined(separator: " ") }
+                Button("Xuất hiện") { journal = Journal.shared.appearance.joined(separator: " ") }
             }
             // Sizes SwiftUI gives UIKit views by their intrinsic size, priorities and
             // sizeThatFits.
@@ -129,15 +132,41 @@ struct Probe: UIViewRepresentable {
     }
 }
 
-/// Logs the parent UIKit gives its view controller.
+/// Logs the parent UIKit gives its view controller, and its appearance callbacks.
 struct Parented: UIViewControllerRepresentable {
     final class Controller: UIViewController {
         override func willMove(toParent parent: UIViewController?) {
+            super.willMove(toParent: parent)
             Journal.shared.entries.append("will:" + name(parent))
         }
 
         override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
             Journal.shared.entries.append("did:" + name(parent))
+        }
+
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            log("willAppear")
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            log("didAppear")
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            log("willDisappear")
+        }
+
+        override func viewDidDisappear(_ animated: Bool) {
+            super.viewDidDisappear(animated)
+            log("didDisappear")
+        }
+
+        private func log(_ callback: String) {
+            Journal.shared.appearance.append(callback + (isMovingToParent || isMovingFromParent ? "(moving)" : ""))
         }
 
         private func name(_ parent: UIViewController?) -> String {

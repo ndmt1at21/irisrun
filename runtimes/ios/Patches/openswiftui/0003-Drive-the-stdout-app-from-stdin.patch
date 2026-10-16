@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 00:00:35 +0700
-Subject: [PATCH 03/37] Drive the stdout app from stdin
+Subject: [PATCH 03/38] Drive the stdout app from stdin
 
 The stdout host now outputs responders and owns an EventBindingManager. After
 the first frame the app reads one command per line until stdin closes:

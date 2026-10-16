@@ -2,8 +2,8 @@ import UIKit
 
 /// A screen built from frames, as an iPhone SE nib would have it: laid out for 320 × 568 points,
 /// and stretched to the real screen by autoresizing. A segmented control in the header switches
-/// between pages: touches, controls, a form, a SwiftUI card in the UIKit screen, and a page laid
-/// out by constraints.
+/// between pages: touches, controls, a form, a SwiftUI card in the UIKit screen, a page laid out
+/// by constraints, and one that presents view controllers.
 class ViewController: UIViewController {
     /// Lamps that light up when a notification and a timer reach their selectors.
     private let notificationLamp = Lamp(frame: CGRect(x: 256, y: 68, width: 20, height: 20), name: "Notification")
@@ -45,7 +45,7 @@ class ViewController: UIViewController {
             header.addSubview(lamp)
         }
         // The pages under the header, and the control that picks one.
-        let picker = UISegmentedControl(items: ["Touch", "Controls", "Form", "SwiftUI", "Layout"])
+        let picker = UISegmentedControl(items: ["Touch", "Controls", "Form", "SwiftUI", "Layout", "Modal"])
         picker.frame = CGRect(x: 16, y: 104, width: 288, height: 32)
         picker.autoresizingMask = [.flexibleWidth]
         picker.selectedSegmentIndex = 0
@@ -66,16 +66,20 @@ class ViewController: UIViewController {
         swiftUIPage.accessibilityLabel = "SwiftUI page"
         let autoLayoutPage = AutoLayoutPage(frame: touchPage.frame)
         autoLayoutPage.accessibilityLabel = "Auto Layout page"
-        pages = [touchPage, ControlsPage(frame: touchPage.frame), formPage, swiftUIPage, autoLayoutPage]
+        let modalPage = ModalPage(frame: touchPage.frame)
+        modalPage.accessibilityLabel = "Modal page"
+        pages = [touchPage, ControlsPage(frame: touchPage.frame), formPage, swiftUIPage, autoLayoutPage, modalPage]
         for (index, page) in pages.enumerated() {
             page.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             page.isHidden = index != picker.selectedSegmentIndex
             view.addSubview(page)
         }
-        // The SwiftUI card's hosting controller joins this one as a child, and its view the page.
-        addChild(swiftUIPage.card)
-        swiftUIPage.addSubview(swiftUIPage.card.view)
-        swiftUIPage.card.didMove(toParent: self)
+        // The SwiftUI cards' hosting controllers join this one as children, and their views the pages.
+        for (page, card) in [(swiftUIPage, swiftUIPage.card), (modalPage, modalPage.card)] as [(UIView, UIViewController)] {
+            addChild(card)
+            page.addSubview(card.view)
+            card.didMove(toParent: self)
+        }
 
         NotificationCenter.default.addObserver(self, selector: #selector(applicationDidBecomeActive(_:)), name: UIApplication.didBecomeActiveNotification, object: nil)
         Timer.scheduledTimer(timeInterval: 0.3, target: self, selector: #selector(timerFired(_:)), userInfo: "tick", repeats: false)
@@ -185,6 +189,28 @@ class ViewController: UIViewController {
         // Target and action, as a storyboard would connect the button to buttonUp(_:).
         button.addTarget(self, action: #selector(buttonDown(_:)), for: .touchDown)
         button.addTarget(self, action: #selector(buttonUp(_:)), for: .touchUpInside)
+    }
+
+    // The screen's own appearance, which the Modal page logs: a full-screen presentation takes it
+    // off screen and gives it back; a sheet leaves it.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        ModalLog.record(self, "willAppear")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        ModalLog.record(self, "didAppear")
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        ModalLog.record(self, "willDisappear")
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        ModalLog.record(self, "didDisappear")
     }
 
     @objc private func pageChanged(_ picker: UISegmentedControl) {

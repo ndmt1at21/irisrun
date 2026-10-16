@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 21:23:53 +0700
+Subject: [PATCH 38/38] Present the sheets and alerts of hosting views that are
+ not a window's root through UIKit
+
+A UIHostingController that is a child of another view controller, or the
+view controller of a representable, presents its content's sheets, covers,
+alerts and confirmation dialogs with UIKit's present, each in a hosting
+controller of its own over the whole window, as SwiftUI does on iOS. The
+window's root hosting controller shows them over its content as before;
+menus stay there too, as they place themselves in the content's
+coordinates. A representable's view controller hears appearance callbacks
+from UIKit as its view comes and goes.
+---
+ .../Hosting/UIKit/View/IrisHostingView.swift  | 42 +++++++++++++++-
+ .../Platform/IrisPlatformViewHost.swift       |  4 +-
+ .../View/Presentation/IrisPresentation.swift  | 50 +++++++++++++------
+ 3 files changed, 78 insertions(+), 18 deletions(-)
+
+diff --git a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+index 1d76cb9..f29ca2d 100644
+--- a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
++++ b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+@@ -22,7 +22,8 @@ import OpenUIKit
+ /// it as to any view, and they go on to SwiftUI's gestures. While one of its text fields is
+ /// focused it is UIKit's first responder, so that the keyboard reaches SwiftUI, and a UIKit
+ /// text input that takes the keyboard ends SwiftUI's editing. The UIKit views of the content's
+-/// representables are its subviews, placed and drawn where the display list shows them.
++/// representables are its subviews, placed and drawn where the display list shows them. Unless
++/// it is its window's root, it presents its content's sheets and alerts through UIKit.
+ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDelegate, EventGraphHost, IrisLayerHost where Content: View {
+     typealias RootView = ModifiedContent<ModifiedContent<Content, IrisPresentationHost>, HitTestBindingModifier>
+ 
+@@ -65,6 +66,8 @@ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDe
+     /// The views that hold the UIKit views of representables, as the display list last placed
+     /// them (`PlatformViewHost`).
+     private var platformViews: [UIView] = []
++    /// What the content presents through UIKit, each in a hosting controller of its own.
++    private var presented: [(id: AnyHashable, controller: UIHostingController<IrisPresentationView>)] = []
+ 
+     init(rootView: Content) {
+         self.rootView = rootView
+@@ -302,7 +305,7 @@ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDe
+     // MARK: ViewRendererHost
+ 
+     func updateRootView() {
+-        viewGraph.setRootView(Self.makeRootView(rootView.modifier(IrisPresentationHost())))
++        viewGraph.setRootView(Self.makeRootView(rootView.modifier(IrisPresentationHost(presenter: self))))
+     }
+ 
+     func updateEnvironment() {
+@@ -404,6 +407,41 @@ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDe
+     var focusedResponder: ResponderNode? { nil }
+ }
+ 
++// MARK: - Presentations
++
++/// Iris: a hosting view that is not its window's root, such as a child view controller's or a
++/// representable's, presents sheets, covers, alerts and dialogs through UIKit, as SwiftUI does on
++/// iOS: each in a hosting controller of its own over the whole window, presented by the one
++/// before. The root's show over its content, as before; menus too, as they place themselves in
++/// the content's coordinates.
++extension _UIHostingView: IrisPresentationPresenter {
++    func present(_ presentations: [IrisPresentation]) -> [IrisPresentation] {
++        guard let controller = hostingController, let window, window.rootViewController !== controller else {
++            return presentations
++        }
++        let modal = presentations.filter { $0.kind != .menu }
++        // Those that went, and the ones over them, go; those that stay show their new content;
++        // new ones come over the last.
++        let kept = zip(presented, modal).prefix { $0.id == $1.id }.count
++        if kept < presented.count {
++            (kept == 0 ? controller : presented[kept - 1].controller).dismiss(animated: false)
++            presented.removeSubrange(kept...)
++        }
++        for (index, presentation) in modal.enumerated() {
++            guard index >= presented.count else {
++                presented[index].controller.rootView = IrisPresentationView(presentation: presentation)
++                continue
++            }
++            let presentedController = UIHostingController(rootView: IrisPresentationView(presentation: presentation))
++            presentedController.modalPresentationStyle = .overFullScreen
++            presentedController.view.backgroundColor = .clear
++            (presented.last?.controller ?? controller).present(presentedController, animated: false)
++            presented.append((presentation.id, presentedController))
++        }
++        return presentations.filter { $0.kind == .menu }
++    }
++}
++
+ // MARK: - Input from the host
+ 
+ /// Iris: while this view is UIKit's first responder, the host's keyboard input comes here, and
+diff --git a/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift b/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+index 58b9772..dafde58 100644
+--- a/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
++++ b/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+@@ -163,8 +163,8 @@ final class PlatformViewHost<Content>: UIView, AnyPlatformViewHost, AnyPlatformV
+     // MARK: View controllers
+ 
+     /// A view controller is a child of the nearest view controller above, the hosting
+-    /// controller, while its view is in a window, with UIKit's containment calls.
+-    // ponytail: no appearance callbacks; UIKit has none yet (P1-16, step 4).
++    /// controller, while its view is in a window, with UIKit's containment calls; it appears and
++    /// disappears with its view, as UIKit has a child do.
+     override func didMoveToWindow() {
+         super.didMoveToWindow()
+         guard let viewController = representedViewProvider as? UIViewController else { return }
+diff --git a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+index 122713e..3f7c20d 100644
+--- a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
++++ b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+@@ -10,8 +10,9 @@ public import OpenSwiftUICore
+ 
+ // Iris: sheets, covers, alerts and confirmation dialogs, until upstream has presentations.
+ // As in SwiftUI, a presented view travels up as a preference, here to the presentation host
+-// at the root of the scene, which shows it over the app with the environment of the view
+-// that presented it. ponytail: no appear or disappear animation yet.
++// at the root of the hosting view, which shows it over the app with the environment of the view
++// that presented it; a hosting view that is not its window's root presents it through UIKit
++// instead, over the whole window. ponytail: no appear or disappear animation yet.
+ 
+ /// systemRed.
+ private let systemRed = Color(red: 1, green: 59 / 255, blue: 48 / 255)
+@@ -57,8 +58,18 @@ struct IrisPresentationKey: PreferenceKey {
+     }
+ }
+ 
+-/// Iris: shows what the views of a scene present, each over the app and the ones before.
++/// Iris: what a hosting view does with the presentations of its content before its host shows
++/// them over the content.
++protocol IrisPresentationPresenter: AnyObject {
++    /// Shows those it can, as a hosting view that is not its window's root presents them through
++    /// UIKit; returns those left for the host.
++    func present(_ presentations: [IrisPresentation]) -> [IrisPresentation]
++}
++
++/// Iris: shows what the views of a hosting view present, each over the app and the ones before,
++/// unless its presenter shows them.
+ struct IrisPresentationHost: ViewModifier {
++    weak var presenter: (any IrisPresentationPresenter)?
+     @State private var presentations: [IrisPresentation] = []
+ 
+     func body(content: Content) -> some View {
+@@ -66,25 +77,36 @@ struct IrisPresentationHost: ViewModifier {
+             .overlay {
+                 ZStack {
+                     ForEach(presentations, id: \.id) { presentation in
+-                        switch presentation.kind {
+-                        case .sheet:
+-                            SheetContainer(presentation: presentation)
+-                        case .fullScreenCover:
+-                            presentation.content.view
+-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+-                                .background(Color.white)
+-                        case .alert, .dialog, .menu:
+-                            presentation.content.view
+-                        }
++                        IrisPresentationView(presentation: presentation)
+                     }
+                 }
+             }
+             // After the overlay, to see what presented views present in turn.
+-            .onPreferenceChange(IrisPresentationKey.self) { presentations = $0 }
++            .onPreferenceChange(IrisPresentationKey.self) { [presenter] in
++                presentations = presenter?.present($0) ?? $0
++            }
+             .transformPreference(IrisPresentationKey.self) { $0 = [] }
+     }
+ }
+ 
++/// Iris: a presentation as it shows over the app.
++struct IrisPresentationView: View {
++    var presentation: IrisPresentation
++
++    var body: some View {
++        switch presentation.kind {
++        case .sheet:
++            SheetContainer(presentation: presentation)
++        case .fullScreenCover:
++            presentation.content.view
++                .frame(maxWidth: .infinity, maxHeight: .infinity)
++                .background(Color.white)
++        case .alert, .dialog, .menu:
++            presentation.content.view
++        }
++    }
++}
++
+ /// Identifies a view that presents.
+ final class PresenterID {}
+ 

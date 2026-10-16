@@ -1,6 +1,6 @@
 # Tiến độ triển khai
 
-Cập nhật 16/10/2026, cuối session thứ sáu (P1-16 đợt 1, 2, 7, 3a và P1-35 xong; dừng trước đợt 3b theo yêu cầu người dùng). File này để session sau làm tiếp, bắt đầu từ mục 8 của "Làm tiếp"; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
+Cập nhật 16/10/2026, cuối session thứ bảy (P1-16 đợt 3b và 4a xong; 4b đang làm dở, tạm dừng theo yêu cầu người dùng). File này để session sau làm tiếp, bắt đầu từ mục 9 của "Làm tiếp"; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
 
 ## Tổng quan
 
@@ -19,7 +19,7 @@ Cập nhật 16/10/2026, cuối session thứ sáu (P1-16 đợt 1, 2, 7, 3a và
 | P0-10 cloud Android | Xong ở local | Emulator Android 16 trong container trên KVM → scrcpy-server → `irisrun-gateway` (str0m) → WebRTC → Chromium; chạm, kéo, phím, chữ (cả tiếng Việt), Back đều chạy. Còn đo từ VN tới host Singapore. Xem [reports/p0-10-cloud-android.md](reports/p0-10-cloud-android.md) |
 | P1-14 Render core v1 | Xong phần code | Chữ nhiều kiểu, metric chữ thật, bóng đổ, path, gradient, mask, ảnh theo `contentMode`, animation, hit-test, frame mã hoá ở luồng khác; OpenSwiftUI dùng metric thật (patch 0009). Còn so ảnh với simulator. Xem [reports/p1-14-render-core-v1.md](reports/p1-14-render-core-v1.md) |
 | P1-15 Input iOS | Xong | Form đăng nhập mẫu gõ Telex được trong Device UI (sự kiện IME của Chromium). `DragGesture`, `ScrollView`, `List` cuộn; `TextField`/`SecureField`/`TextEditor` vẽ bằng SwiftUI, caret theo render core; `@FocusState`/`onSubmit` bản Iris; app chạy như thiết bị IrisProtocol qua stdio; `irisrun start` nhận project Xcode. Input → frame trung vị 17 ms. Compute nâng 0.6.0-bugfix.1 kèm patch. Chưa thử bộ gõ thật của hệ điều hành. Xem [reports/p1-15-ios-input.md](reports/p1-15-ios-input.md) |
-| P1-16 UIKit cơ bản | Đang làm | Đợt 1, 2, 7 và 3a xong; tiếp theo 3b, rồi 4, 5, 6. OpenUIKit vẽ bằng render core, một host kiểu iOS cho cả app SwiftUI, SwiftUI và UIKit nhúng vào nhau, Auto Layout trên solver kasuari. Xem [reports/p1-16-uikit.md](reports/p1-16-uikit.md) và [plans/p1-16-uikit.md](plans/p1-16-uikit.md) |
+| P1-16 UIKit cơ bản | Đang làm | Đợt 1, 2, 7 và 3 xong; tiếp theo 4, rồi 5, 6. OpenUIKit vẽ bằng render core, một host kiểu iOS cho cả app SwiftUI, SwiftUI và UIKit nhúng vào nhau, Auto Layout trên solver kasuari. Xem [reports/p1-16-uikit.md](reports/p1-16-uikit.md) và [plans/p1-16-uikit.md](plans/p1-16-uikit.md) |
 | P1-35 Viết lại ObjC | Xong | swift-syntax trong IrisBuild viết lại `#selector`, `@objc`, IB, KVC/KVO, giữ số dòng; corpus hết lỗi do `@objc`/`#selector`. Xem [reports/p1-35-objc-rewrite.md](reports/p1-35-objc-rewrite.md) |
 | P1-13 Mở rộng OpenSwiftUI | Xong phần SwiftUI | Đợt 1–4 xong (patch 0014–0028): vẽ display list, control, container, điều hướng, toolbar, Button có style, sheet/alert/dialog/menu, List kiểu iOS, swipe, ScrollViewReader; sửa 4 lỗi upstream. Đợt 5: `check-sample.sh` vào CI (`.github/workflows/ios-sample.yml`). Còn: OpenKit dựng sẵn và đo corpus — corpus còn 0/65 vì mọi app vướng UIKit/Combine/framework khác, nên đo sau P1-16–P1-18. Xem [reports/p1-13-openswiftui.md](reports/p1-13-openswiftui.md) |
 | P1-12 Pipeline build iOS | Xong phần pipeline | `irisrun-ios-build` (Swift, chỉ Foundation) đọc `.pbxproj` kể cả thư mục đồng bộ của Xcode 16, chọn target iOS, gom source/resource/gói SPM, bỏ preview, `.xcstrings` → `.strings`, sinh SwiftPM; 65/65 app corpus đọc được; app mẫu build qua `IrisSample.xcodeproj`. Nửa UIKit chờ P1-16, P1-33. Xem [reports/p1-12-ios-build-pipeline.md](reports/p1-12-ios-build-pipeline.md) |
@@ -65,7 +65,7 @@ Emulator và gateway của P0-10 chạy lại theo mục "Chạy lại" của b�
      - `check-sample.sh runtimes/ios/Tests/Apps/Representables`: 13 điểm.
 
    **Làm tiếp (session thứ bảy):**
-   1. **P1-16 đợt 3b**, theo [plans/p1-16-handoff.md](plans/p1-16-handoff.md) mà 3a viết sẵn cho 3b. Tiêu chí của đợt 3 là "màn dựng toàn bằng constraint hiện như iOS ở 2 cỡ màn hình". Việc cần làm:
+   1. **P1-16 đợt 3b** (xong ở session thứ bảy, xem mục 9), theo [plans/p1-16-handoff.md](plans/p1-16-handoff.md) mà 3a viết sẵn cho 3b. Tiêu chí của đợt 3 là "màn dựng toàn bằng constraint hiện như iOS ở 2 cỡ màn hình". Việc cần làm:
       - `UIStackView`: tự tạo constraint `UISV-…` như UIKit. `isHidden` cần một hook để ẩn view thì stack co lại.
       - `UIView.animate` tối thiểu, để `layoutIfNeeded()` trong animation chạy được.
       - Cỡ màn hình thứ hai (iPhone SE, 375×667), chọn được qua biến môi trường và Device Protocol. Hiện 390×844 viết cứng trong `UIScreen.swift`, safe area 47/34 trong `UIWindow.swift`, và còn liên quan scene của `IrisHost` và patch 0034.
@@ -116,6 +116,27 @@ Emulator và gateway của P0-10 chạy lại theo mục "Chạy lại" của b�
       - Action gửi tới target nil khi chưa có first responder thì đi từ sender.
       - Constraint có item nằm ngoài cây view thì ghi log và bỏ qua, thay vì crash như iOS.
    6. P1-35 còn thiếu: method `@objc` của class generic (13 method ở 3 app), KVO kiểu cũ (4 app), `@NSManaged` (thuộc E2-05), và package local của app chưa được viết lại.
+
+9. **Session thứ bảy (16/10): P1-16 đợt 3b xong, tức đợt 3 xong.** Cùng cách làm như mục 8: subagent làm, orchestrator chạy lại mọi kiểm tra. Xem [báo cáo](reports/p1-16-uikit.md) mục "Đợt 3b", "Đợt 3: tổng kết" và [bàn giao cho đợt 4](plans/p1-16-handoff.md).
+   - `UIStackView` dựng bằng ràng buộc `UISV-…` như UIKit; `UIView.animate` tối thiểu (frame do `layoutIfNeeded()` đặt cũng animate); render core có `fills_backwards` cho delay.
+   - Cỡ màn hình thứ hai: iPhone SE (375×667, 2x, safe area 20/0), chọn bằng `IRISRUN_SCREEN=iphone-se` (cả `irisrun start`) hay `DeviceConfig.display` lúc app đang chạy (`IrisScreen` trong `IrisHost/Window.swift`). `check-sample.sh` chơi `session-<máy>.txt`; CI chạy thêm cỡ SE.
+   - Số đo (orchestrator chạy lại): 96 test; app mẫu UIKit 124 điểm ở iPhone 14, 27 điểm ở SE (cả hai chế độ); Representables 13; SwiftUI 68; render core 20 test, fmt và clippy sạch; mọi PNG giống baseline `~/.cache/irisrun/p1-16/3b/frames`.
+   - Lệnh chạy lại cả lượt kiểm tra: `~/.cache/irisrun/p1-16/3b/run-checks.sh` (của subagent; sửa thư mục đích trước khi dùng).
+
+   - **Đợt 4a xong** (vòng đời xuất hiện, `present`/`dismiss` đầy đủ, phần còn lại của `UIView.animate`, sheet/alert của SwiftUI trong hosting controller nhúng đi qua `present` của UIKit; xem báo cáo mục "Đợt 4a"). Patch `openswiftui/0038`, 38 patch, stamp `9c6c26734343f369`. Orchestrator chạy lại: 106 test; app mẫu UIKit 149 điểm ở iPhone 14, 31 ở SE; Representables 14; SwiftUI 68; render core 20, fmt và clippy sạch; PNG giống baseline `~/.cache/irisrun/p1-16/4a/frames`.
+
+   **Làm tiếp:** **4b** `UINavigationController`, `UITabBarController`, app mẫu nhiều màn, "Đợt 4: tổng kết", theo [bàn giao 4a → 4b](plans/p1-16-handoff.md). Rồi đợt 5, 6 như mục 8.
+
+   **Câu hỏi mới chờ người dùng** (mặc định đang dùng ghi trong ngoặc):
+   1. `DeviceConfig.display` đổi màn ngay lúc app đang chạy, app giữ state. (Giữ vậy; cách khác là khởi động lại runtime với cỡ mới.)
+   2. Chọn máy cho `irisrun start` bằng biến môi trường `IRISRUN_SCREEN`. (Chưa thêm tuỳ chọn `--screen`.)
+   3. Ở chế độ kịch bản, SE vẽ ở 2x như máy thật nên PNG là 750×1334. (Giữ 2x.)
+   4. Lò xo của `UIView.animate` là đường cong ease-out, không vượt đích. (Thêm timing lò xo thật vào render core khi app cần.)
+   5. Device UI (`apps/web`, P1-28) cần vẽ khung máy theo tỉ lệ `DeviceInfo.display` (SE hiện bị kéo giãn vào khung iPhone 14), xử lý `DeviceInfo` đổi giữa chừng, và có chỗ chọn máy gửi `DeviceConfig`. Chưa chuyển cho session UI (16/10 không có session UI nào đang chạy).
+   6. Thời gian, đường cong chuyển cảnh, tỉ lệ lùi của sheet là ước lượng (0,4 / 0,3 / 0,25 s, ease thay lò xo). (Giữ; chỉnh khi có simulator.)
+   7. `presentationControllerWillDismiss` gọi khi thả tay, không phải khi bắt đầu kéo; chưa có đường huỷ. (Làm khi có app cần.)
+   8. Sheet và alert ở gốc app SwiftUI vẫn vẽ trong overlay của SwiftUI, không qua UIKit (chuyển sẽ thêm hiệu ứng lùi và đổi PNG). (Giữ.)
+   9. Màn đầu của kịch bản giờ chạy cả việc của lúc khởi động, nên frame 0 của Representables đổi. (Giữ, đúng iOS hơn.)
 
 ## Kế hoạch P1-13 (task XL, chia đợt)
 

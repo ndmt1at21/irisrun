@@ -333,10 +333,47 @@ open class CALayer: NSObject {
         didSet { changed(.style) }
     }
 
-    /// Iris: how the next changes of the frame, transform, opacity and background color animate
-    /// once the layer is drawn: as the implicit animation of a control's `setOn(_:animated:)`, or
-    /// as the `UIView.animate` block they were made in.
+    /// Iris: how the next changes of the frame, transform, opacity, background color and corner
+    /// radius animate once the layer is drawn: as the implicit animation of a control's
+    /// `setOn(_:animated:)`, or as the `UIView.animate` block they were made in.
     var irisAnimation: IrisAnimationTiming?
+
+    /// Iris: the uptime until which a `UIView.animate` block without `allowUserInteraction`
+    /// animates the layer, while UIKit keeps touches from its view.
+    private(set) var irisTouchesBlockedUntil: TimeInterval = 0
+
+    /// Iris: how a presentation shows the layer besides its own geometry, as a page sheet shows
+    /// the view under it receded: drawn only, after the layer's transform, so that layout,
+    /// safe areas and hit-testing go on by the model, as for a presentation layer.
+    var irisPresentationTransform = CGAffineTransform.identity {
+        didSet { changed(.geometry) }
+    }
+
+    /// Iris: the corner radius drawn in place of the layer's, clipping, for the same presentations.
+    var irisPresentationCornerRadius: CGFloat? {
+        didSet { changed(.style) }
+    }
+
+    /// Iris: the uptime until which the layer still shows though hidden, as an arranged view of a
+    /// stack view hidden in an animation does until its room has closed.
+    private var showsUntil: TimeInterval = 0
+
+    /// Iris: the transition of a `UIView.transition` that the options name, if any, over the
+    /// layer: what it shows next fades in.
+    func irisTransition(_ options: UIView.AnimationOptions, _ timing: IrisAnimationTiming) {
+        guard options.rawValue >> 20 & 0xF != 0, timing.duration > 0 else { return }
+        irisAnimations.append(timing.animation(from: .opacity(0), to: .opacity(opacity)))
+    }
+
+    /// Iris: a hidden layer goes on showing until the animation block running now ends.
+    func irisShowUntilAnimationEnds() {
+        guard irisAnimates, let block = IrisAnimationTiming.current, block.end < .infinity else { return }
+        showsUntil = block.end
+        nonisolated(unsafe) let layer = self
+        DispatchQueue.main.asyncAfter(deadline: .now() + (block.end - ProcessInfo.processInfo.systemUptime)) {
+            layer.changed(.style)
+        }
+    }
 
     // MARK: Layout
 
@@ -397,6 +434,9 @@ open class CALayer: NSObject {
         changes.formUnion(change)
         if let block = IrisAnimationTiming.current, !change.isDisjoint(with: [.geometry, .style]) {
             irisAnimation = block
+            if irisAnimates, !block.allowsUserInteraction {
+                irisTouchesBlockedUntil = max(irisTouchesBlockedUntil, block.end)
+            }
         }
         LayerCommit.schedule()
     }
@@ -416,8 +456,14 @@ open class CALayer: NSObject {
         var drew = !changes.isEmpty
         let animation = irisAnimates && changes != .all ? irisAnimation : nil
         irisAnimation = nil
+        // An animation starts from what shows, so one that interrupts another goes on from where
+        // that one got, as UIKit's do since iOS 8 (and with beginFromCurrentState before).
+        func shown(_ value: Animation.Value) -> Animation.Value {
+            animation == nil ? value : layer.shown(value)
+        }
         if changes.contains(.geometry) {
             let (oldFrame, oldTransform) = (layer.frame, layer.transform)
+            let (fromFrame, fromTransform) = (shown(.frame(oldFrame)), shown(.transform(oldTransform)))
             // The render core places a layer by its untransformed frame inside the
             // superlayer's bounds, and turns it about its center.
             let origin = superlayer?.bounds.origin ?? .zero
@@ -430,20 +476,21 @@ open class CALayer: NSObject {
             // About the anchor point is about the center, moved by L·d − d for d from the
             // anchor point to the center.
             let d = CGPoint(x: (0.5 - anchorPoint.x) * size.width, y: (0.5 - anchorPoint.y) * size.height)
-            let t = affine
+            let t = affine.concatenating(irisPresentationTransform)
             layer.transform = [
                 Float(t.a), Float(t.b), Float(t.c), Float(t.d),
                 Float(t.tx + t.a * d.x + t.c * d.y - d.x), Float(t.ty + t.b * d.x + t.d * d.y - d.y),
             ]
             if let animation, layer.frame != oldFrame {
-                layer.add(animation.animation(from: .frame(oldFrame), to: .frame(layer.frame)))
+                layer.add(animation.animation(from: fromFrame, to: .frame(layer.frame)))
             }
             if let animation, layer.transform != oldTransform {
-                layer.add(animation.animation(from: .transform(oldTransform), to: .transform(layer.transform)))
+                layer.add(animation.animation(from: fromTransform, to: .transform(layer.transform)))
             }
         }
         if changes.contains(.style) {
-            let (oldColor, oldOpacity) = (layer.backgroundColor, layer.opacity)
+            let (oldColor, oldOpacity, oldRadius) = (layer.backgroundColor, layer.opacity, layer.cornerRadius)
+            let (fromColor, fromOpacity, fromRadius) = (shown(.backgroundColor(oldColor)), shown(.opacity(oldOpacity)), shown(.cornerRadius(oldRadius)))
             if irisStopsAnimations {
                 layer.removeAllAnimations()
                 irisStopsAnimations = false
@@ -454,21 +501,24 @@ open class CALayer: NSObject {
                 }
             }
             irisAnimations = []
-            layer.isHidden = isHidden
+            layer.isHidden = isHidden && showsUntil <= scene.time
             layer.opacity = opacity
-            layer.masksToBounds = masksToBounds
+            layer.masksToBounds = masksToBounds || irisPresentationCornerRadius != nil
             layer.backgroundColor = backgroundColor?.argb ?? 0
-            layer.cornerRadius = Float(cornerRadius)
+            layer.cornerRadius = Float(irisPresentationCornerRadius ?? cornerRadius)
             layer.setBorder(width: Float(borderWidth), color: borderColor?.argb ?? 0)
             let shadow = shadowOpacity > 0 ? shadowColor?.copy(alpha: (shadowColor?.alpha ?? 0) * CGFloat(shadowOpacity)) : nil
             layer.shadowColor = shadow?.argb ?? 0
             layer.shadowOffset = Point(x: Float(shadowOffset.width), y: Float(shadowOffset.height))
             layer.shadowRadius = Float(shadowRadius)
             if let animation, layer.backgroundColor != oldColor {
-                layer.add(animation.animation(from: .backgroundColor(oldColor), to: .backgroundColor(layer.backgroundColor)))
+                layer.add(animation.animation(from: fromColor, to: .backgroundColor(layer.backgroundColor)))
             }
             if let animation, layer.opacity != oldOpacity {
-                layer.add(animation.animation(from: .opacity(oldOpacity), to: .opacity(layer.opacity)))
+                layer.add(animation.animation(from: fromOpacity, to: .opacity(layer.opacity)))
+            }
+            if let animation, layer.cornerRadius != oldRadius {
+                layer.add(animation.animation(from: fromRadius, to: .cornerRadius(layer.cornerRadius)))
             }
         }
         if changes.contains(.contents) {
@@ -564,6 +614,10 @@ struct IrisAnimationTiming {
     var curve: Animation.Timing
     var repeatCount: Float
     var autoreverses: Bool
+    /// The uptime the animation ends at, from when the timing is made; never for one that repeats.
+    var end: TimeInterval
+    /// Whether the views it animates take touches meanwhile, which UIKit stops unless asked.
+    var allowsUserInteraction: Bool
 
     /// The curve the options name (ease in and out unless they say), or a spring's.
     init(duration: Double, delay: Double = 0, options: UIView.AnimationOptions = [], spring: Bool = false) {
@@ -577,6 +631,8 @@ struct IrisAnimationTiming {
         }
         repeatCount = options.contains(.repeat) ? .infinity : 1
         autoreverses = options.contains(.autoreverse)
+        end = repeatCount < .infinity ? ProcessInfo.processInfo.systemUptime + delay + duration * (autoreverses ? 2 : 1) : .infinity
+        allowsUserInteraction = options.contains(.allowUserInteraction)
     }
 
     /// The block of `UIView.animate` running now, whose changes animate; main thread only.

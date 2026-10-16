@@ -259,3 +259,70 @@ tap Đặt lại
 # expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
 # expect frame "UIKit" x:122.0 y:0.0 w:114.0 h:35.0
 # expect frame "Priority box" x:97.7 y:313.0 w:195.0 h:307.0
+# Presentations (step 4a): the Modal page presents view controllers in UIKit's styles and shows
+# the appearance callbacks they hear, in order, with what UIKit says about them (being presented
+# or dismissed, moving to or from a parent). viewDidAppear, viewDidDisappear and the completions
+# come once the transition is over, which a script shows where it ends.
+tap Modal
+# expect Modal page
+# A page sheet, the default style: the screen under it stays, receded, so only the sheet hears
+# callbacks. The card is 10 points below the safe area and reaches the bottom of the screen; its
+# safe area keeps clear of the home indicator only.
+tap Thẻ
+# expect Sheet willAppear presented → Sheet didAppear presented → presented
+# expect frame "Sheet" x:0.0 y:0.0 w:390.0 h:787.0
+# expect Safe area: 0, 34
+tap Đóng
+# expect Sheet willDisappear dismissed → Sheet didDisappear dismissed → dismissed
+# A drag down dismisses it, and its presentation controller's delegate hears of it.
+tap Thẻ
+drag 195 350 195 840
+# expect Sheet willAppear presented → Sheet didAppear presented → presented → will dismiss → Sheet willDisappear dismissed → Sheet didDisappear dismissed → did dismiss
+# One that may not go (isModalInPresentation) stays, and the delegate hears of the attempt.
+tap Thẻ
+tap Chặn kéo: tắt
+drag 195 350 195 840
+# expect Sheet willAppear presented → Sheet didAppear presented → presented → attempt
+# expect Chặn kéo: bật
+tap Đóng
+# Full screen: the screen under it disappears, and leaves the window until the cover goes.
+tap Toàn màn hình
+# expect Shapes willDisappear → Cover willAppear presented → Cover didAppear presented → Shapes didDisappear → presented
+# expect frame "Cover" x:0.0 y:0.0 w:390.0 h:844.0
+# expect Safe area: 47, 34
+# A sheet over the cover; then the screen dismisses the cover, which takes the sheet with it.
+# Only the top one goes with its transition, and the screen comes back.
+tap Thẻ lồng
+# expect Nested willAppear presented → Nested didAppear presented → presented
+tap Đóng tất cả
+# expect Nested willDisappear dismissed → Cover willDisappear dismissed → Shapes willAppear → Nested didDisappear dismissed → Cover didDisappear dismissed → Shapes didAppear → dismissed
+# Over full screen, fading in: the screen under it shows through and hears nothing.
+tap Phủ mờ dần
+# expect Overlay willAppear presented → Overlay didAppear presented → presented
+# expect Modal page
+tap Đóng
+# A child view controller appears with its view as it moves to its parent, and disappears
+# with it as it leaves.
+tap Thêm con
+# expect Child willAppear moving → Child didAppear moving
+tap Bỏ con
+# expect Child willDisappear moving → Child didDisappear moving
+# The SwiftUI card's hosting controller is a child, not the window's root: its sheet, alert,
+# dialog and cover come through UIKit's present over the whole window, each in a hosting
+# controller of its own, so their text has its frame in the window.
+tap Sheet SwiftUI
+# expect frame "Sheet từ SwiftUI" x:128.7 y:423.7 w:133.0 h:21.0
+tap Đóng sheet
+# expect SwiftUI: sheet đã đóng
+tap Alert SwiftUI
+# expect frame "Cảnh báo từ SwiftUI" x:113.7 y:397.0 w:163.0 h:21.0
+tap OK
+# expect SwiftUI: alert OK
+tap Hộp thoại SwiftUI
+# expect frame "Xoá" x:176.7 y:696.3 w:37.0 h:24.0
+tap Xoá
+# expect SwiftUI: đã xoá
+tap Phủ SwiftUI
+# expect frame "Phủ từ SwiftUI" x:136.7 y:401.7 w:117.0 h:21.0
+tap Đóng phủ
+# expect SwiftUI: phủ đã đóng

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 17:34:49 +0700
-Subject: [PATCH 20/37] Add Label, Section, Form, Stepper, lazy stacks and
+Subject: [PATCH 20/38] Add Label, Section, Form, Stepper, lazy stacks and
  NavigationView
 
 None of these existed. They are made of SwiftUI parts with iOS's default look.

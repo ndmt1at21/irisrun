@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Fri, 16 Oct 2026 06:03:57 +0700
-Subject: [PATCH 33/37] Run apps in Iris's UIKit and host SwiftUI with
+Subject: [PATCH 33/38] Run apps in Iris's UIKit and host SwiftUI with
  UIHostingController on Linux
 
 On iOS a SwiftUI app is a UIKit app: App.main() runs UIApplicationMain with

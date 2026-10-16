@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 07:04:31 +0700
-Subject: [PATCH 07/37] Measure and draw text with Iris's render core
+Subject: [PATCH 07/38] Measure and draw text with Iris's render core
 
 On Linux, OpenSwiftUI links Iris's render core, the Swift package that
 OPENSWIFTUI_IRIS_RENDER_PATH points at. The stdout app makes the window's

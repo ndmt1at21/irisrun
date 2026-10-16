@@ -57,6 +57,20 @@ public struct NSDirectionalRectEdge: OptionSet, Hashable, Sendable {
     public static let all: NSDirectionalRectEdge = [.top, .leading, .bottom, .trailing]
 }
 
+public struct UIRectEdge: OptionSet, Hashable, Sendable {
+    public let rawValue: UInt
+
+    public init(rawValue: UInt) {
+        self.rawValue = rawValue
+    }
+
+    public static let top = UIRectEdge(rawValue: 1 << 0)
+    public static let left = UIRectEdge(rawValue: 1 << 1)
+    public static let bottom = UIRectEdge(rawValue: 1 << 2)
+    public static let right = UIRectEdge(rawValue: 1 << 3)
+    public static let all: UIRectEdge = [.top, .left, .bottom, .right]
+}
+
 extension CGRect {
     public func inset(by insets: UIEdgeInsets) -> CGRect {
         CGRect(

@@ -55,7 +55,8 @@ jobs:
         run: swift test -Xlinker -L"$GITHUB_WORKSPACE/target/release"
       - run: runtimes/ios/Scripts/check-sample.sh
       - run: runtimes/ios/Scripts/check-sample.sh examples/ios-uikit
-      # The page laid out by constraints on a second screen size, an iPhone SE (session-iphone-se.txt).
+      # The page laid out by constraints, and a page sheet, on a second screen size, an iPhone SE
+      # (session-iphone-se.txt).
       - run: IRISRUN_SCREEN=iphone-se runtimes/ios/Scripts/check-sample.sh examples/ios-uikit
       # What SwiftUI does with the UIKit views it embeds (UIViewRepresentable), in an app of its own.
       - run: runtimes/ios/Scripts/check-sample.sh runtimes/ios/Tests/Apps/Representables

@@ -12,7 +12,10 @@ open class UIAlertController: UIViewController {
         self.title = title
         self.message = message
         style = preferredStyle
+        // Over what presents it, fading in and out.
+        // ponytail: an alert does not shrink into place, nor an action sheet rise, as on iOS.
         modalPresentationStyle = .overFullScreen
+        modalTransitionStyle = .crossDissolve
     }
 
     private var style = Style.alert

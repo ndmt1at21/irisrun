@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Fri, 16 Oct 2026 04:36:04 +0700
-Subject: [PATCH 31/37] Edit text with the editing state Iris's host shares
+Subject: [PATCH 31/38] Edit text with the editing state Iris's host shares
  with UIKit
 
 Iris's UIKit (OpenUIKit) edits text from the host's input method and keyboard

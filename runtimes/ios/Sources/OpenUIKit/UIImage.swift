@@ -101,11 +101,15 @@ extension UIImage {
     }
 }
 
-/// Iris: an SF Symbol of UIKit's own buttons, drawn as round-ended strokes.
+/// Iris: an SF Symbol of UIKit's own buttons and bar items, drawn as round-ended strokes.
 enum IrisSymbol: String, Sendable {
     case infoCircle = "info.circle"
     case plusCircle = "plus.circle"
     case xmark
+    case plus
+    case listBullet = "list.bullet"
+    case squareGrid = "square.grid.2x2"
+    case star
 
     /// The strokes in a square of side `side` at the origin, and their width.
     func path(side s: CGFloat) -> (IrisRender.Path, lineWidth: CGFloat) {
@@ -143,6 +147,39 @@ enum IrisSymbol: String, Sendable {
             line(0.3, 0.3, 0.7, 0.7)
             line(0.7, 0.3, 0.3, 0.7)
             return (path, 0.1 * s)
+        case .plus:
+            line(0.5, 0.18, 0.5, 0.82)
+            line(0.18, 0.5, 0.82, 0.5)
+            return (path, 0.09 * s)
+        case .listBullet:
+            for y in [0.27, 0.5, 0.73] {
+                line(0.15, y, 0.15, y + 0.001)
+                line(0.36, y, 0.88, y)
+            }
+            return (path, 0.08 * s)
+        case .squareGrid:
+            for (x, y) in [(0.12, 0.12), (0.56, 0.12), (0.12, 0.56), (0.56, 0.56)] {
+                path.move(to: point(x, y))
+                for (dx, dy) in [(0.32, 0.0), (0.32, 0.32), (0.0, 0.32)] {
+                    path.addLine(to: point(x + dx, y + dy))
+                }
+                path.closeSubpath()
+            }
+            return (path, 0.07 * s)
+        case .star:
+            // Five points out, five in, from the top.
+            for index in 0 ..< 10 {
+                let angle = Double(index) * .pi / 5 - .pi / 2
+                let radius = index % 2 == 0 ? 0.44 : 0.18
+                let corner = point(0.5 + radius * cos(angle), 0.54 + radius * sin(angle))
+                if index == 0 {
+                    path.move(to: corner)
+                } else {
+                    path.addLine(to: corner)
+                }
+            }
+            path.closeSubpath()
+            return (path, 0.07 * s)
         }
     }
 

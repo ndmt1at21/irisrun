@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 19:23:36 +0700
-Subject: [PATCH 28/37] Scroll to views with ScrollViewReader on Linux
+Subject: [PATCH 28/38] Scroll to views with ScrollViewReader on Linux
 
 A scroll view keeps where its targets are: the children of lazy stacks
 and the rows of lists, by the identifier of their ForEach element or

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 18:47:34 +0700
-Subject: [PATCH 24/37] Make buttons with button styles on Linux
+Subject: [PATCH 24/38] Make buttons with button styles on Linux
 
 Button draws through the nearest buttonStyle, PrimitiveButtonStyle or
 ButtonStyle, with the label as the style's configuration.label, its role

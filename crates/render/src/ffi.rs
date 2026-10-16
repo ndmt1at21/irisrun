@@ -835,15 +835,10 @@ pub unsafe extern "C" fn iris_layer_add_animation(
     let (Some(scene), Some(a)) = (unsafe { scene.as_mut() }, unsafe { animation.as_ref() }) else {
         return false;
     };
-    let value = |v: [f32; 6], color: u32| match a.property {
-        0 => Some(Value::Opacity(v[0])),
-        1 => Some(Value::Frame(Rect::from_xywh(v[0], v[1], v[2], v[3]))),
-        2 => Some(Value::Transform(v)),
-        3 => Some(Value::BackgroundColor(Color::new(color))),
-        4 => Some(Value::CornerRadius(v[0])),
-        _ => None,
-    };
-    let (Some(from), Some(to)) = (value(a.from, a.from_color), value(a.to, a.to_color)) else {
+    let (Some(from), Some(to)) = (
+        property_value(a.property, a.from, a.from_color),
+        property_value(a.property, a.to, a.to_color),
+    ) else {
         return false;
     };
     let [x1, y1, x2, y2] = a.timing;
@@ -865,6 +860,56 @@ pub unsafe extern "C" fn iris_layer_add_animation(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iris_layer_remove_animations(scene: *mut Scene, layer: LayerId) -> bool {
     unsafe { scene.as_mut() }.is_some_and(|scene| scene.remove_animations(layer))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layer_shown_value(
+    scene: *const Scene,
+    layer: LayerId,
+    property: u32,
+    value: *mut f32,
+    color: *mut u32,
+) -> bool {
+    let (Some(scene), Some(like)) = (
+        unsafe { scene.as_ref() },
+        property_value(property, [0.0; 6], 0),
+    ) else {
+        return false;
+    };
+    let Some(shown) = scene.shown_value(layer, like) else {
+        return false;
+    };
+    let (numbers, argb) = match shown {
+        Value::Opacity(v) | Value::CornerRadius(v) => ([v, 0.0, 0.0, 0.0, 0.0, 0.0], 0),
+        Value::Frame(r) => ([r.left, r.top, r.width(), r.height(), 0.0, 0.0], 0),
+        Value::Transform(t) => (t, 0),
+        Value::BackgroundColor(c) => (
+            [0.0; 6],
+            u32::from(c.a()) << 24
+                | u32::from(c.r()) << 16
+                | u32::from(c.g()) << 8
+                | u32::from(c.b()),
+        ),
+    };
+    if !value.is_null() {
+        unsafe { slice::from_raw_parts_mut(value, 6) }.copy_from_slice(&numbers);
+    }
+    if let Some(color) = unsafe { color.as_mut() } {
+        *color = argb;
+    }
+    true
+}
+
+/// The value of an `IrisProperty` from its numbers or its color.
+fn property_value(property: u32, v: [f32; 6], color: u32) -> Option<Value> {
+    match property {
+        0 => Some(Value::Opacity(v[0])),
+        1 => Some(Value::Frame(Rect::from_xywh(v[0], v[1], v[2], v[3]))),
+        2 => Some(Value::Transform(v)),
+        3 => Some(Value::BackgroundColor(Color::new(color))),
+        4 => Some(Value::CornerRadius(v[0])),
+        _ => None,
+    }
 }
 
 // ---- Layout
@@ -1108,6 +1153,31 @@ mod tests {
             };
             assert!(iris_layer_add_animation(scene, layer, &fade));
             assert!(iris_scene_is_animating(scene));
+            let mut color = 0;
+            assert!(iris_layer_shown_value(
+                scene,
+                layer,
+                3,
+                ptr::null_mut(),
+                &mut color
+            ));
+            assert_eq!(color, 0xFFFF_FFFF, "where the fade starts");
+            let mut numbers = [9.0; 6];
+            assert!(iris_layer_shown_value(
+                scene,
+                layer,
+                4,
+                numbers.as_mut_ptr(),
+                ptr::null_mut()
+            ));
+            assert_eq!(numbers, [0.0; 6]);
+            assert!(!iris_layer_shown_value(
+                scene,
+                layer,
+                9,
+                numbers.as_mut_ptr(),
+                &mut color
+            ));
             assert_eq!(iris_scene_hit_test(scene, 50.0, 50.0), layer);
             iris_scene_free(scene);
         }
