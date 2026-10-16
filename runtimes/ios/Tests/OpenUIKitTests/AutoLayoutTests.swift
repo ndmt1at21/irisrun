@@ -1,4 +1,5 @@
 import Foundation
+import IrisHost
 @testable import OpenUIKit
 import Testing
 
@@ -444,4 +445,73 @@ private final class SelfConstrainingView: UIView {
     #expect(abs(views[155].frame.minX - (views[154].frame.maxX + 12)) < 0.01)
     print(String(format: "Auto Layout, 300 views and %d constraints: first layout %.1f ms, a constant change %.2f ms", constraints.count, first * 1000, change * 1000))
     #expect(first < 2 && change < 0.2)
+}
+
+/// Calls `completion` and remembers what it was told.
+@MainActor
+private final class Completion {
+    var finished: Bool?
+}
+
+@MainActor @Test func layoutInAnAnimationBlockAnimatesTheFrames() async throws {
+    makeScene()
+    let screen = Screen()
+    let box = make(in: screen.root)
+    let width = box.widthAnchor.constraint(equalToConstant: 50)
+    NSLayoutConstraint.activate([box.topAnchor.constraint(equalTo: screen.root.topAnchor), box.leadingAnchor.constraint(equalTo: screen.root.leadingAnchor), width, box.heightAnchor.constraint(equalToConstant: 50)])
+    LayerCommit.commit()
+    // As on a device: the views take the new values at once, and their layers animate to them
+    // when drawn, from what showed; the frames a layoutIfNeeded() sets in the block too.
+    irisAnimates = true
+    let completion = Completion()
+    width.constant = 100
+    UIView.animate(withDuration: 0.3, delay: 0.1, options: [.curveEaseOut, .allowUserInteraction]) {
+        screen.root.layoutIfNeeded()
+        box.alpha = 0.5
+    } completion: {
+        completion.finished = $0
+    }
+    #expect(box.frame.width == 100 && box.alpha == 0.5)
+    let timing = try #require(box.layer.irisAnimation)
+    #expect(timing.duration == 0.3 && timing.delay == 0.1 && timing.curve.x2 == 0.58 && timing.repeatCount == 1)
+    LayerCommit.commit()
+    #expect(irisScene.isAnimating && box.layer.irisAnimation == nil)
+    // Not inside performWithoutAnimation, even in an animation.
+    UIView.animate(withDuration: 0.3) {
+        UIView.performWithoutAnimation { box.backgroundColor = .systemRed }
+    }
+    #expect(box.layer.irisAnimation == nil)
+    irisAnimates = false
+    screen.close()
+    // The completion runs once the animation is over.
+    #expect(completion.finished == nil)
+    try await Task.sleep(for: .milliseconds(600))
+    #expect(completion.finished == true)
+    // A script shows where animations end, and runs completions on the main queue's next turn.
+    let scripted = Completion()
+    UIView.animate(withDuration: 5, animations: { box.alpha = 1 }, completion: { scripted.finished = $0 })
+    #expect(box.alpha == 1 && scripted.finished == nil)
+    try await Task.sleep(for: .milliseconds(10))
+    #expect(scripted.finished == true)
+}
+
+@MainActor @Test func otherPhonesHaveTheirOwnScreenAndSafeArea() {
+    let phone = IrisScreen.current
+    defer { IrisScreen.current = phone }
+    IrisScreen.current = .iPhoneSE
+    let window = UIWindow(frame: UIScreen.main.bounds)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    window.isHidden = false
+    defer { window.isHidden = true }
+    #expect(window.frame == CGRect(x: 0, y: 0, width: 375, height: 667))
+    #expect(window.safeAreaInsets == UIEdgeInsets(top: 20, left: 0, bottom: 0, right: 0))
+    #expect(controller.view.safeAreaLayoutGuide.layoutFrame == CGRect(x: 0, y: 20, width: 375, height: 647))
+    // The host asks for an iPhone 14: the window fills its screen, what is in it lays out anew.
+    IrisScreen.current = .iPhone14
+    UIWindow.screenDidChange(from: .iPhoneSE)
+    window.layoutIfNeeded()
+    #expect(window.frame == CGRect(x: 0, y: 0, width: 390, height: 844))
+    #expect(controller.view.frame == window.bounds)
+    #expect(controller.view.safeAreaLayoutGuide.layoutFrame == CGRect(x: 0, y: 47, width: 390, height: 763))
 }

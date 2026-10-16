@@ -157,8 +157,8 @@ typedef enum : uint32_t {
 } IrisProperty;
 
 // A change of one property over time, as CABasicAnimation. The layer's own
-// value shows before the animation begins and after it ends, so set the
-// layer to the final value when adding one.
+// value shows before the animation begins (unless it fills backwards) and
+// after it ends, so set the layer to the final value when adding one.
 typedef struct {
   IrisProperty property;
   float from[6], to[6];
@@ -168,6 +168,7 @@ typedef struct {
   float timing[4];      // cubic Bézier x1, y1, x2, y2; {0.25, 0.1, 0.25, 1} is CA's default
   float repeat_count;   // up to 1 plays once; INFINITY repeats forever
   bool autoreverses;
+  bool fills_backwards; // shows `from` until it begins, as CA's backwards fill mode
 } IrisAnimation;
 
 // ---- Scenes and frames

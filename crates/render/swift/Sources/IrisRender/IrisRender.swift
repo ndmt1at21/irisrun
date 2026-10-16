@@ -452,8 +452,11 @@ public struct Animation: Sendable {
     /// Up to 1 plays once; `.infinity` repeats forever.
     public var repeatCount: Float
     public var autoreverses: Bool
+    /// Shows `from` rather than the layer's own value until it begins, as
+    /// Core Animation's backwards fill mode does.
+    public var fillsBackwards: Bool
 
-    public init(from: Value, to: Value, duration: Double, delay: Double = 0, timing: Timing = .default, repeatCount: Float = 1, autoreverses: Bool = false) {
+    public init(from: Value, to: Value, duration: Double, delay: Double = 0, timing: Timing = .default, repeatCount: Float = 1, autoreverses: Bool = false, fillsBackwards: Bool = false) {
         self.from = from
         self.to = to
         self.duration = duration
@@ -461,6 +464,7 @@ public struct Animation: Sendable {
         self.timing = timing
         self.repeatCount = repeatCount
         self.autoreverses = autoreverses
+        self.fillsBackwards = fillsBackwards
     }
 
     var raw: IrisAnimation? {
@@ -485,6 +489,7 @@ public struct Animation: Sendable {
         animation.timing = (timing.x1, timing.y1, timing.x2, timing.y2)
         animation.repeat_count = repeatCount
         animation.autoreverses = autoreverses
+        animation.fills_backwards = fillsBackwards
         return animation
     }
 }

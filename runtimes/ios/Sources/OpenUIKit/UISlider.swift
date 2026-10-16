@@ -126,8 +126,8 @@ open class UISlider: UIControl {
         let track = trackRect(forBounds: bounds)
         let thumbFrame = thumbRect(forBounds: bounds, trackRect: track, value: value)
         if animated {
-            minimumTrack.irisAnimationDuration = 0.25
-            thumb.irisAnimationDuration = 0.25
+            minimumTrack.irisAnimation = IrisAnimationTiming(duration: 0.25)
+            thumb.irisAnimation = IrisAnimationTiming(duration: 0.25)
         }
         maximumTrack.frame = track
         maximumTrack.backgroundColor = (maximumTrackTintColor ?? .systemFill).cgColor

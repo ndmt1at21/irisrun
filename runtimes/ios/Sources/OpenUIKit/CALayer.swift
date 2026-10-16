@@ -16,8 +16,8 @@ extension CALayerDelegate {
 /// The Core Animation layer model UIKit draws with. Changes are drawn by Iris's render core at
 /// the end of the main run loop's turn (`LayerCommit`), as Core Animation commits its implicit
 /// transaction, and only what changed is sent.
-// ponytail: an affine transform, no CATransform3D, zPosition, mask layers or public animations
-// yet; UIKit's own controls animate through the render core (`irisAnimations`), apps with đợt 4.
+// ponytail: an affine transform, no CATransform3D, zPosition, mask layers or CAAnimation yet;
+// UIKit's controls and `UIView.animate` animate through the render core (`irisAnimation`).
 open class CALayer: NSObject {
     public override init() {
         super.init()
@@ -333,9 +333,10 @@ open class CALayer: NSObject {
         didSet { changed(.style) }
     }
 
-    /// Iris: animates the next change of the frame and background color over these seconds, as
-    /// the implicit animation of a control's `setOn(_:animated:)` does.
-    var irisAnimationDuration: Double?
+    /// Iris: how the next changes of the frame, transform, opacity and background color animate
+    /// once the layer is drawn: as the implicit animation of a control's `setOn(_:animated:)`, or
+    /// as the `UIView.animate` block they were made in.
+    var irisAnimation: IrisAnimationTiming?
 
     // MARK: Layout
 
@@ -394,6 +395,9 @@ open class CALayer: NSObject {
 
     private func changed(_ change: Changes) {
         changes.formUnion(change)
+        if let block = IrisAnimationTiming.current, !change.isDisjoint(with: [.geometry, .style]) {
+            irisAnimation = block
+        }
         LayerCommit.schedule()
     }
 
@@ -410,10 +414,10 @@ open class CALayer: NSObject {
         }
         displayIfNeeded()
         var drew = !changes.isEmpty
-        let animation = irisAnimates && changes != .all ? irisAnimationDuration : nil
-        irisAnimationDuration = nil
+        let animation = irisAnimates && changes != .all ? irisAnimation : nil
+        irisAnimation = nil
         if changes.contains(.geometry) {
-            let oldFrame = layer.frame
+            let (oldFrame, oldTransform) = (layer.frame, layer.transform)
             // The render core places a layer by its untransformed frame inside the
             // superlayer's bounds, and turns it about its center.
             let origin = superlayer?.bounds.origin ?? .zero
@@ -432,11 +436,14 @@ open class CALayer: NSObject {
                 Float(t.tx + t.a * d.x + t.c * d.y - d.x), Float(t.ty + t.b * d.x + t.d * d.y - d.y),
             ]
             if let animation, layer.frame != oldFrame {
-                layer.add(Animation(from: .frame(oldFrame), to: .frame(layer.frame), duration: animation, timing: .easeInEaseOut))
+                layer.add(animation.animation(from: .frame(oldFrame), to: .frame(layer.frame)))
+            }
+            if let animation, layer.transform != oldTransform {
+                layer.add(animation.animation(from: .transform(oldTransform), to: .transform(layer.transform)))
             }
         }
         if changes.contains(.style) {
-            let oldColor = layer.backgroundColor
+            let (oldColor, oldOpacity) = (layer.backgroundColor, layer.opacity)
             if irisStopsAnimations {
                 layer.removeAllAnimations()
                 irisStopsAnimations = false
@@ -458,7 +465,10 @@ open class CALayer: NSObject {
             layer.shadowOffset = Point(x: Float(shadowOffset.width), y: Float(shadowOffset.height))
             layer.shadowRadius = Float(shadowRadius)
             if let animation, layer.backgroundColor != oldColor {
-                layer.add(Animation(from: .backgroundColor(oldColor), to: .backgroundColor(layer.backgroundColor), duration: animation, timing: .easeInEaseOut))
+                layer.add(animation.animation(from: .backgroundColor(oldColor), to: .backgroundColor(layer.backgroundColor)))
+            }
+            if let animation, layer.opacity != oldOpacity {
+                layer.add(animation.animation(from: .opacity(oldOpacity), to: .opacity(layer.opacity)))
             }
         }
         if changes.contains(.contents) {
@@ -543,6 +553,39 @@ public struct CALayerContentsGravity: RawRepresentable, Hashable, Sendable {
         case .bottomRight: .topRight
         default: .scaleToFill
         }
+    }
+}
+
+/// Iris: how changes animate on the render core: over a control's implicit animation, or as
+/// a `UIView.animate` block says.
+struct IrisAnimationTiming {
+    var duration: Double
+    var delay: Double
+    var curve: Animation.Timing
+    var repeatCount: Float
+    var autoreverses: Bool
+
+    /// The curve the options name (ease in and out unless they say), or a spring's.
+    init(duration: Double, delay: Double = 0, options: UIView.AnimationOptions = [], spring: Bool = false) {
+        self.duration = duration
+        self.delay = delay
+        curve = switch spring ? 2 : options.rawValue >> 16 & 0xF {
+        case 1: .easeIn
+        case 2: .easeOut
+        case 3: .linear
+        default: .easeInEaseOut
+        }
+        repeatCount = options.contains(.repeat) ? .infinity : 1
+        autoreverses = options.contains(.autoreverse)
+    }
+
+    /// The block of `UIView.animate` running now, whose changes animate; main thread only.
+    nonisolated(unsafe) static var current: IrisAnimationTiming?
+
+    /// From the value the render layer had to its new one; until a delay is over the old value
+    /// shows, as in UIKit.
+    func animation(from: Animation.Value, to: Animation.Value) -> Animation {
+        Animation(from: from, to: to, duration: duration, delay: delay, timing: curve, repeatCount: repeatCount, autoreverses: autoreverses, fillsBackwards: true)
     }
 }
 

@@ -1,8 +1,9 @@
 import Foundation
+import IrisHost
 
 /// A rectangle on screen and the views inside it, drawn by its layer.
-// ponytail: no drawing with Core Graphics in draw(_:), no animations or traits yet; they come
-// with the later steps of P1-16.
+// ponytail: no drawing with Core Graphics in draw(_:), no transitions, keyframe or property
+// animators, and no traits yet; they come with the later steps of P1-16.
 @preconcurrency @MainActor
 open class UIView: UIResponder, @preconcurrency NSCoding {
     open class var layerClass: AnyClass {
@@ -202,7 +203,12 @@ open class UIView: UIResponder, @preconcurrency NSCoding {
 
     open var isHidden: Bool {
         get { layer.isHidden }
-        set { layer.isHidden = newValue }
+        set {
+            guard newValue != layer.isHidden else { return }
+            layer.isHidden = newValue
+            // A stack view gives the room of an arranged view to the others while it is hidden.
+            (superview as? UIStackView)?.irisArrangedSubviewHiddenDidChange(self)
+        }
     }
 
     open var clipsToBounds: Bool {
@@ -892,6 +898,91 @@ extension UIView {
 
     public enum TintAdjustmentMode: Int, Sendable {
         case automatic = 0, normal, dimmed
+    }
+}
+
+// MARK: Animations
+
+extension UIView {
+    /// Animates the changes `animations` makes to frames, transforms, alpha and background
+    /// colors of views, also the frames a `layoutIfNeeded()` in it sets, from what shows to the
+    /// new values, which views take at once, as in UIKit. `completion` runs once the animation
+    /// is over: on a device after its delay and duration (never for one that repeats); in a
+    /// script, which shows where animations end, on the main queue's next turn.
+    // ponytail: `finished` is always true; no beginFromCurrentState (an animation starts from
+    // the last value drawn), no user interaction rules, and an arranged view hides at once
+    // rather than at the end; the rest of UIView's animation API comes with step 4.
+    public class func animate(
+        withDuration duration: TimeInterval, delay: TimeInterval, options: UIView.AnimationOptions = [],
+        animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil
+    ) {
+        animate(IrisAnimationTiming(duration: duration, delay: delay, options: options), animations: animations, completion: completion)
+    }
+
+    public class func animate(withDuration duration: TimeInterval, animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil) {
+        animate(withDuration: duration, delay: 0, options: [], animations: animations, completion: completion)
+    }
+
+    public class func animate(withDuration duration: TimeInterval, animations: @escaping () -> Void) {
+        animate(withDuration: duration, delay: 0, options: [], animations: animations, completion: nil)
+    }
+
+    /// As a spring that settles in `duration`.
+    // ponytail: an ease-out curve, without the spring's overshoot or initial velocity; a spring
+    // timing in the render core if apps show the difference.
+    public class func animate(
+        withDuration duration: TimeInterval, delay: TimeInterval, usingSpringWithDamping dampingRatio: CGFloat,
+        initialSpringVelocity velocity: CGFloat, options: UIView.AnimationOptions = [],
+        animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil
+    ) {
+        animate(IrisAnimationTiming(duration: duration, delay: delay, options: options, spring: true), animations: animations, completion: completion)
+    }
+
+    /// Runs `actionsWithoutAnimation` without animating what it changes, even in an animation.
+    public class func performWithoutAnimation(_ actionsWithoutAnimation: () -> Void) {
+        let outer = IrisAnimationTiming.current
+        IrisAnimationTiming.current = nil
+        defer { IrisAnimationTiming.current = outer }
+        actionsWithoutAnimation()
+    }
+
+    private class func animate(_ timing: IrisAnimationTiming, animations: () -> Void, completion: ((Bool) -> Void)?) {
+        let outer = IrisAnimationTiming.current
+        IrisAnimationTiming.current = timing.duration > 0 ? timing : nil
+        animations()
+        IrisAnimationTiming.current = outer
+        guard let completion, timing.repeatCount < .infinity else { return }
+        nonisolated(unsafe) let unsafeCompletion = completion
+        let finish: @Sendable () -> Void = { MainActor.assumeIsolated { unsafeCompletion(true) } }
+        if irisAnimates, timing.duration > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + timing.delay + timing.duration * (timing.autoreverses ? 2 : 1), execute: finish)
+        } else {
+            DispatchQueue.main.async(execute: finish)
+        }
+    }
+
+    /// How an animation runs: its curve, whether it repeats, and what UIKit lets happen while it does.
+    public struct AnimationOptions: OptionSet, Sendable {
+        public let rawValue: UInt
+
+        public init(rawValue: UInt) {
+            self.rawValue = rawValue
+        }
+
+        public static let layoutSubviews = AnimationOptions(rawValue: 1 << 0)
+        public static let allowUserInteraction = AnimationOptions(rawValue: 1 << 1)
+        public static let beginFromCurrentState = AnimationOptions(rawValue: 1 << 2)
+        public static let `repeat` = AnimationOptions(rawValue: 1 << 3)
+        public static let autoreverse = AnimationOptions(rawValue: 1 << 4)
+        public static let overrideInheritedDuration = AnimationOptions(rawValue: 1 << 5)
+        public static let overrideInheritedCurve = AnimationOptions(rawValue: 1 << 6)
+        public static let allowAnimatedContent = AnimationOptions(rawValue: 1 << 7)
+        public static let showHideTransitionViews = AnimationOptions(rawValue: 1 << 8)
+        public static let overrideInheritedOptions = AnimationOptions(rawValue: 1 << 9)
+        public static let curveEaseInOut = AnimationOptions(rawValue: 0 << 16)
+        public static let curveEaseIn = AnimationOptions(rawValue: 1 << 16)
+        public static let curveEaseOut = AnimationOptions(rawValue: 2 << 16)
+        public static let curveLinear = AnimationOptions(rawValue: 3 << 16)
     }
 }
 

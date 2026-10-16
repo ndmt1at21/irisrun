@@ -91,12 +91,19 @@ impl SwiftRunner {
 }
 
 /// The command that runs the app as a device: Device Protocol envelopes on
-/// stdin and stdout, the app's own output on stderr.
+/// stdin and stdout, the app's own output on stderr. IRISRUN_SCREEN, such as
+/// `iphone-se`, picks the phone it runs on.
 pub fn host_command(swift: &SwiftRunner, executable: &Path) -> Command {
     // Through env(1), as wrappers such as `docker run` may not pass on the
     // environment.
     let mut command = swift.command("env");
-    command.arg("IRISRUN_DEVICE=stdio").arg(executable);
+    command.arg("IRISRUN_DEVICE=stdio");
+    if let Some(screen) = std::env::var_os("IRISRUN_SCREEN") {
+        let mut variable = OsString::from("IRISRUN_SCREEN=");
+        variable.push(screen);
+        command.arg(variable);
+    }
+    command.arg(executable);
     command
 }
 

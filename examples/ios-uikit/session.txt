@@ -227,16 +227,35 @@ tap Layout
 # Two buttons as wide as each other, a 12-point layout guide between them.
 # expect frame "Phóng to" x:16.0 y:211.0 w:173.0 h:35.0
 # expect frame "Đặt lại" x:201.0 y:211.0 w:173.0 h:35.0
+# Three tags in a stack view (UIStackView, fillEqually, 8 points apart) across the margins: its
+# constraints share the 358 points out. The tags' frames are in the stack view.
+# expect frame "Tags" x:16.0 y:262.0 w:358.0 h:35.0
+# expect frame "Swift" x:0.0 y:0.0 w:114.0 h:35.0
+# expect frame "UIKit" x:122.0 y:0.0 w:114.0 h:35.0
+# expect frame "Iris" x:244.0 y:0.0 w:114.0 h:35.0
 # Half the page's width, centered; it wishes to be 400 high at priority 250, but must end 16
 # points above the footer, which is 12 points above the safe area: 34 points above the bottom.
-# expect frame "Priority box" x:97.7 y:262.0 w:195.0 h:358.0
+# Its text is a column, a vertical stack view centered in it: as wide as the wider label, the
+# narrower one centered, 4 points between them.
+# expect frame "Priority box" x:97.7 y:313.0 w:195.0 h:307.0
+# expect frame "Cao 400 @250" x:0.0 y:0.0 w:122.0 h:21.0
+# expect frame "co lại cho vừa" x:18.0 y:25.0 w:86.0 h:16.0
 # expect frame "Ghim trên vạch Home" x:16.0 y:636.0 w:358.0 h:16.0
-# A constant changes: the avatar grows to 80, and everything below and beside it follows.
+# A constant changes, and a layoutIfNeeded() in UIView.animate moves everything that depends on
+# it: the avatar grows to 80, what is below and beside it follows. A script shows where the
+# animation ends.
 tap Phóng to
 # expect frame "Avatar" x:16.0 y:51.0 w:80.0 h:80.0
 # expect frame "Nguyễn Thị Ánh Dương, kỹ sư phần mềm" x:108.0 y:80.7 w:231.0 h:21.0
 # expect frame "Thu nhỏ" x:16.0 y:235.0 w:173.0 h:35.0
-# expect frame "Priority box" x:97.7 y:286.0 w:195.0 h:334.0
+# expect frame "Tags" x:16.0 y:286.0 w:358.0 h:35.0
+# expect frame "Priority box" x:97.7 y:337.0 w:195.0 h:283.0
+# A tapped tag hides, in an animation: the stack view gives its room and its spacing to the
+# tags left.
+tap UIKit
+# expect frame "Swift" x:0.0 y:0.0 w:175.0 h:35.0
+# expect frame "Iris" x:183.0 y:0.0 w:175.0 h:35.0
 tap Đặt lại
 # expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
-# expect frame "Priority box" x:97.7 y:262.0 w:195.0 h:358.0
+# expect frame "UIKit" x:122.0 y:0.0 w:114.0 h:35.0
+# expect frame "Priority box" x:97.7 y:313.0 w:195.0 h:307.0

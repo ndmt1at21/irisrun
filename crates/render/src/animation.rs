@@ -164,6 +164,9 @@ pub struct Animation {
     pub repeat_count: f32,
     /// Plays backwards after each time forwards.
     pub autoreverses: bool,
+    /// Shows `from` rather than the layer's own value until the animation
+    /// begins, as Core Animation's backwards fill mode does.
+    pub fills_backwards: bool,
 }
 
 impl Animation {
@@ -176,6 +179,7 @@ impl Animation {
             timing: Timing::DEFAULT,
             repeat_count: 1.0,
             autoreverses: false,
+            fills_backwards: false,
         }
     }
 }
@@ -204,7 +208,11 @@ impl Running {
     /// The value at `time`, or `None` outside the animation.
     pub fn value(&self, time: f64) -> Option<Value> {
         let elapsed = time - self.begin;
-        if elapsed < 0.0 || self.finished(time) {
+        if elapsed < 0.0 {
+            let animation = &self.animation;
+            return animation.fills_backwards.then_some(animation.from);
+        }
+        if self.finished(time) {
             return None;
         }
         let duration = self.animation.duration;
@@ -247,6 +255,18 @@ mod tests {
         };
         let at = |time: f64| running.value(time);
         assert_eq!(at(9.0), None, "before it begins");
+        let filling = Running {
+            animation: Animation {
+                fills_backwards: true,
+                ..running.animation.clone()
+            },
+            begin: 10.0,
+        };
+        assert_eq!(
+            filling.value(9.0),
+            Some(Value::Opacity(0.0)),
+            "filling backwards"
+        );
         assert_eq!(at(10.25), Some(Value::Opacity(0.25)));
         assert_eq!(at(11.25), Some(Value::Opacity(0.75)), "on its way back");
         assert_eq!(at(12.5), Some(Value::Opacity(0.5)), "the second time");

@@ -1,0 +1,49 @@
+# IrisUIKitSample on an iPhone SE (3rd generation): 375 × 667 points at scale 2, the status bar
+# 20 points high and no home indicator, so the safe area ends at the bottom edge.
+# `IRISRUN_SCREEN=iphone-se runtimes/ios/Scripts/check-sample.sh examples/ios-uikit` plays this
+# script in place of session.txt; the commands and checks are the same kind (see session.txt).
+#
+# The app delegate, the scene delegate and the window ran in iOS order.
+# expect launch → connect → foreground → active
+# The screen, laid out for 320 points, is stretched to 375 by autoresizing.
+# expect Header
+# expect Touch
+# The page laid out by constraints only (AutoLayoutPage) is 375 × 521 under the header. Nothing
+# in it is laid out for a screen size: the title sits in the layout margins (12 and 16 points),
+# the avatar 1.5 system spacings below it.
+tap Layout
+# expect frame "Auto Layout page" x:0.0 y:146.0 w:375.0 h:521.0
+# expect frame "Auto Layout" x:16.0 y:12.0 w:130.0 h:27.0
+# expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
+# The row is 15 points narrower, so the name is cut 15 points shorter. Frames are rounded to the
+# 2x screen's pixels, half points.
+# expect frame "Nguyễn Thị Ánh Dương, kỹ sư phần mềm" x:84.0 y:68.5 w:240.0 h:21.0
+# expect frame "PRO" x:332.0 y:72.5 w:27.0 h:16.0
+# The body wraps at the margins' width, 343 points.
+# expect frame "Màn này dựng hoàn toàn bằng constraint: anchor, NSLayoutConstraint, một layout guide, safe area và margin. Nhãn nhiều dòng xuống dòng theo bề rộng mà Auto Layout cho nó." x:16.0 y:123.0 w:343.0 h:72.0
+# The two buttons share 343 points less the 12-point guide.
+# expect frame "Phóng to" x:16.0 y:211.0 w:165.5 h:35.0
+# expect frame "Đặt lại" x:193.5 y:211.0 w:165.5 h:35.0
+# The stack view's three tags share 343 points less two spacings.
+# expect frame "Tags" x:16.0 y:262.0 w:343.0 h:35.0
+# expect frame "Swift" x:0.0 y:0.0 w:109.0 h:35.0
+# expect frame "UIKit" x:117.0 y:0.0 w:109.0 h:35.0
+# expect frame "Iris" x:234.0 y:0.0 w:109.0 h:35.0
+# The box gives way to the footer, which sits 12 points above the bottom edge: no home indicator.
+# expect frame "Priority box" x:94.0 y:313.0 w:187.5 h:164.0
+# expect frame "co lại cho vừa" x:18.0 y:25.0 w:86.0 h:16.0
+# expect frame "Ghim trên vạch Home" x:16.0 y:493.0 w:343.0 h:16.0
+# A constant changes in an animation; the box takes 24 points less.
+tap Phóng to
+# expect frame "Avatar" x:16.0 y:51.0 w:80.0 h:80.0
+# expect frame "Nguyễn Thị Ánh Dương, kỹ sư phần mềm" x:108.0 y:80.5 w:216.0 h:21.0
+# expect frame "Tags" x:16.0 y:286.0 w:343.0 h:35.0
+# expect frame "Priority box" x:94.0 y:337.0 w:187.5 h:140.0
+# A tapped tag hides; the two left share its room and its spacing, half points each.
+tap UIKit
+# expect frame "Swift" x:0.0 y:0.0 w:167.5 h:35.0
+# expect frame "Iris" x:175.5 y:0.0 w:167.5 h:35.0
+tap Đặt lại
+# expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
+# expect frame "UIKit" x:117.0 y:0.0 w:109.0 h:35.0
+# expect frame "Priority box" x:94.0 y:313.0 w:187.5 h:164.0

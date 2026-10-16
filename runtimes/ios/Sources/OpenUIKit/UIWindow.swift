@@ -1,7 +1,8 @@
 import Foundation
+import IrisHost
 
 /// The backdrop of an app's views. A window shows once it is made visible, in its scene's
-/// screen; Iris has one screen, the size of an iPhone 14.
+/// screen; Iris has one screen, the phone's (`UIScreen`).
 @preconcurrency @MainActor
 open class UIWindow: UIView {
     public override init(frame: CGRect) {
@@ -45,11 +46,12 @@ open class UIWindow: UIView {
         windowScene ?? UIApplication.shared
     }
 
-    /// An iPhone 14's in portrait: below the Dynamic Island and above the home indicator, for
-    /// a window that covers the screen.
+    /// The phone's in portrait, for a window that covers the screen: below the status bar or
+    /// the Dynamic Island, above the home indicator (47 and 34 points on an iPhone 14, 20 and
+    /// none on an iPhone SE).
     override open var safeAreaInsets: UIEdgeInsets {
-        let screen = self.screen.bounds
-        return UIEdgeInsets(top: max(0, 47 - frame.minY), left: 0, bottom: max(0, frame.maxY - (screen.maxY - 34)), right: 0)
+        let phone = IrisScreen.current, screen = self.screen.bounds
+        return UIEdgeInsets(top: max(0, phone.safeTop - frame.minY), left: 0, bottom: max(0, frame.maxY - (screen.maxY - phone.safeBottom)), right: 0)
     }
 
     /// Delivers the event's touches in this window: to gesture recognizers first, then to
@@ -117,6 +119,14 @@ open class UIWindow: UIView {
     // ponytail: kept while visible, whether or not the app keeps the window; on iOS a window
     // nothing else keeps goes away.
     static var visible: [UIWindow] = []
+
+    /// The screen became another phone's: windows that filled it fill it again, and what is in
+    /// them lays out anew, as when a scene's size changes.
+    static func screenDidChange(from old: IrisScreen) {
+        for window in visible where window.frame == CGRect(origin: .zero, size: old.size) {
+            window.frame = UIScreen.main.bounds
+        }
+    }
 
     /// Puts a window on screen by its level, or takes it off.
     private static func update(_ window: UIWindow) {

@@ -7,7 +7,7 @@ import IrisRender
 /// the stdout that `HostOptions` kept. Input is handled on the main run loop; a frame is drawn
 /// by the render core whenever `irisSceneVersion` moved, and encoded as JPEG on another thread.
 public final class DeviceHost: @unchecked Sendable {
-    private let size: CGSize
+    private var size: CGSize
     private let scale: Float
     private let output: FileHandle
     private let input: any DeviceInputHandler
@@ -20,6 +20,11 @@ public final class DeviceHost: @unchecked Sendable {
     private var shownVersion = -1
     private var nextRender: DispatchTime?
 
+    /// Called on the main thread once the host asked for another phone's display and
+    /// `IrisScreen.current` and the scene changed to it, with the phone before: the UI framework
+    /// fits its windows to the new screen. Without it the device keeps its screen.
+    public var screenDidChange: ((_ old: IrisScreen) -> Void)?
+
     /// `size` is the screen in points. `update` brings `irisScene` up to date, as the UI
     /// framework renders a frame; it and `input` run on the main thread.
     public init(size: CGSize, scale: Float, output: FileHandle, input: any DeviceInputHandler, update: @escaping () -> Void) {
@@ -31,19 +36,7 @@ public final class DeviceHost: @unchecked Sendable {
     }
 
     public func run() -> Never {
-        send(.with {
-            $0.deviceInfo = .with {
-                $0.platform = .ios
-                $0.kind = .localRuntime
-                $0.model = "iPhone 14"
-                $0.osVersion = "18.0"
-                $0.display = .with {
-                    $0.widthPx = UInt32((Float(size.width) * scale).rounded())
-                    $0.heightPx = UInt32((Float(size.height) * scale).rounded())
-                    $0.scale = scale
-                }
-            }
-        })
+        send(deviceInfo)
         send(status(.launching))
         render()
         send(status(.foreground))
@@ -88,8 +81,13 @@ public final class DeviceHost: @unchecked Sendable {
     }
 
     private func handle(_ message: IrisHostMessage) {
+        if case let .config(config)? = message.payload, config.hasDisplay {
+            changeScreen(to: config.display)
+            return
+        }
         guard case let .input(event)? = message.payload else {
-            // ponytail: display configuration and adapters come with P1-28 and P1-17.
+            // ponytail: of the configuration only the display is taken, as P1-28 asks for more;
+            // adapters come with P1-17.
             return
         }
         // Bring the app up to now first: gestures time touches with the app's clock, and a
@@ -122,6 +120,28 @@ public final class DeviceHost: @unchecked Sendable {
             return
         }
         // Answer input at once rather than at the next requested update.
+        render()
+    }
+
+    /// Becomes the phone whose screen the display is, in points at the display's scale (or the
+    /// device's), as a scene takes a new size: frames keep the device's scale. Sizes of no
+    /// phone Iris knows, such as a landscape one, keep the screen.
+    // ponytail: no rotation; P1-28's Device UI asks for it.
+    private func changeScreen(to display: IrisDisplay) {
+        guard let screenDidChange else { return }
+        let scale = display.scale > 0 ? display.scale : self.scale
+        let size = CGSize(width: CGFloat((Float(display.widthPx) / scale).rounded()), height: CGFloat((Float(display.heightPx) / scale).rounded()))
+        guard let screen = IrisScreen.named.values.first(where: { $0.size == size }) else {
+            printError("irisrun: no iPhone has a \(Int(size.width)) × \(Int(size.height)) point screen; staying an \(IrisScreen.current.model)")
+            return
+        }
+        let old = IrisScreen.current
+        guard screen != old else { return }
+        IrisScreen.current = screen
+        self.size = size
+        irisScene.resize(width: Float(size.width), height: Float(size.height), scale: self.scale)
+        screenDidChange(old)
+        send(deviceInfo)
         render()
     }
 
@@ -162,6 +182,23 @@ public final class DeviceHost: @unchecked Sendable {
     }
 
     // MARK: Envelopes
+
+    /// What the device is: the phone of `IrisScreen.current`, its screen at the frames' scale.
+    private var deviceInfo: IrisDeviceMessage {
+        .with {
+            $0.deviceInfo = .with {
+                $0.platform = .ios
+                $0.kind = .localRuntime
+                $0.model = IrisScreen.current.model
+                $0.osVersion = "18.0"
+                $0.display = .with {
+                    $0.widthPx = UInt32((Float(size.width) * scale).rounded())
+                    $0.heightPx = UInt32((Float(size.height) * scale).rounded())
+                    $0.scale = scale
+                }
+            }
+        }
+    }
 
     private func status(_ state: IrisAppState) -> IrisDeviceMessage {
         .with {

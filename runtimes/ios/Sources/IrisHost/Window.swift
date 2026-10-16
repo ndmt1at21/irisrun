@@ -61,12 +61,46 @@ public struct HostOptions {
         return HostOptions(deviceOutput: deviceOutput, scale: scale, frames: frames)
     }
 
-    /// IRISRUN_SCALE pixels per point: by default 2 for a device, which is enough for the Device
-    /// UI, and 3 otherwise, as on an iPhone.
-    public static var scale: Float {
+    /// IRISRUN_SCALE pixels per point, read once: by default 2 for a device, which is enough for
+    /// the Device UI, and otherwise the phone's own (3 on an iPhone 14, 2 on an iPhone SE).
+    public static let scale: Float = {
         let environment = ProcessInfo.processInfo.environment
-        return environment["IRISRUN_SCALE"].flatMap { Float($0) } ?? (environment["IRISRUN_DEVICE"] == "stdio" ? 2 : 3)
-    }
+        return environment["IRISRUN_SCALE"].flatMap { Float($0) } ?? (environment["IRISRUN_DEVICE"] == "stdio" ? 2 : IrisScreen.launch.scale)
+    }()
+}
+
+/// The phone whose screen the app runs on. IRISRUN_SCREEN picks it when the app starts:
+/// `iphone-14` (the default) or `iphone-se`; a device host takes another when the host asks for
+/// its display (`DeviceHost`).
+public struct IrisScreen: Equatable, Sendable {
+    /// As Apple names the model.
+    public var model: String
+    /// In points, in portrait.
+    public var size: CGSize
+    /// How far the safe area is inside the top and bottom edges in portrait: below the status
+    /// bar or the Dynamic Island, above the home indicator.
+    public var safeTop, safeBottom: CGFloat
+    /// Pixels per point of the phone's display.
+    public var scale: Float
+
+    public static let iPhone14 = IrisScreen(model: "iPhone 14", size: CGSize(width: 390, height: 844), safeTop: 47, safeBottom: 34, scale: 3)
+    public static let iPhoneSE = IrisScreen(model: "iPhone SE (3rd generation)", size: CGSize(width: 375, height: 667), safeTop: 20, safeBottom: 0, scale: 2)
+    /// The phones IRISRUN_SCREEN names.
+    public static let named = ["iphone-14": iPhone14, "iphone-se": iPhoneSE]
+
+    /// The phone IRISRUN_SCREEN names, read once.
+    public static let launch: IrisScreen = {
+        guard let name = ProcessInfo.processInfo.environment["IRISRUN_SCREEN"], !name.isEmpty else { return .iPhone14 }
+        guard let screen = named[name.lowercased()] else {
+            printError("irisrun: IRISRUN_SCREEN=\(name) names no phone (\(named.keys.sorted().joined(separator: ", "))); running on an iPhone 14")
+            return .iPhone14
+        }
+        return screen
+    }()
+
+    /// The phone the app runs on: the one it launched on, until a host asks for another. Main
+    /// thread only.
+    public nonisolated(unsafe) static var current = launch
 }
 
 private func takeStandardOutput() -> FileHandle {

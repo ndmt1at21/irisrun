@@ -1,7 +1,8 @@
 import Foundation
 import IrisHost
 
-/// The phone's screen: an iPhone 14, 390 × 844 points, at the scale frames are drawn at.
+/// The phone's screen, `IrisScreen.current` (an iPhone 14, 390 × 844 points, unless
+/// IRISRUN_SCREEN or the host picks another), at the scale frames are drawn at.
 @preconcurrency @MainActor
 open class UIScreen: NSObject {
     private static let shared = UIScreen()
@@ -15,10 +16,11 @@ open class UIScreen: NSObject {
     }
 
     open var bounds: CGRect {
-        CGRect(x: 0, y: 0, width: 390, height: 844)
+        CGRect(origin: .zero, size: IrisScreen.current.size)
     }
 
-    /// Pixels per point of the frames: IRISRUN_SCALE, or 2 on a device and 3 in scripts.
+    /// Pixels per point of the frames: IRISRUN_SCALE, or 2 on a device and the phone's own in
+    /// scripts.
     open var scale: CGFloat {
         CGFloat(HostOptions.scale)
     }

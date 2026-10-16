@@ -218,7 +218,7 @@ open class UIProgressView: UIView {
         track.cornerRadius = progressViewStyle == .bar ? 0 : barHeight / 2
         track.backgroundColor = (trackTintColor ?? .systemFill).cgColor
         if animated {
-            fill.irisAnimationDuration = 0.25
+            fill.irisAnimation = IrisAnimationTiming(duration: 0.25)
         }
         fill.frame = CGRect(x: 0, y: 0, width: bounds.width * CGFloat(progress), height: barHeight)
         fill.cornerRadius = track.cornerRadius

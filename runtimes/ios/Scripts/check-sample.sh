@@ -9,7 +9,9 @@
 # The example is examples/ios-swiftui unless given, such as examples/ios-uikit. With
 # IRISRUN_FRAMES=<dir> the app draws through the render core instead, still prints each frame,
 # and writes it to <dir> as a PNG. `# expect frame "<text>" x:16.0 y:12.0 w:358.0 h:26.3` checks
-# where the view with that text is, in its superview, as the frame prints it.
+# where the view with that text is, in its superview, as the frame prints it. With
+# IRISRUN_SCREEN=<phone>, such as iphone-se, the app runs on that phone's screen and plays the
+# example's session-<phone>.txt instead, if it has one.
 set -euo pipefail
 
 ios="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,10 +21,14 @@ if [ $# -gt 0 ] && [ -d "$1" ]; then
     shift
 fi
 bin="$("$ios/Scripts/compile-app.sh" "$examples" "$@")"
-frames="$("$bin" < "$examples/session.txt")"
+session="$examples/session.txt"
+if [ -n "${IRISRUN_SCREEN:-}" ] && [ -f "$examples/session-$IRISRUN_SCREEN.txt" ]; then
+    session="$examples/session-$IRISRUN_SCREEN.txt"
+fi
+frames="$("$bin" < "$session")"
 echo "$frames"
 
-awk -v session="$examples/session.txt" '
+awk -v session="$session" '
 BEGIN {
     while ((getline line < session) > 0) {
         if (line ~ /^# expect /) {

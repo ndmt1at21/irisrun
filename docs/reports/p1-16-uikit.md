@@ -511,3 +511,99 @@ Solver, màn 300 view lưới 30 × 10, 5 ràng buộc mỗi view (1.500), bản
 - **`hasAmbiguousLayout` tối thiểu:** đẩy từng biến của view bằng một mong muốn yếu hơn mọi priority xem nó có chạy không; `exerciseAmbiguityInLayout` đặt view tới khung khác đó một lần.
 - **Bàn phím cao 0 điểm** nên `keyboardLayoutGuide` không bao giờ lên; cỡ màn hình vẫn cố định 390 × 844 (3b làm cỡ thứ hai).
 - **Phần 3b:** `UIStackView`, `UIView.animate` tối thiểu để `layoutIfNeeded()` trong block animate frame, cỡ màn hình thứ hai, trang "Layout" ở cả hai cỡ ([bàn giao](../plans/p1-16-handoff.md)).
+
+## Đợt 3b: `UIStackView`, `UIView.animate`, cỡ màn hình thứ hai (16/10)
+
+Phần cuối của đợt 3, theo [bàn giao](../plans/p1-16-handoff.md) của 3a: stack view, animate tối thiểu để `layoutIfNeeded()` trong block animate frame, một cỡ màn hình thứ hai, và trang "Layout" ở cả hai cỡ.
+
+### Kết luận
+
+- **`UIStackView` dựng bằng constraint như UIKit, cùng tên:** `UISV-canvas-connection` (view đầu, cuối với mép, hay với margin guide khi `isLayoutMarginsRelativeArrangement`), `UISV-spacing`, `UISV-fill-equally`, `UISV-fill-proportionally`, `UISV-distributing` và `UISV-distributing-edge` (guide giữa hai view khi chia đều khoảng trống), `UISV-alignment`, `UISV-alignment-spanner` với `UISV-spanning-boundary` và `UISV-spanning-fit` (guide bao các view khi không fill), `UISV-hiding`, `UISV-ambiguity-suppression`. Stack view giữ chúng trong `constraints` của nó, guide trong `layoutGuides`. Đủ 5 distribution, 6 alignment (`top`/`bottom` là tên khác của `leading`/`trailing`), `spacing`, `setCustomSpacing(_:after:)`/`customSpacing(after:)`, `spacingUseDefault`/`spacingUseSystem`, margins-relative, baseline-relative; view xếp vào thôi dịch autoresizing mask; `removeArrangedSubview` giữ subview, `removeFromSuperview` bỏ view khỏi arrangement.
+- **View ẩn không chiếm chỗ, không có spacing:** `UIView.isHidden` báo stack view cha (hook mới, chỉ khi giá trị đổi). View ẩn dài 0 (`UISV-hiding`, bắt buộc như UIKit) và nằm ngoài chuỗi spacing, nên các view còn lại khít lại kể cả khi `UISV-hiding` mâu thuẫn với chiều cao bắt buộc app đặt cho view đó (UIKit cũng log xung đột này).
+- **`fillProportionally` theo intrinsic size:** `view.width == m × canvas.width` @999, 998… với m = intrinsic / (tổng intrinsic + spacing), như UIKit; stack view override `_intrinsicContentSizeInvalidated(forChildView:)` (giữ chữ ký) để làm lại tỉ lệ khi intrinsic size đổi.
+- **`UIView.animate` tối thiểu:** `animate(withDuration:animations:)`, `…completion:`, `…delay:options:animations:completion:`, lò xo `usingSpringWithDamping:initialSpringVelocity:`, `UIView.AnimationOptions` (đường cong, `repeat`, `autoreverse` có tác dụng; option khác nhận nhưng chưa làm gì), `performWithoutAnimation`. Frame, transform, alpha, màu nền đổi trong block, cả frame do `layoutIfNeeded()` trong block đặt, thành animation của render core từ giá trị đang hiện tới giá trị mới; view nhận giá trị mới ngay như UIKit. Trong lúc delay màn vẫn hiện giá trị cũ (render core có thêm `fills_backwards`, như fill mode backwards của Core Animation). Chế độ kịch bản nhảy tới cuối, `completion(true)` chạy ở lượt sau của main queue, trước khi màn hình in; trên thiết bị sau delay + duration. Animation ngầm của switch, slider, progress view đi cùng đường.
+- **Cỡ màn hình thứ hai:** `IrisScreen` của IrisHost có iPhone 14 (390 × 844 điểm, safe area 47/34, 3x; mặc định, như trước) và iPhone SE (3rd generation) (375 × 667, 20/0, 2x, không có home indicator). `IRISRUN_SCREEN=iphone-se` chọn máy khi app khởi động (đọc môi trường một lần; `HostOptions.scale` giờ cũng đọc một lần); `irisrun start` chuyển biến này vào runtime. Qua Device Protocol: `DeviceConfig.display` có cỡ (điểm) của một máy đã biết thì runtime đổi màn như scene đổi cỡ (scene của render core đổi cỡ, cửa sổ đang phủ màn cũ phủ màn mới, mọi thứ layout lại), rồi gửi lại `DeviceInfo` với tên máy và display mới. `UIScreen`, `UIWindow.safeAreaInsets` và mọi chỗ dùng chúng (cả app SwiftUI, vì safe area của nó lấy từ UIKit) theo máy đang chạy; không còn 390 × 844 hay 47/34 viết cứng. Patch `0034` của OpenSwiftUI không có hằng số nào (7b đã bỏ), nên OpenSwiftUI không đổi: vẫn 37 patch, stamp `e126d17d1ceb1242`.
+- **Mẫu:** trang "Layout" của app mẫu UIKit có thêm hàng thẻ (`UIStackView` fillEqually; chạm thẻ thì nó ẩn trong một animation, "Đặt lại" hiện lại), chữ trong hộp priority là stack dọc căn giữa, "Phóng to" chạy `layoutIfNeeded()` trong `UIView.animate`. Chạy đúng ở cả hai cỡ: 124 điểm ở iPhone 14 (10 mới), kịch bản riêng `session-iphone-se.txt` 27 điểm ở iPhone SE. `check-sample.sh` chọn kịch bản theo `IRISRUN_SCREEN`; CI chạy thêm cỡ SE.
+
+### Đã làm
+
+| Phần | Ở đâu |
+| --- | --- |
+| `UIStackView`: arrangement, ràng buộc và guide `UISV-…`, view ẩn, custom spacing, tỉ lệ theo intrinsic size | `Sources/OpenUIKit/UIStackView.swift` (mới) |
+| Hook của `isHidden`; `UIView.animate` (4 overload), `performWithoutAnimation`, `UIView.AnimationOptions` | `UIView.swift` |
+| `CALayer.irisAnimation` thay `irisAnimationDuration`: layer đổi hình học hay style trong block được đánh dấu; khi vẽ thì thêm animation frame, transform, opacity, màu nền; `IrisAnimationTiming` (thời gian, delay, đường cong, lặp, đảo chiều) | `CALayer.swift`, `UISwitch.swift`, `UISlider.swift`, `ProgressViews.swift` |
+| Render core: `fills_backwards` (giá trị `from` hiện trong lúc delay); test Rust mở rộng | `crates/render/src/animation.rs`, `ffi.rs`, `include/irisrun_render.h`, `swift/Sources/IrisRender` |
+| `IrisScreen` (tên máy, cỡ, safe area dọc, scale), `IRISRUN_SCREEN`; `HostOptions.scale` đọc một lần, mặc định theo máy ở chế độ kịch bản | `Sources/IrisHost/Window.swift` |
+| `DeviceHost`: `DeviceInfo.model` theo máy; `DeviceConfig.display` đổi máy, đổi cỡ scene, gửi lại `DeviceInfo`; `screenDidChange` cho framework | `Sources/IrisHost/DeviceHost.swift` |
+| `UIScreen.bounds`, `UIWindow.safeAreaInsets` theo `IrisScreen.current`; `UIWindow.screenDidChange(from:)` cho cửa sổ phủ màn mới; host UIKit nối callback | `UIScreen.swift`, `UIWindow.swift`, `Host.swift` |
+| `irisrun start` chuyển `IRISRUN_SCREEN` vào lệnh chạy runtime | `crates/engine/src/ios.rs` |
+| `check-sample.sh` chơi `session-<máy>.txt` khi có `IRISRUN_SCREEN` và file đó | `Scripts/check-sample.sh` |
+| 7 test mới. Stack view (5): fill equally, fill theo hugging, view ẩn và hiện lại, stack view đặt bằng frame, đo một mình bằng `systemLayoutSizeFitting`; căn giữa, đầu, cuối, fill trong cột tự co và cột rộng hơn; custom spacing, `spacingUseDefault`, `spacingUseSystem`; equal spacing, equal centering, tự co khi không có bề rộng; proportionally và đổi intrinsic size; margins-relative, xung đột `UISV-hiding` với chiều cao bắt buộc, bỏ và chèn view; baseline của hàng và baseline-relative của cột. Animate (1): giá trị mới ngay, animation trên render core, `performWithoutAnimation` lồng trong block, completion trên thiết bị và trong kịch bản. Màn hình (1): safe area của SE, đổi sang iPhone 14 lúc chạy | `Tests/OpenUIKitTests/StackViewTests.swift` (mới), `AutoLayoutTests.swift` |
+| App mẫu: hàng thẻ, chữ của hộp là stack dọc, `UIView.animate` + `layoutIfNeeded()`; `session.txt` +10 điểm; `session-iphone-se.txt` (mới) 27 điểm | `examples/ios-uikit` |
+| CI: app mẫu UIKit ở cỡ SE | `.github/workflows/ios-sample.yml` |
+
+### Quyết định
+
+- **Ràng buộc như của UIKit, giữ ở stack view, dựng lại ngay:** mỗi khi arrangement đổi (thêm, bỏ, chèn view, thuộc tính, custom spacing, view ẩn hay hiện, intrinsic size khi proportionally), stack view bỏ hết ràng buộc và guide cũ rồi dựng lại, không so khác biệt (O(n) ràng buộc mỗi lần đổi). Dựng ngay thay vì đợi lượt update constraints vì `PlatformViewHost` (patch `0037`) chỉ đo bằng `systemLayoutSizeFitting` những view đã có constraint: stack view trả về từ `makeUIView` phải có constraint ngay (thấy khi đọc lại patch, trước khi gặp lỗi). Ràng buộc một item (`UISV-hiding`) cũng nằm ở stack view, không ở view được xếp (dùng `addConstraints`, không dùng `activate`).
+- **View ẩn ra khỏi chuỗi spacing:** chuỗi spacing chỉ nối các view hiện. View ẩn dài 0 và đặt ở giữa khoảng spacing nó sẽ có (sau view hiện cuối thì sát view đó, trước view hiện đầu thì ở mép), như TZStackView (bản viết lại UIStackView có test so khung với UIKit). Engine bỏ ràng buộc bắt buộc thêm sau khi mâu thuẫn, nên khi app đặt chiều cao bắt buộc cho view bị ẩn thì `UISV-hiding` bị bỏ (UIKit thường bỏ ràng buộc của app); vì view ẩn ở ngoài chuỗi, các view khác vẫn khít lại, chỉ khung của view ẩn (không nhìn thấy) khác.
+- **Guide thay view phụ:** spanner và khoảng chia đều là `UILayoutGuide` của stack view, như UIKit từ iOS 9.
+- **Căn theo baseline:** hàng căn theo `firstBaseline`/`lastBaseline` có spanner bao mọi view, view có chữ cao nhất chạm mép trên; cột căn theo baseline coi như fill (tài liệu Apple: chỉ hợp lệ cho hàng).
+- **Priority của stack view theo các mức UIKit dùng** (999, 998… cho tỉ lệ, 150 cho equal centering, 51 cho spanning fit, 25 cho ambiguity suppression). Với trọng số mũ của 3a, các cấu hình trong test và trang mẫu cho cùng khung như thứ tự từ điển của UIKit.
+- **Animate đi qua cùng đường với animation ngầm của control:** block đặt `IrisAnimationTiming.current`; `CALayer.changed(_:)` đánh dấu layer đổi hình học hay style trong lúc đó; lần vẽ sau thêm animation của render core từ giá trị render layer đang giữ (giá trị vừa vẽ) tới giá trị mới. Không cần lớp presentation riêng.
+- **`fills_backwards` ở render core thay vì hoãn block tới hết delay:** hoãn block thì `layoutIfNeeded()` chạy sau delay, còn lượt layout của commit chạy trước, không animation (mẫu `constant = …; animate(…, delay:) { layoutIfNeeded() }` rất hay gặp); Core Animation của UIKit cũng dùng fill backwards cho animation có delay. Là cờ riêng vì spinner (2a) cần giá trị model trong lúc delay.
+- **Lò xo là đường cong ease-out**, bỏ damping và vận tốc đầu (`ponytail`): render core chưa có timing lò xo.
+- **Completion:** kịch bản dùng `DispatchQueue.main.async`, chạy trước khi màn hình in như mọi việc lệnh xếp vào main queue; thiết bị dùng `asyncAfter(delay + duration)`, gấp đôi duration khi autoreverse, không gọi khi repeat; `finished` luôn true. Duration 0 thì không animation.
+- **Máy là bảng 2 dòng** trong `IrisScreen` (tên Apple, cỡ điểm, safe area dọc, scale). `IRISRUN_SCREEN` nhận `iphone-14`, `iphone-se` (không phân biệt hoa thường); tên lạ thì in lỗi và chạy iPhone 14. Scale mặc định của chế độ kịch bản theo máy (SE 2x như máy thật, PNG 750 × 1334); thiết bị vẫn 2.
+- **`DeviceConfig.display` đổi màn lúc chạy như scene đổi cỡ (iPad, xoay), không khởi động lại app:** giữ state, không cần bridge của CLI hiểu `DeviceConfig` (bridge chỉ chuyển tiếp), và đúng câu "áp dụng khác biệt theo cách của nền tảng" trong proto. Chỉ đổi khi cỡ (điểm, tính theo scale của config) trùng một máy đã biết; scale của frame giữ nguyên; cỡ khác (kể cả màn ngang) thì log và giữ màn. App đặt frame theo `UIScreen.main.bounds` lúc đầu thì không tự theo, như trên iOS khi scene đổi cỡ.
+- **CLI không thêm tuỳ chọn:** `irisrun start` chuyển `IRISRUN_SCREEN` của môi trường vào runtime qua `env` (wrapper như `docker run` không chuyển môi trường), như cách `IRISRUN_SWIFT_RUNNER` chọn cách chạy Swift.
+- **Kịch bản theo máy:** `session-<máy>.txt` cạnh `session.txt`; `check-sample.sh` chọn theo `IRISRUN_SCREEN`, không có file thì chơi `session.txt`.
+
+### Chỗ khác iOS
+
+- View được xếp ẩn ngay khi đặt `isHidden` trong block animate; UIKit giữ nó hiện tới hết animation co lại. Các view còn lại vẫn animate tới chỗ mới.
+- `finished` luôn true; chưa có `beginFromCurrentState` (animation bắt đầu từ giá trị vẽ lần cuối, không từ giá trị đang hiện giữa animation); view đang animate vẫn nhận chạm (UIKit tắt chạm của chúng trừ khi có `allowUserInteraction`).
+- Lò xo không vượt quá đích; transform animate theo từng phần tử ma trận (xoay co lại giữa chừng, giới hạn của render core từ 2a).
+- Chữ của nhãn và nút không co giãn theo khung đang animate: chữ đặt theo khung cuối ngay (UIKit vẽ lại chữ ở cỡ cuối rồi kéo giãn ảnh trong lúc animate).
+- `isBaselineRelativeArrangement`: view đầu và cuối vẫn chạm mép bằng cạnh; UIKit đặt baseline của chúng cách mép. `spacingUseSystem` là 8 điểm cả giữa baseline (UIKit tính theo font).
+- Không chắc UIKit cho ra gì, chọn theo cách hợp lý nhất: `fill` khi nhiều view cùng hugging thấp nhất (solver chọn view giãn; UIKit chọn theo thứ tự trong `arrangedSubviews`); custom spacing sau một view ẩn (không dùng, khoảng sau view hiện trước nó được dùng); vị trí của view ẩn (khung dài 0, không nhìn thấy); lúc UIKit dựng ràng buộc (ở đây ngay khi đổi); `fillProportionally` khi stack view rộng hơn cỡ tự nhiên mà spacing khác 0 (phần lệch dồn vào view sau cùng, theo công thức của TZStackView, chưa đối chiếu trên iOS 17/18).
+
+### Lỗi gặp và cách sửa
+
+| Lỗi | Nguyên nhân | Sửa |
+| --- | --- | --- |
+| Test: `UISV-hiding` không có trong `constraints` của stack view | `NSLayoutConstraint.activate` đặt ràng buộc một item vào chính item đó | Stack view `addConstraints` lên chính nó |
+| Cảnh báo "non-'@objc' class method declared in extension cannot be overridden" | `open class func` trong extension | `public class func` (không ai override method lớp này) |
+| Stack view trong representable sẽ không được đo | Ràng buộc dựng trong lượt update constraints, còn patch `0037` chỉ đo view đã có constraint | Dựng lại ngay khi arrangement đổi |
+| Trong Device UI, ảnh chụp 120 ms sau khi chạm "Phóng to" chưa thấy animation | Device UI hiện frame chậm (khoảng 20 frame/giây ở máy dev), không phải lỗi của animation | Ghi mọi frame thiết bị gửi bằng client WebSocket: 18 frame trong 300 ms, khung đổi dần |
+
+### Số đo
+
+| Mục | Số đo | Ghi chú |
+| --- | --- | --- |
+| `swift test` | 96 test (7 mới): OpenUIKit 75, IrisBuild 13, ObjCRewriteTests 6, Swift5AppTests 1, IrisProtocol 1 | Màn 300 view (debug): layout đầu 65 ms, đổi constant 1,9 ms, như 3a |
+| `cargo test -p irisrun-render` | 20 test (1 test mở rộng cho fill backwards) | `cargo fmt --check`, `clippy -D warnings` sạch |
+| `check-sample.sh examples/ios-uikit` | 124 điểm (10 mới) ở chế độ stdout và frame | 67/72 PNG giống 3a: frame 1 (đèn timer chạy theo thời gian thật, đã biết từ 7a), 68–70 (trang Layout đổi), 71 (bước mới) |
+| … với `IRISRUN_SCREEN=iphone-se` | 27 điểm (mới) ở hai chế độ | 5 PNG 750 × 1334 |
+| App kiểm tra representable | 13 điểm, 12/12 PNG giống 3a | |
+| `check-sample.sh` (SwiftUI) | 68 điểm, 97/97 PNG giống 3a từng pixel | |
+| Một bước trên trang Layout | update STEP_UPDATE ms, vẽ và PNG STEP_DRAW ms | 3x ở iPhone 14, 2x ở SE |
+| Device UI (iPhone 14) | Animation "Phóng to", ẩn thẻ, "Đặt lại": thiết bị gửi 18 frame trong 300 ms (60 frame/giây); Device UI hiện khoảng 20 frame/giây | Ảnh và frame ở `~/.cache/irisrun/p1-16/3b/live/` |
+| Device UI (`IRISRUN_SCREEN=iphone-se`) | Ghi "iPhone SE (3rd generation) · iOS 18.0"; chạm trang Layout, "Phóng to", ẩn thẻ đúng | Khung máy của Device UI vẫn dáng iPhone 14, ảnh 750 × 1334 bị kéo giãn vào đó (`apps/web`, P1-28) |
+| `DeviceConfig.display` (client WebSocket) | 750 × 1334 @2 → `DeviceInfo` "iPhone SE (3rd generation)", frame 750 × 1334, trang layout lại; 1170 × 2532 @3 → iPhone 14, frame 780 × 1688; 2532 × 1170 (ngang) → log, giữ màn | |
+| Code | `UIStackView.swift` 293 dòng; `UIView.swift` +91, `CALayer.swift` +43, IrisHost +73, `UIScreen`/`UIWindow`/`Host` +18; render core +28; CLI +7; test +288; trang mẫu +42, kịch bản SE 49 dòng | |
+
+### Giới hạn và việc tiếp
+
+- **Phần còn lại của `UIView.animate` (đợt 4):** `transition(with:…)`, `transition(from:to:…)`, keyframe, `UIViewPropertyAnimator`, `beginFromCurrentState` (cần đọc giá trị đang hiện từ render core), chạm trong lúc animate, view ẩn ở cuối animation, timing lò xo, `areAnimationsEnabled`, `CAAnimation`.
+- **Đổi màn lúc chạy:** chưa xoay, chưa `viewWillTransition(to:with:)` và trait collection; Device UI chưa gửi `DeviceConfig` (P1-28); scale của frame không đổi theo config.
+- **Stack view:** các mục "Chỗ khác iOS"; dựng lại toàn bộ mỗi lần đổi (stack rất lớn thì nên so khác biệt).
+
+## Đợt 3: tổng kết
+
+Tiêu chí của plan: "Màn dựng toàn bằng constraint hiện như iOS ở 2 cỡ màn hình". **Đạt.**
+
+- **Engine (3a):** solver Cassowary kasuari trong render core; `NSLayoutConstraint`, anchor, `UILayoutGuide`, safe area, margin, readable content, keyboard guide; intrinsic size, hugging, compression; autoresizing mask thành constraint; `updateConstraints`, `systemLayoutSizeFitting`; nhãn nhiều dòng hai lượt; baseline; log xung đột như UIKit; SwiftUI đo view UIKit dựng bằng constraint.
+- **Trên engine (3b):** `UIStackView` bằng ràng buộc `UISV-…`; `UIView.animate` với `layoutIfNeeded()` trong block; iPhone SE cạnh iPhone 14, chọn bằng `IRISRUN_SCREEN` hay `DeviceConfig.display`.
+- **Bằng chứng:** trang "Layout" của app mẫu UIKit dựng toàn bằng constraint (anchor, API item/attribute, layout guide, margin, safe area, priority, hugging/compression, nhãn nhiều dòng, baseline, hai stack view) và không có số nào theo cỡ màn hình. `# expect frame` kiểm khung của nó ở iPhone 14 (`session.txt`) và iPhone SE (`session-iphone-se.txt`, 27 điểm): ở SE cùng cấu trúc với bề rộng 343 điểm, nút rộng 165,5, thẻ 109, hộp co lại vừa chỗ, chân trang cách đáy 12 điểm vì không có home indicator. PNG cả hai cỡ như iOS. Trong Device UI, cả hai cỡ chạm được, animation của `layoutIfNeeded()` và của stack view chạy 60 frame/giây ở thiết bị.
+- 96 test, app mẫu UIKit 124 điểm (iPhone 14) và 27 điểm (SE), app kiểm tra representable 13, app mẫu SwiftUI 68 với PNG giống từng pixel.
+- **Còn lại:** view controller (đợt 4, kế tiếp; xem [bàn giao](../plans/p1-16-handoff.md)), bảng (đợt 5), storyboard (đợt 6); priority theo thứ tự từ điển (chờ app cần); các giới hạn ở mục "Giới hạn và việc tiếp" của 3a và 3b.

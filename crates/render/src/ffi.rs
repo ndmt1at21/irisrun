@@ -117,6 +117,7 @@ pub struct IrisAnimation {
     timing: [f32; 4],
     repeat_count: f32,
     autoreverses: bool,
+    fills_backwards: bool,
 }
 
 #[repr(C)]
@@ -856,6 +857,7 @@ pub unsafe extern "C" fn iris_layer_add_animation(
             timing: Timing::new(x1, y1, x2, y2),
             repeat_count: a.repeat_count,
             autoreverses: a.autoreverses,
+            fills_backwards: a.fills_backwards,
         },
     )
 }
@@ -1102,6 +1104,7 @@ mod tests {
                 timing: [0.0, 0.0, 1.0, 1.0],
                 repeat_count: 1.0,
                 autoreverses: false,
+                fills_backwards: false,
             };
             assert!(iris_layer_add_animation(scene, layer, &fade));
             assert!(iris_scene_is_animating(scene));

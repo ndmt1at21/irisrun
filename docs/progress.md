@@ -1,6 +1,6 @@
 # Tiến độ triển khai
 
-Cập nhật 15/10/2026, session thứ năm (P1-15 xong, P1-13 đợt 1 và 2 xong). File này để session sau làm tiếp; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
+Cập nhật 16/10/2026, cuối session thứ sáu (P1-16 đợt 1, 2, 7, 3a và P1-35 xong; dừng trước đợt 3b theo yêu cầu người dùng). File này để session sau làm tiếp, bắt đầu từ mục 8 của "Làm tiếp"; cột trạng thái trong [tasks.md](tasks.md) đã cập nhật theo.
 
 ## Tổng quan
 
@@ -19,6 +19,8 @@ Cập nhật 15/10/2026, session thứ năm (P1-15 xong, P1-13 đợt 1 và 2 xo
 | P0-10 cloud Android | Xong ở local | Emulator Android 16 trong container trên KVM → scrcpy-server → `irisrun-gateway` (str0m) → WebRTC → Chromium; chạm, kéo, phím, chữ (cả tiếng Việt), Back đều chạy. Còn đo từ VN tới host Singapore. Xem [reports/p0-10-cloud-android.md](reports/p0-10-cloud-android.md) |
 | P1-14 Render core v1 | Xong phần code | Chữ nhiều kiểu, metric chữ thật, bóng đổ, path, gradient, mask, ảnh theo `contentMode`, animation, hit-test, frame mã hoá ở luồng khác; OpenSwiftUI dùng metric thật (patch 0009). Còn so ảnh với simulator. Xem [reports/p1-14-render-core-v1.md](reports/p1-14-render-core-v1.md) |
 | P1-15 Input iOS | Xong | Form đăng nhập mẫu gõ Telex được trong Device UI (sự kiện IME của Chromium). `DragGesture`, `ScrollView`, `List` cuộn; `TextField`/`SecureField`/`TextEditor` vẽ bằng SwiftUI, caret theo render core; `@FocusState`/`onSubmit` bản Iris; app chạy như thiết bị IrisProtocol qua stdio; `irisrun start` nhận project Xcode. Input → frame trung vị 17 ms. Compute nâng 0.6.0-bugfix.1 kèm patch. Chưa thử bộ gõ thật của hệ điều hành. Xem [reports/p1-15-ios-input.md](reports/p1-15-ios-input.md) |
+| P1-16 UIKit cơ bản | Đang làm | Đợt 1, 2, 7 và 3a xong; tiếp theo 3b, rồi 4, 5, 6. OpenUIKit vẽ bằng render core, một host kiểu iOS cho cả app SwiftUI, SwiftUI và UIKit nhúng vào nhau, Auto Layout trên solver kasuari. Xem [reports/p1-16-uikit.md](reports/p1-16-uikit.md) và [plans/p1-16-uikit.md](plans/p1-16-uikit.md) |
+| P1-35 Viết lại ObjC | Xong | swift-syntax trong IrisBuild viết lại `#selector`, `@objc`, IB, KVC/KVO, giữ số dòng; corpus hết lỗi do `@objc`/`#selector`. Xem [reports/p1-35-objc-rewrite.md](reports/p1-35-objc-rewrite.md) |
 | P1-13 Mở rộng OpenSwiftUI | Xong phần SwiftUI | Đợt 1–4 xong (patch 0014–0028): vẽ display list, control, container, điều hướng, toolbar, Button có style, sheet/alert/dialog/menu, List kiểu iOS, swipe, ScrollViewReader; sửa 4 lỗi upstream. Đợt 5: `check-sample.sh` vào CI (`.github/workflows/ios-sample.yml`). Còn: OpenKit dựng sẵn và đo corpus — corpus còn 0/65 vì mọi app vướng UIKit/Combine/framework khác, nên đo sau P1-16–P1-18. Xem [reports/p1-13-openswiftui.md](reports/p1-13-openswiftui.md) |
 | P1-12 Pipeline build iOS | Xong phần pipeline | `irisrun-ios-build` (Swift, chỉ Foundation) đọc `.pbxproj` kể cả thư mục đồng bộ của Xcode 16, chọn target iOS, gom source/resource/gói SPM, bỏ preview, `.xcstrings` → `.strings`, sinh SwiftPM; 65/65 app corpus đọc được; app mẫu build qua `IrisSample.xcodeproj`. Nửa UIKit chờ P1-16, P1-33. Xem [reports/p1-12-ios-build-pipeline.md](reports/p1-12-ios-build-pipeline.md) |
 | P0-11 cloud iOS | Hoãn | Tầng dự phòng chạy simulator thật, cần Mac thuê (EC2 Mac hoặc MacStadium). Đường iOS chính (OpenKit trên Linux) không phụ thuộc nó. Người dùng chọn hoãn ngày 15/10 |
@@ -39,7 +41,81 @@ P0-05, P0-07 và P0-08 do subagent làm trong session thứ hai, mỗi task ch�
 
 Emulator và gateway của P0-10 chạy lại theo mục "Chạy lại" của báo cáo. Image `irisrun-emulator:36` (4,6 GB) còn trong Docker. Gateway bị dừng bằng PID: `pkill -x` không khớp vì tên process bị cắt còn 15 ký tự (`irisrun-gateway`).
 
-7. **P1-13 xong phần SwiftUI (session thứ năm),** xem báo cáo. Patch `openswiftui/0014`–`0028`; workflow CI `ios-sample.yml`. **Tiếp theo: P1-16 (UIKit), kế hoạch đã duyệt ngày 15/10** ([plans/p1-16-uikit.md](plans/p1-16-uikit.md), mục "Quyết định" và "Tiến độ"); bước viết lại `@objc`/`#selector`/IB tách thành P1-35. Session thứ sáu: **đợt 1a xong** (target `IrisHost` dùng chung cho cả hai framework, patch `openswiftui/0029` chuyển OpenSwiftUI sang dùng nó, OpenUIKit nền, app mẫu `examples/ios-uikit` đạt 17 điểm, app mẫu SwiftUI vẫn đạt 54 điểm, `check-sample.sh [<thư mục app mẫu>]`), xem [reports/p1-16-uikit.md](reports/p1-16-uikit.md); **đợt 1b xong, tức đợt 1 xong** (chạm, `UIControl` + `UIAction`, module `IrisObjC` cho `Selector`/bảng method, gesture recognizer, `UIImage`, `UIFont`; patch `openswiftui/0030`, `opencoregraphics/0001`; app mẫu UIKit 26 điểm, 35 test; test chạy bằng `swift test --scratch-path ~/.cache/irisrun/p1-16/runtime-build -Xlinker -L$PWD/../../target/release`). **P1-35 xong** (session thứ sáu, xem [reports/p1-35-objc-rewrite.md](reports/p1-35-objc-rewrite.md)): swift-syntax 604 trong IrisBuild (`ObjCSources.swift`), bảng method sinh vào `_IrisMethodTables.swift` của app, KVC/KVO trong IrisObjC; 44 test, app mẫu UIKit 34 điểm, corpus hết lỗi do `@objc`/`#selector`. Công cụ đo corpus ở `~/.cache/irisrun/devtools/objc-corpus-*`. **P1-16 đợt 2a xong** (chữ có định dạng, label, button + Configuration, image view, switch, slider, segmented control, spinner, progress; render core thêm nền cho từng run chữ và tint ảnh; mọi kiểu main-actor của OpenUIKit là `@preconcurrency @MainActor` như SDK; `addAttribute(s)` của Foundation trên Linux crash với giá trị là object nên pipeline đổi lời gọi sang `_irisAddAttribute(s)`; 58 test, app mẫu UIKit 62 điểm, app mẫu SwiftUI 54 điểm ở cả hai chế độ). **Đợt 2b xong, tức đợt 2 xong:** form đăng nhập UIKit gõ Telex được trong Device UI; trạng thái soạn chữ dùng chung ở `IrisHost/TextEditing.swift` (patch `openswiftui/0031`), OpenSwiftUI phụ thuộc và re-export OpenUIKit (patch `0032`, `UIKeyboardType`/`UITextContentType` chỉ còn ở OpenUIKit); 69 test, app mẫu UIKit 82 điểm, app mẫu SwiftUI 54 điểm ở cả hai chế độ. Lưu ý: mỗi lần sửa OpenUIKit thì OpenSwiftUI build lại (khoảng 2 phút), nên chạy `swift test` trước; build trong Docker đôi khi giữ file object cũ, `touch` source để build lại; Swift 6.4.1 link sai tên symbol cho method `private` không `final` nhận closure `@MainActor @Sendable` trong class `@preconcurrency @MainActor`, nên thêm `final`. **Đợt 7a xong:** patch `openswiftui/0033`; trên Linux `App.main()` đi qua `UIApplicationMain` của OpenUIKit, scene delegate dựng window có `UIHostingController` (`_UIHostingView` viết mới cho Linux), UIKit giữ gốc scene, SwiftUI vẽ vào layer của hosting view; chạm qua hit-test của UIKit, first responder của UIKit là nguồn chuẩn cho focus; pipeline ghi scene manifest như Xcode sinh; 73 test, app mẫu UIKit 98 điểm (trang "SwiftUI" nhúng bằng `UIHostingController`), app mẫu SwiftUI 54 điểm, 81 PNG giống từng pixel. Công cụ so PNG: `~/.cache/irisrun/devtools/pngdiff.py`. **Đợt 7b xong, tức đợt 7 xong:** patch `openswiftui/0034` (safe area 47/34 cho app SwiftUI), `0035` (vẽ `rotationEffect`, ellipse bắt đầu bên phải như Core Graphics), `0036` (`UIViewRepresentable`/`UIViewControllerRepresentable`, dùng lại vòng đời của upstream); thư mục app không có project Xcode được sinh scene manifest; app kiểm tra `runtimes/ios/Tests/Apps/Representables` (chạy bằng `check-sample.sh <thư mục>`, có trong CI); 75 test, app mẫu UIKit 98 điểm, SwiftUI 68 điểm. Thử code nhanh: một thư mục file Swift + `compile-app.sh` (khoảng 30 s khi OpenSwiftUI đã build); `~/.cache/irisrun/devtools/swift-errors.sh` lọc lỗi compile từ log dài. **Đang làm đợt 3** (Auto Layout), chia 3a (solver, constraint, guide, fitting size) và 3b (`UIStackView`, `UIView.animate` tối thiểu, `layoutIfNeeded` trong animation, màn mẫu ở 2 cỡ màn hình). Subagent bàn giao cho nhau qua `docs/plans/p1-16-handoff.md`.
+7. **P1-13 xong phần SwiftUI (session thứ năm),** xem báo cáo. Patch `openswiftui/0014`–`0028`; workflow CI `ios-sample.yml`.
+
+8. **Session thứ sáu (15–16/10): P1-16 (UIKit) đợt 1, 2, 7, 3a và P1-35 xong.** Kế hoạch duyệt ngày 15/10 ([plans/p1-16-uikit.md](plans/p1-16-uikit.md), các mục "Quyết định", "Tiến độ", "Hợp đồng cho P1-35"); báo cáo [reports/p1-16-uikit.md](reports/p1-16-uikit.md) và [reports/p1-35-objc-rewrite.md](reports/p1-35-objc-rewrite.md). Cách làm: mỗi phần giao một subagent, các subagent bàn giao cho nhau qua [plans/p1-16-handoff.md](plans/p1-16-handoff.md). Orchestrator chạy lại mọi kiểm tra sau mỗi phần rồi mới giao phần kế. Thứ tự đã đổi so với plan: P1-35 làm trước đợt 2 và chạy nối tiếp, không song song, vì cả hai cùng build lại `irisrun-ios-build` trong một thư mục build.
+   - **Đợt 1 (1a, 1b):** `IrisHost` (host Device Protocol dùng chung), `IrisObjC` (`Selector`, bảng method), OpenUIKit nền, chạm, control, gesture, `UIImage`, `UIFont`. Patch `openswiftui/0029`–`0030` và `opencoregraphics/0001`.
+   - **P1-35:** viết lại `#selector`/`@objc`/IB/KVC/KVO bằng swift-syntax 604 (`IrisBuild/ObjCSources.swift`). Corpus hết lỗi do `@objc`/`#selector`; trước đó có 3.601 lỗi ở 34 app.
+   - **Đợt 2 (2a, 2b):**
+     - Chữ có định dạng, label, button + Configuration, image view và các control.
+     - `UITextField`/`UITextView` với IME, `UIScrollView`, `UIAlertController`. Form đăng nhập UIKit gõ Telex được.
+     - Phần soạn chữ dùng chung ở `IrisHost/TextEditing.swift`. OpenSwiftUI phụ thuộc và re-export OpenUIKit. Patch `0031`–`0032`.
+   - **Đợt 7 (7a, 7b):**
+     - Một host kiểu iOS: trên Linux `App.main()` đi qua `UIApplicationMain` và `UIHostingController`.
+     - `UIViewRepresentable`/`UIViewControllerRepresentable`.
+     - App SwiftUI có safe area 47/34 điểm như app UIKit.
+     - Thư mục app không có project Xcode được sinh scene manifest.
+     - Patch `0033`–`0036`.
+   - **Đợt 3a:** Auto Layout trên solver kasuari (Rust, MIT/Apache-2.0), đặt trong render core qua C ABI `iris_layout_*`. Đây là solver nhanh nhất trong 4 solver đã đo: 1.500 constraint giải hết trong 21–23 ms, đổi một hằng số giải lại trong 84 µs. Có constraint, anchor, layout guide, fitting size. Patch `0037`. `check-sample.sh` nhận thêm dạng `# expect frame "<chữ>" x:… y:… w:… h:…`.
+   - **Số đo cuối session (chạy lại ngày 16/10):**
+     - `swift test`: 89 test.
+     - `cargo test -p irisrun-render`: 20 test.
+     - `check-sample.sh examples/ios-uikit`: 114 điểm.
+     - `check-sample.sh` (SwiftUI): 68 điểm ở cả hai chế độ.
+     - `check-sample.sh runtimes/ios/Tests/Apps/Representables`: 13 điểm.
+
+   **Làm tiếp (session thứ bảy):**
+   1. **P1-16 đợt 3b**, theo [plans/p1-16-handoff.md](plans/p1-16-handoff.md) mà 3a viết sẵn cho 3b. Tiêu chí của đợt 3 là "màn dựng toàn bằng constraint hiện như iOS ở 2 cỡ màn hình". Việc cần làm:
+      - `UIStackView`: tự tạo constraint `UISV-…` như UIKit. `isHidden` cần một hook để ẩn view thì stack co lại.
+      - `UIView.animate` tối thiểu, để `layoutIfNeeded()` trong animation chạy được.
+      - Cỡ màn hình thứ hai (iPhone SE, 375×667), chọn được qua biến môi trường và Device Protocol. Hiện 390×844 viết cứng trong `UIScreen.swift`, safe area 47/34 trong `UIWindow.swift`, và còn liên quan scene của `IrisHost` và patch 0034.
+      - Chạy trang "Layout" của app mẫu UIKit ở cả hai cỡ.
+   2. **Đợt 4: view controller.**
+      - Vòng đời, `UINavigationController`, `UITabBarController`, `present`/`dismiss` đầy đủ, `UIView.animate`.
+      - Chuyển sheet và alert của SwiftUI trong hosting controller nhúng sang `present` của UIKit, để chúng phủ cả cửa sổ.
+      - Callback xuất hiện (`viewWillAppear`…) cho view controller nằm trong representable.
+   3. **Đợt 5:** `UITableView` và `UICollectionView` với flow layout.
+   4. **Đợt 6:** bộ nạp storyboard/XIB theo hợp đồng P1-35. Outlet gán qua `setValue(_:forKey:)`, action theo tên selector trong XIB. Còn thiếu factory `init(coder:)` theo `customClass`, bảng tên cho class `@objc(Name)`, `Main.storyboard` và segue.
+   5. Sau P1-16: đo lại corpus (P1-13 đợt 5, P1-18), rồi các task iOS kế tiếp trong [tasks.md](tasks.md).
+   6. **Lệnh kiểm tra.** Swift chạy trong Docker qua `swiftenv`, nên thêm `~/.cache/irisrun/devtools/bin` vào PATH. `irisrun start` cũng cần PATH đó để tìm `swiftenv`.
+
+      ```sh
+      (cd runtimes/ios && swiftenv swift test --scratch-path ~/.cache/irisrun/p1-16/runtime-build -Xlinker -L$PWD/../../target/release)
+      swiftenv runtimes/ios/Scripts/check-sample.sh examples/ios-uikit
+      swiftenv runtimes/ios/Scripts/check-sample.sh runtimes/ios/Tests/Apps/Representables
+      swiftenv env IRISRUN_FRAMES=$HOME/.cache/irisrun/verify/swiftui-frames runtimes/ios/Scripts/check-sample.sh
+      LIBRARY_PATH=$HOME/.cache/irisrun/devlibs cargo test -p irisrun-render
+      ```
+
+   **Lưu ý kỹ thuật:**
+   - Build và test:
+     - Mỗi lần sửa OpenUIKit thì OpenSwiftUI build lại, mất khoảng 2 phút, nên chạy `swift test` trước.
+     - Build trong Docker đôi khi giữ file object cũ; `touch` source để build lại.
+     - Đừng sửa `compile-app.sh` hay `check-sample.sh` khi đang chạy kiểm tra.
+   - Bẫy của Swift và Foundation trên Linux:
+     - Swift 6.4.1 link sai tên symbol khi một class `@preconcurrency @MainActor` có method `private` không `final` nhận closure `@MainActor @Sendable`. Thêm `final` thì hết.
+     - Hai `AnyHashable(NSNull())` bằng nhau nhưng có hash khác nhau.
+     - `Timer(timeInterval:repeats:block:)` chạy ngay lập tức.
+     - `NSMutableAttributedString.addAttribute(s)` crash khi giá trị là object. Pipeline đổi lời gọi sang `_irisAddAttribute(s)`.
+   - Patch OpenSwiftUI:
+     - `@_exported import OpenUIKit` làm tên của OpenUIKit hiện trong mọi file OpenSwiftUI, nên tên trùng phải viết kèm tên module.
+     - `git -C <checkout> format-patch -o` cần đường dẫn tuyệt đối.
+   - Công cụ:
+     - Ảnh chuẩn mới nhất ở `~/.cache/irisrun/p1-16/3a/frames`; so PNG bằng `~/.cache/irisrun/devtools/pngdiff.py`.
+     - Thử code nhanh bằng một thư mục file Swift + `compile-app.sh`, khoảng 30 s.
+     - Lọc lỗi compile bằng `~/.cache/irisrun/devtools/swift-errors.sh`.
+
+   **Câu hỏi chờ người dùng** (mặc định đang dùng ghi trong ngoặc):
+   1. Priority của Auto Layout đang là trọng số mũ 10^(6p/1000), không xếp thứ tự tuyệt đối như UIKit: một constraint 750 có thể thua khoảng 1.000 constraint 250. Có làm solver tách tầng theo priority không? (Chưa làm; chờ tới khi corpus có app bị ảnh hưởng.)
+   2. Các target OpenKit trong `runtimes/ios` chỉ build được khi đã có checkout của `fetch-openswiftui.sh` (`IRISRUN_IOS_WORK`, mặc định `~/.cache/irisrun/p0-05`). (Giữ như vậy.)
+   3. Device UI kéo dãn khung hình theo chiều dọc: khung 780×1688 bị vẽ vào ô 324×756. Lỗi thuộc `apps/web`; đã báo session `app-engine-98` ngày 15/10, chưa có trả lời.
+   4. Hằng số riêng của UIKit đang là ước lượng: vùng chạm 70 điểm của control, double tap trong 45 điểm và 0,35 s, pan bắt đầu sau 10 điểm. Cần simulator để chỉnh lại.
+   5. Những chỗ cố ý khác iOS:
+      - `UIFont(name:size:)` không bao giờ trả nil.
+      - `UIImage(systemName:)` là ô trống, trừ 3 biểu tượng của nút hệ thống.
+      - Action gửi tới target nil khi chưa có first responder thì đi từ sender.
+      - Constraint có item nằm ngoài cây view thì ghi log và bỏ qua, thay vì crash như iOS.
+   6. P1-35 còn thiếu: method `@objc` của class generic (13 method ở 3 app), KVO kiểu cũ (4 app), `@NSManaged` (thuộc E2-05), và package local của app chưa được viết lại.
 
 ## Kế hoạch P1-13 (task XL, chia đợt)
 

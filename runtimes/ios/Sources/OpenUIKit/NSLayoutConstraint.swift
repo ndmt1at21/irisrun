@@ -390,7 +390,7 @@ open class NSLayoutAnchor<AnchorType: AnyObject>: NSObject, NSCopying {
 
 /// The standard space between two views, which UIKit's system spacing is.
 // ponytail: also between text baselines, where UIKit derives it from the fonts.
-private let systemSpacing: CGFloat = 8
+let systemSpacing: CGFloat = 8
 
 @preconcurrency @MainActor
 open class NSLayoutXAxisAnchor: NSLayoutAnchor<NSLayoutXAxisAnchor> {

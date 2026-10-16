@@ -62,6 +62,7 @@ final class UIKitHost {
             let device = DeviceHost(size: UIScreen.main.bounds.size, scale: options.scale, output: output, input: input) {
                 LayerCommit.commit()
             }
+            device.screenDidChange = { old in MainActor.assumeIsolated { UIWindow.screenDidChange(from: old) } }
             // Changes made outside input, such as by timers, show as soon as they are drawn.
             LayerCommit.didDraw = { device.scheduleUpdate(after: 0) }
             device.run()

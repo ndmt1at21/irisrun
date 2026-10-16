@@ -120,8 +120,8 @@ open class UISwitch: UIControl {
     private func update(animated: Bool) {
         let on = draggedOn ?? isOn
         if animated {
-            layer.irisAnimationDuration = 0.25
-            knob.irisAnimationDuration = 0.25
+            layer.irisAnimation = IrisAnimationTiming(duration: 0.25)
+            knob.irisAnimation = IrisAnimationTiming(duration: 0.25)
         }
         layer.backgroundColor = (on ? onTintColor ?? .systemGreen : .secondarySystemFill).cgColor
         knob.backgroundColor = (thumbTintColor ?? .white).cgColor
