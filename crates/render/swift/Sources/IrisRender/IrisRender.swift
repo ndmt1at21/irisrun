@@ -248,8 +248,10 @@ public struct TextRun: Sendable {
     public var letterSpacing: Float
     /// Points the run is raised by.
     public var baselineOffset: Float
+    /// 0xAARRGGBB filling the run's line boxes; 0 for none.
+    public var backgroundColor: UInt32
 
-    public init(_ range: Range<Int>, size: Float = 17, weight: UInt16 = 400, color: UInt32 = 0xFF00_0000, isItalic: Bool = false, isUnderlined: Bool = false, isStruckThrough: Bool = false, letterSpacing: Float = 0, baselineOffset: Float = 0) {
+    public init(_ range: Range<Int>, size: Float = 17, weight: UInt16 = 400, color: UInt32 = 0xFF00_0000, isItalic: Bool = false, isUnderlined: Bool = false, isStruckThrough: Bool = false, letterSpacing: Float = 0, baselineOffset: Float = 0, backgroundColor: UInt32 = 0) {
         self.range = range
         self.size = size
         self.weight = weight
@@ -259,6 +261,7 @@ public struct TextRun: Sendable {
         self.isStruckThrough = isStruckThrough
         self.letterSpacing = letterSpacing
         self.baselineOffset = baselineOffset
+        self.backgroundColor = backgroundColor
     }
 
     var raw: IrisTextRun {
@@ -268,7 +271,8 @@ public struct TextRun: Sendable {
         if isStruckThrough { traits |= IRIS_TEXT_STRIKETHROUGH.rawValue }
         return IrisTextRun(
             start: max(range.lowerBound, 0), end: max(range.upperBound, 0), size: size, weight: weight,
-            color: color, traits: traits, letter_spacing: letterSpacing, baseline_offset: baselineOffset
+            color: color, traits: traits, letter_spacing: letterSpacing, baseline_offset: baselineOffset,
+            background: backgroundColor
         )
     }
 }
@@ -603,6 +607,12 @@ public final class Layer {
         didSet { iris_layer_set_content_mode(raw, id, contentMode.rawValue) }
     }
 
+    /// 0xAARRGGBB that an image's opaque parts are painted in, as UIKit draws template
+    /// images; 0 for the image's own colors.
+    public var contentTint: UInt32 = 0 {
+        didSet { iris_layer_set_content_tint(raw, id, contentTint) }
+    }
+
     public func setBorder(width: Float, color: UInt32) {
         iris_layer_set_border(raw, id, width, color)
     }
@@ -695,5 +705,55 @@ public final class Layer {
 
     public func removeAllAnimations() {
         iris_layer_remove_animations(raw, id)
+    }
+}
+
+// MARK: - Layout
+
+/// Auto Layout's linear constraints over numbered variables, kept solved by
+/// the Cassowary simplex as they come and go.
+public final class LayoutSolver {
+    public enum Relation: Int32, Sendable {
+        case lessThanOrEqual = -1
+        case equal = 0
+        case greaterThanOrEqual = 1
+    }
+
+    /// The strength of a constraint that must hold. Weaker constraints are
+    /// wishes, met as far as the required ones and stronger wishes let them.
+    public static let required = 1_001_001_000.0
+
+    let raw: OpaquePointer
+
+    public init() {
+        raw = iris_layout_solver_new()
+    }
+
+    deinit {
+        iris_layout_solver_free(raw)
+    }
+
+    /// A new variable, numbered from 0 up; it is 0 until a constraint moves it.
+    public func makeVariable() -> UInt32 {
+        iris_layout_variable_new(raw)
+    }
+
+    /// Adds `sum(coefficient × variable) + constant <relation> 0`; its id, or
+    /// nil, changing nothing, if it is required and contradicts the required
+    /// constraints in the solver.
+    public func add(_ terms: [(variable: UInt32, coefficient: Double)], constant: Double, relation: Relation, strength: Double) -> UInt64? {
+        let terms = terms.map { IrisLayoutTerm(variable: $0.variable, coefficient: $0.coefficient) }
+        let id = terms.withUnsafeBufferPointer {
+            iris_layout_add(raw, $0.baseAddress, $0.count, constant, relation.rawValue, strength)
+        }
+        return id == 0 ? nil : id
+    }
+
+    public func remove(_ constraint: UInt64) {
+        iris_layout_remove(raw, constraint)
+    }
+
+    public func value(of variable: UInt32) -> Double {
+        iris_layout_value(raw, variable)
     }
 }

@@ -40,6 +40,9 @@ struct ContentView: View {
                 NavigationLink("Bộ sưu tập") {
                     CollectionView(library: library)
                 }
+                NavigationLink("UIKit") {
+                    UIKitView()
+                }
             }
             .navigationTitle("Library")
             .navigationDestination(for: UUID.self) { id in

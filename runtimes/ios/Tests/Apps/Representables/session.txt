@@ -1,0 +1,40 @@
+# What SwiftUI does with the UIKit views and view controllers it embeds, for
+# runtimes/ios/Scripts/check-sample.sh runtimes/ios/Tests/Apps/Representables. Commands as in
+# examples/ios-swiftui/session.txt; points are in the window.
+#
+# Sizes, by iOS's rules: the intrinsic size, which a view leaves only where it hugs weakly
+# (grows) or resists compression weakly (shrinks); sizeThatFits(_:uiView:context:) first. A
+# view laid out by constraints inside is as big as they make it: a button, 10 points around.
+# expect cố định 51x31, giãn 300x60, không nén 200x20, lớn dần 37x30, nén 100x20, ràng buộc 57x50, sizeThatFits 120x40, ôm 51x31
+# The coordinator comes first, updateUIView right after makeUIView, and the view controller
+# joins the hosting controller.
+tap Nhật ký
+# expect Nhật ký: coordinator make update0 will:UIHostingController did:UIHostingController
+# updateUIView runs when the view's input changes, not when other state does, and once more as
+# the view goes (its phase changes), then dismantleUIView once; a new coordinator and view come
+# when it comes back. The view controller leaves its parent with its view.
+tap Tăng
+tap Khác
+# expect Khác: 1
+tap Ẩn
+tap Hiện
+tap Nhật ký
+# expect Nhật ký: coordinator make update0 will:UIHostingController did:UIHostingController update1 update1 dismantle dismantleVC will:nil did:nil coordinator make update1 will:UIHostingController did:UIHostingController
+# A UIKit view whose intrinsic size grows is laid out again.
+tap Rộng
+# expect Rộng rộng
+# expect cố định 51x31, giãn 300x60, không nén 200x20, lớn dần 74x30, nén 100x20, ràng buộc 57x50, sizeThatFits 120x40, ôm 51x31
+# SwiftUI content in front of a UIKit view takes its touches; content that doesn't take
+# touches lets them through.
+tap 60 468
+# expect SwiftUI chạm: 1
+# expect UIKit chạm: 0
+tap 316 468
+# expect UIKit chạm: 1
+tap UIKit chạm: 1
+# expect UIKit chạm: 2
+# expect SwiftUI chạm: 1
+# What is inside the view laid out by constraints grows: SwiftUI sizes it again.
+tap Ghim
+# expect Ghim chặt
+# expect cố định 51x31, giãn 300x60, không nén 200x20, lớn dần 74x30, nén 100x20, ràng buộc 92x50, sizeThatFits 120x40, ôm 51x31

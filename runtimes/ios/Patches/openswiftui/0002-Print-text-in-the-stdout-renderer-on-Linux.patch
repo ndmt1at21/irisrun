@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Wed, 14 Oct 2026 23:59:04 +0700
-Subject: [PATCH 02/28] Print text in the stdout renderer on Linux
+Subject: [PATCH 02/37] Print text in the stdout renderer on Linux
 
 Text runs only need NSAttributedString, which swift-corelibs-foundation has.
 Colors come back from the NDColor shim. Nested display lists are now placed

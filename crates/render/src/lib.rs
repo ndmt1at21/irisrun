@@ -8,6 +8,7 @@
 
 mod animation;
 mod ffi;
+mod layout;
 mod text;
 
 use std::borrow::Cow;
@@ -16,14 +17,16 @@ use std::path::Path as FilePath;
 use skia_safe::gradient::{self as sk_gradient, shaders as gradient_shaders};
 use skia_safe::textlayout::Paragraph;
 use skia_safe::{
-    AlphaType, BlurStyle, Canvas, ClipOp, Color, Color4f, ColorType, Contains, Data, FilterMode,
-    Image, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint, PaintCap, PaintJoin, PaintStyle, Path,
-    PathEffect, Point, RRect, Rect, SamplingOptions, Shader, Size, Surface, TileMode, Vector,
-    canvas::SaveLayerRec, image_filters, images, jpeg_encoder, png_encoder, surfaces,
+    AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color, Color4f, ColorType, Contains, Data,
+    FilterMode, Image, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint, PaintCap, PaintJoin,
+    PaintStyle, Path, PathEffect, Point, RRect, Rect, SamplingOptions, Shader, Size, Surface,
+    TileMode, Vector, canvas::SaveLayerRec, color_filters, image_filters, images, jpeg_encoder,
+    png_encoder, surfaces,
 };
 
 use animation::Running;
 pub use animation::{Animation, Timing, Value};
+pub use layout::{LayoutSolver, REQUIRED, Relation};
 use text::Fonts;
 pub use text::{Caret, FontMetrics, ParagraphStyle, Run, RunStyle, TextAlign, TextMetrics};
 
@@ -62,6 +65,9 @@ pub struct Layer {
     pub shadow_radius: f32,
     /// Where an image goes in the bounds.
     pub content_mode: ContentMode,
+    /// Paints an image's opaque parts in one color, as UIKit draws template
+    /// images; transparent for none.
+    pub content_tint: Color,
 }
 
 const IDENTITY: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -83,6 +89,7 @@ impl Default for Layer {
             shadow_offset: Vector::default(),
             shadow_radius: 0.0,
             content_mode: ContentMode::default(),
+            content_tint: Color::TRANSPARENT,
         }
     }
 }
@@ -776,12 +783,19 @@ impl Scene {
             Content::Text { paragraph, .. } => paragraph.paint(canvas, (0.0, 0.0)),
             Content::Image { image, scale } => {
                 let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+                let mut image_paint = Paint::default();
+                if layer.content_tint.a() > 0 {
+                    image_paint.set_color_filter(color_filters::blend(
+                        layer.content_tint,
+                        BlendMode::SrcIn,
+                    ));
+                }
                 canvas.draw_image_rect_with_sampling_options(
                     image,
                     None,
                     image_rect(layer.content_mode, size, natural_size(image, *scale)),
                     sampling,
-                    &Paint::default(),
+                    &image_paint,
                 );
             }
             Content::Shape { path, fill, stroke } => {

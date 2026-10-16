@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 09:56:20 +0700
+Subject: [PATCH 37/37] Size UIKit views laid out by constraints by their
+ fitting size
+
+---
+ .../Platform/IrisPlatformViewHost.swift            | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift b/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+index 2931e9a..58b9772 100644
+--- a/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
++++ b/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+@@ -109,8 +109,20 @@ final class PlatformViewHost<Content>: UIView, AnyPlatformViewHost, AnyPlatformV
+         return traits
+     }
+ 
++    /// The view's intrinsic size; along an axis without one, a view laid out by constraints
++    /// inside is as big as they make it, as SwiftUI on iOS asks the layout engine.
+     override var intrinsicContentSize: CGSize {
+-        Content.isViewController ? super.intrinsicContentSize : Content.platformView(for: representedViewProvider).intrinsicContentSize
++        guard !Content.isViewController else { return super.intrinsicContentSize }
++        let view = Content.platformView(for: representedViewProvider)
++        let size = view.intrinsicContentSize
++        guard !view.constraints.isEmpty, size.width == UIView.noIntrinsicMetric || size.height == UIView.noIntrinsicMetric else {
++            return size
++        }
++        let fitting = view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
++        return CGSize(
++            width: size.width == UIView.noIntrinsicMetric ? fitting.width : size.width,
++            height: size.height == UIView.noIntrinsicMetric ? fitting.height : size.height
++        )
+     }
+ 
+     override func contentHuggingPriority(for axis: NSLayoutConstraint.Axis) -> UILayoutPriority {

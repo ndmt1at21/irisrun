@@ -1,4 +1,6 @@
 import SwiftUI
+// SwiftUI files often import UIKit too; on iOS SwiftUI re-exports it, and so does Iris.
+import UIKit
 
 struct LoginView: View {
     private enum Field {

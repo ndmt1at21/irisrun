@@ -143,20 +143,78 @@ private func makeProject() throws -> URL {
         try? FileManager.default.removeItem(at: out)
     }
     let app = try AppTarget(directory: root)
-    let writer = PackageWriter(openSwiftUI: URL(filePath: "/work/OpenSwiftUI"), renderLibrary: URL(filePath: "/work/target/release"))
-    #expect(try writer.write(app, sourceRoot: root, to: out), "@main makes an executable")
+    let writer = PackageWriter(openSwiftUI: URL(filePath: "/work/OpenSwiftUI"), runtime: URL(filePath: "/work/runtimes/ios"), renderLibrary: URL(filePath: "/work/target/release"))
+    #expect(try writer.write(app, sourceRoot: root, to: out).isExecutable, "@main makes an executable")
 
     let manifest = try String(contentsOf: out.appending(path: "Package.swift"), encoding: .utf8)
     #expect(manifest.contains(#".package(url: "https://github.com/onevcat/Kingfisher.git", from: "7.0.0")"#))
     #expect(manifest.contains(#".product(name: "Kingfisher", package: "Kingfisher")"#))
     #expect(manifest.contains(#".define("FEATURE_X")"#))
     #expect(manifest.contains(".executableTarget("))
+    #expect(manifest.contains(#".product(name: "OpenUIKit", package: "ios")"#))
+    #expect(manifest.contains(#""-module-alias", "UIKit=OpenUIKit""#))
+    #expect(manifest.contains(#""-Xfrontend", "-import-module", "-Xfrontend", "IrisObjC""#))
     let app_ = try String(contentsOf: out.appending(path: "Sources/Demo/App/DemoApp.swift"), encoding: .utf8)
     #expect(!app_.contains("#Preview"))
     let strings = try String(contentsOf: out.appending(path: "Resources/vi.lproj/Localizable.strings"), encoding: .utf8)
     #expect(strings.contains(#""Hello" = "Xin chào";"#))
     #expect(strings.contains(#""%lld books" = "%lld cuốn sách";"#), "plurals take their other form")
     #expect(FileManager.default.fileExists(atPath: out.appending(path: "Resources/Assets.xcassets/Contents.json").path))
+    let info = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: out.appending(path: "Resources/Info.plist")), format: nil) as? [String: Any])
+    #expect(info["CFBundleIdentifier"] as? String == "dev.iris.demo")
+    #expect(info["CFBundleDisplayName"] as? String == "Demo")
+}
+
+@Test func writesTheInfoPlistXcodeWould() throws {
+    let file = FileManager.default.temporaryDirectory.appending(path: "iris-info-\(UUID().uuidString).plist")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let manifest: [String: Any] = ["UISceneConfigurations": ["UIWindowSceneSessionRoleApplication": [
+        ["UISceneConfigurationName": "Default Configuration", "UISceneDelegateClassName": "$(PRODUCT_MODULE_NAME).SceneDelegate"],
+    ]]]
+    try PropertyListSerialization.data(fromPropertyList: ["UIApplicationSceneManifest": manifest], format: .xml, options: 0).write(to: file)
+    let settings = ["PRODUCT_NAME": "My App", "PRODUCT_BUNDLE_IDENTIFIER": "dev.iris.app", "INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents": "YES", "INFOPLIST_KEY_UILaunchScreen_Generation": "YES"]
+    let data = try #require(AppTarget.infoPlist(file: file, settings: settings, moduleName: "My_App"))
+    let info = try #require(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+    let configurations = (info["UIApplicationSceneManifest"] as? [String: Any])?["UISceneConfigurations"] as? [String: [[String: String]]]
+    #expect(configurations?["UIWindowSceneSessionRoleApplication"]?.first?["UISceneDelegateClassName"] == "My_App.SceneDelegate")
+    #expect(info["CFBundleIdentifier"] as? String == "dev.iris.app")
+    #expect(info["CFBundleExecutable"] as? String == "My_App")
+    #expect(info["UIApplicationSupportsIndirectInputEvents"] as? Bool == true)
+    #expect(info["UILaunchScreen_Generation"] == nil)
+    #expect(info["CFBundleVersion"] == nil, "no CURRENT_PROJECT_VERSION, no version")
+    // A SwiftUI app's project has Xcode generate the scene manifest, which puts it in scenes.
+    let generated = try #require(AppTarget.infoPlist(file: nil, settings: ["INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES"], moduleName: "App"))
+    let swiftUIInfo = try #require(PropertyListSerialization.propertyList(from: generated, format: nil) as? [String: Any])
+    #expect((swiftUIInfo["UIApplicationSceneManifest"] as? [String: Bool]) == ["UIApplicationSupportsMultipleScenes": true])
+}
+
+@Test func adaptsUIKitSourcesOnTheSameLines() {
+    var made: Set<String> = []
+    let source = """
+    import UIKit
+    @UIApplicationMain
+    class AppDelegate: UIResponder, UIApplicationDelegate {}
+    public final class SceneDelegate: UIResponder,
+        UIWindowSceneDelegate {
+    }
+    class Card: UIView {}
+    // class Commented: UIApplicationDelegate {}
+    struct Model: Codable {}
+    """
+    let adapted = adaptingForUIKit(source, made: &made)
+    let lines = adapted.components(separatedBy: "\n")
+    #expect(lines[1] == "@main")
+    #expect(Array(lines[2 ... 8]) == Array(source.components(separatedBy: "\n")[2 ... 8]))
+    #expect(lines[9 ... 12] == [
+        "import UIKit",
+        "extension AppDelegate: UIKit._IrisInstantiable { static func _irisMake() -> AnyObject { _ = _irisMethodsRegistered; return AppDelegate() } }",
+        "extension SceneDelegate: UIKit._IrisInstantiable { public static func _irisMake() -> AnyObject { _ = _irisMethodsRegistered; return SceneDelegate() } }",
+        "",
+    ])
+    #expect(made == ["AppDelegate", "SceneDelegate"])
+    #expect(adaptingForUIKit("import UIKit.UIGestureRecognizerSubclass", made: &made) == "import UIKit")
+    // A conformance in another file gets no second factory.
+    #expect(adaptingForUIKit("extension SceneDelegate: UISceneDelegate {}", made: &made) == "extension SceneDelegate: UISceneDelegate {}")
 }
 
 @Test func takesEverySwiftFileOfAFolderWithoutAProject() throws {
@@ -170,6 +228,16 @@ private func makeProject() throws -> URL {
     let app = try AppTarget(directory: root)
     #expect(app.sources.map { relative($0, to: root) } == ["Sample/App.swift", "Sample/Views/List.swift"])
     #expect(app.conditions == ["DEBUG"])
+    // Info.plist as Xcode makes it for a new app: in scenes, as SwiftUI apps run.
+    let info = try #require(app.infoPlist.flatMap { try PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] })
+    #expect((info["UIApplicationSceneManifest"] as? [String: Any])?["UIApplicationSupportsMultipleScenes"] as? Bool == true)
+    #expect(info["CFBundleExecutable"] as? String == app.moduleName && info["CFBundleName"] as? String == app.name)
+    // One in the folder keeps its keys, and its own manifest.
+    try #"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict><key>NSCameraUsageDescription</key><string>Scan</string></dict></plist>"#
+        .write(to: root.appending(path: "Sample/Info.plist"), atomically: true, encoding: .utf8)
+    let withFile = try #require(try AppTarget(directory: root).infoPlist.flatMap { try PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] })
+    #expect(withFile["NSCameraUsageDescription"] as? String == "Scan")
+    #expect((withFile["UIApplicationSceneManifest"] as? [String: Any])?["UIApplicationSupportsMultipleScenes"] as? Bool == false)
 }
 
 @Test func findsFilesWhateverTheCaseOfTheirPath() throws {

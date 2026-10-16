@@ -20,6 +20,8 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 futures-util = { version = "0.3", features = ["sink"] }
 goblin = "0.10"
 indicatif = "0.18"
+# Cassowary, for OpenUIKit's Auto Layout (crates/render/src/layout.rs).
+kasuari = "0.4"
 prost = "0.14"
 prost-types = "0.14"
 reqwest = "0.13"

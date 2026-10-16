@@ -552,6 +552,38 @@ fn places_images_by_content_mode() {
         Size::new(10.0, 5.0),
     );
     assert_eq!(rect, Rect::from_xywh(90.0, 95.0, 10.0, 5.0));
+
+    // A template image takes the tint where it is opaque.
+    scene.layer_mut(id).unwrap().content_tint = Color::BLUE;
+    let image = scene.render();
+    assert_eq!(pixel(&image, 2, 2), Color::BLUE);
+    assert_eq!(pixel(&image, 12, 2), Color::WHITE);
+}
+
+#[test]
+fn fills_the_background_of_runs() {
+    let mut scene = scene_with_fonts();
+    let root = scene.root();
+    scene.layer_mut(root).unwrap().background_color = Color::WHITE;
+    let id = scene.create_layer();
+    scene.layer_mut(id).unwrap().frame = Rect::from_xywh(0.0, 0.0, 200.0, 40.0);
+    assert!(scene.add_sublayer(root, id));
+    let text = "Iris Iris";
+    let runs = [Run {
+        range: 5..9,
+        style: RunStyle {
+            background: Color::YELLOW,
+            ..RunStyle::default()
+        },
+    }];
+    assert!(scene.set_text(id, text, &runs, &ParagraphStyle::default()));
+    let image = scene.render();
+    let width = scene
+        .measure_text(text, &runs, &ParagraphStyle::default(), f32::INFINITY)
+        .width;
+    // The top of the second word's line box, above its glyphs.
+    assert_eq!(pixel(&image, width as i32 - 3, 1), Color::YELLOW);
+    assert_eq!(pixel(&image, 1, 1), Color::WHITE);
 }
 
 #[test]
@@ -654,4 +686,50 @@ fn encodes_frames_on_other_threads() {
     let later = scene.render();
     assert_eq!(pixel(&earlier, 0, 0), Color::WHITE);
     assert_eq!(pixel(&later, 0, 0), Color::BLUE);
+}
+
+#[test]
+fn layout_solver_keeps_required_constraints_and_meets_wishes_as_far_as_they_allow() {
+    let mut solver = LayoutSolver::new();
+    let (x, width) = (solver.add_variable(), solver.add_variable());
+    solver
+        .add(&[(x, 1.0)], -16.0, Relation::Equal, REQUIRED)
+        .unwrap();
+    let right = solver
+        .add(&[(x, 1.0), (width, 1.0)], -374.0, Relation::Equal, REQUIRED)
+        .unwrap();
+    assert_eq!(solver.value(width), 358.0);
+    // A wish gives way to the required constraints, and holds once they let it.
+    let wish = solver
+        .add(&[(width, 1.0)], -100.0, Relation::Equal, 1000.0)
+        .unwrap();
+    assert_eq!(solver.value(width), 358.0);
+    assert!(solver.remove(right));
+    assert_eq!(solver.value(width), 100.0);
+    // A stronger wish wins; an inequality bounds.
+    solver
+        .add(&[(width, 1.0)], -200.0, Relation::Equal, 2000.0)
+        .unwrap();
+    assert_eq!(solver.value(width), 200.0);
+    solver
+        .add(&[(width, 1.0)], -150.0, Relation::LessOrEqual, REQUIRED)
+        .unwrap();
+    assert_eq!(solver.value(width), 150.0);
+    // A contradiction is refused and changes nothing.
+    assert_eq!(
+        solver.add(&[(x, 1.0)], -20.0, Relation::Equal, REQUIRED),
+        None
+    );
+    assert_eq!(
+        solver.add(&[(width, 1.0)], -160.0, Relation::GreaterOrEqual, REQUIRED),
+        None
+    );
+    assert_eq!((solver.value(x), solver.value(width)), (16.0, 150.0));
+    assert!(solver.remove(wish));
+    assert!(!solver.remove(wish));
+    assert_eq!(
+        solver.add(&[(9, 1.0)], 0.0, Relation::Equal, REQUIRED),
+        None
+    );
+    assert_eq!(solver.value(9), 0.0);
 }

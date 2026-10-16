@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 18:34:48 +0700
-Subject: [PATCH 23/28] Keep navigation pages, push values and draw toolbars on
+Subject: [PATCH 23/37] Keep navigation pages, push values and draw toolbars on
  Linux
 
 NavigationStack keeps every page in the graph and shows the top one, so a

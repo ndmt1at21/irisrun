@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 07:41:54 +0700
+Subject: [PATCH 35/37] Draw rotations, and start ellipses where Core Graphics
+ does
+
+rotationEffect makes a rotation of its own in the display list, which the
+layer renderer drew unrotated; it now turns the content as it does affine
+transforms.
+
+Ellipses were made as rounded rectangles that start at the top, so a
+trimmed circle began a quarter turn early and only looked right while
+rotations went undrawn. They now start on the right and go clockwise on
+screen, as Core Graphics makes them, where trims and dashes start.
+---
+ .../DisplayList/DisplayListLayerRenderer.swift      |  4 +++-
+ Sources/OpenSwiftUICore/Shape/Path+Elements.swift   | 13 ++++++++++++-
+ 2 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index 306a7b5..7d1ebaa 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -193,7 +193,9 @@ extension IrisRender.Scene {
+         case let .opacity(opacity):
+             group = Layer(in: self)
+             group.opacity = opacity
+-        case let .transform(.affine(transform)):
++        case let .transform(effect) where effect.affineTransform != nil:
++            // Affine transforms and rotations (rotationEffect), not projections.
++            let transform = effect.affineTransform!
+             // Display lists transform about the item's origin, the render core about the
+             // layer's center.
+             group = Layer(in: self)
+diff --git a/Sources/OpenSwiftUICore/Shape/Path+Elements.swift b/Sources/OpenSwiftUICore/Shape/Path+Elements.swift
+index ee4f9f0..1304d5d 100644
+--- a/Sources/OpenSwiftUICore/Shape/Path+Elements.swift
++++ b/Sources/OpenSwiftUICore/Shape/Path+Elements.swift
+@@ -81,10 +81,21 @@ extension Path {
+         ]
+     }
+ 
++    /// As Core Graphics makes ellipses: from the right, clockwise on screen, where trims and
++    /// dashes start.
+     package static func elements(ellipseIn rect: CGRect) -> [Element] {
+         guard !rect.isNull else { return [] }
+         let r = rect.standardized
+-        return elements(roundedRect: r, cornerSize: CGSize(width: r.width / 2, height: r.height / 2))
++        // How far along a tangent the control points of a quarter ellipse sit.
++        let (x, y) = (r.width / 2 * 0.5522847498, r.height / 2 * 0.5522847498)
++        return [
++            .move(to: CGPoint(x: r.maxX, y: r.midY)),
++            .curve(to: CGPoint(x: r.midX, y: r.maxY), control1: CGPoint(x: r.maxX, y: r.midY + y), control2: CGPoint(x: r.midX + x, y: r.maxY)),
++            .curve(to: CGPoint(x: r.minX, y: r.midY), control1: CGPoint(x: r.midX - x, y: r.maxY), control2: CGPoint(x: r.minX, y: r.midY + y)),
++            .curve(to: CGPoint(x: r.midX, y: r.minY), control1: CGPoint(x: r.minX, y: r.midY - y), control2: CGPoint(x: r.midX - x, y: r.minY)),
++            .curve(to: CGPoint(x: r.maxX, y: r.midY), control1: CGPoint(x: r.midX + x, y: r.minY), control2: CGPoint(x: r.maxX, y: r.midY - y)),
++            .closeSubpath,
++        ]
+     }
+ 
+     /// Continuous corners count as circular ones.

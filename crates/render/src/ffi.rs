@@ -11,8 +11,8 @@ use std::{ptr, slice};
 use skia_safe::{Color, Image, PaintCap, PaintJoin, Path, PathBuilder, PathFillType, Point, Rect};
 
 use crate::{
-    Animation, ContentMode, Gradient, GradientKind, ImageFormat, Layer, LayerId, ParagraphStyle,
-    Run, RunStyle, Scene, Shape, TextAlign, Timing, Value,
+    Animation, ContentMode, Gradient, GradientKind, ImageFormat, Layer, LayerId, LayoutSolver,
+    ParagraphStyle, Relation, Run, RunStyle, Scene, Shape, TextAlign, Timing, Value,
 };
 
 const LAYER_NONE: LayerId = u64::MAX;
@@ -31,6 +31,7 @@ pub struct IrisTextRun {
     traits: u32,
     letter_spacing: f32,
     baseline_offset: f32,
+    background: u32,
 }
 
 #[repr(C)]
@@ -159,6 +160,7 @@ impl From<&IrisTextRun> for Run {
                 strikethrough: run.traits & TEXT_STRIKETHROUGH != 0,
                 letter_spacing: run.letter_spacing,
                 baseline_offset: run.baseline_offset,
+                background: Color::new(run.background),
             },
         }
     }
@@ -673,6 +675,15 @@ pub unsafe extern "C" fn iris_layer_set_content_mode(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layer_set_content_tint(
+    scene: *mut Scene,
+    layer: LayerId,
+    argb: u32,
+) -> bool {
+    unsafe { with_layer(scene, layer, |layer| layer.content_tint = Color::new(argb)) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iris_layer_set_text(
     scene: *mut Scene,
     layer: LayerId,
@@ -854,6 +865,69 @@ pub unsafe extern "C" fn iris_layer_remove_animations(scene: *mut Scene, layer: 
     unsafe { scene.as_mut() }.is_some_and(|scene| scene.remove_animations(layer))
 }
 
+// ---- Layout
+
+#[repr(C)]
+pub struct IrisLayoutTerm {
+    variable: u32,
+    coefficient: f64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_layout_solver_new() -> *mut LayoutSolver {
+    Box::into_raw(Box::new(LayoutSolver::new()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layout_solver_free(solver: *mut LayoutSolver) {
+    if !solver.is_null() {
+        drop(unsafe { Box::from_raw(solver) });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layout_variable_new(solver: *mut LayoutSolver) -> u32 {
+    unsafe { solver.as_mut() }.map_or(u32::MAX, LayoutSolver::add_variable)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layout_add(
+    solver: *mut LayoutSolver,
+    terms: *const IrisLayoutTerm,
+    count: usize,
+    constant: f64,
+    relation: i32,
+    strength: f64,
+) -> u64 {
+    let (Some(solver), Some(terms)) = (unsafe { solver.as_mut() }, unsafe { items(terms, count) })
+    else {
+        return 0;
+    };
+    let relation = match relation {
+        -1 => Relation::LessOrEqual,
+        0 => Relation::Equal,
+        1 => Relation::GreaterOrEqual,
+        _ => return 0,
+    };
+    let terms: Vec<_> = terms
+        .iter()
+        .map(|term| (term.variable, term.coefficient))
+        .collect();
+    solver
+        .add(&terms, constant, relation, strength)
+        .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layout_remove(solver: *mut LayoutSolver, constraint: u64) -> bool {
+    unsafe { solver.as_mut() }.is_some_and(|solver| solver.remove(constraint))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iris_layout_value(solver: *const LayoutSolver, variable: u32) -> f64 {
+    unsafe { solver.as_ref() }.map_or(0.0, |solver| solver.value(variable))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,6 +959,7 @@ mod tests {
                 traits: TEXT_UNDERLINE,
                 letter_spacing: 1.0,
                 baseline_offset: 0.0,
+                background: 0,
             };
             let paragraph = IrisParagraphStyle {
                 align: 1,
@@ -1032,6 +1107,33 @@ mod tests {
             assert!(iris_scene_is_animating(scene));
             assert_eq!(iris_scene_hit_test(scene, 50.0, 50.0), layer);
             iris_scene_free(scene);
+        }
+    }
+
+    #[test]
+    fn layout_solver_through_the_c_api() {
+        unsafe {
+            let solver = iris_layout_solver_new();
+            let x = iris_layout_variable_new(solver);
+            let terms = [IrisLayoutTerm {
+                variable: x,
+                coefficient: 2.0,
+            }];
+            let constraint = iris_layout_add(solver, terms.as_ptr(), 1, -10.0, 1, crate::REQUIRED);
+            assert_ne!(constraint, 0);
+            assert_eq!(iris_layout_value(solver, x), 5.0);
+            assert_eq!(
+                iris_layout_add(solver, terms.as_ptr(), 1, 0.0, 2, crate::REQUIRED),
+                0
+            );
+            assert_eq!(
+                iris_layout_add(solver, ptr::null(), 1, 0.0, 0, crate::REQUIRED),
+                0
+            );
+            assert!(iris_layout_remove(solver, constraint));
+            assert!(!iris_layout_remove(solver, constraint));
+            assert_eq!(iris_layout_variable_new(ptr::null_mut()), u32::MAX);
+            iris_layout_solver_free(solver);
         }
     }
 }

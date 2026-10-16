@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 17:58:44 +0700
-Subject: [PATCH 22/28] Add grids, TabView, Picker and titled links for Linux
+Subject: [PATCH 22/37] Add grids, TabView, Picker and titled links for Linux
 
 LazyVGrid and LazyHGrid with fixed, flexible and adaptive GridItems lay
 out as a custom Layout. TabView shows its children's tabItem labels in an

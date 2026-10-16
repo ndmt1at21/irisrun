@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Compiles one iOS app, unchanged, against OpenKit (the patched OpenSwiftUI checkout).
-# irisrun-ios-build reads the app's Xcode project, picks its iOS app target and writes a SwiftPM
-# package to $IRISRUN_IOS_WORK/apps/<name>: the target's Swift files without previews, its Swift
-# packages and resources, with SwiftUI aliased to OpenSwiftUI and Observation to OpenObservation.
+# Compiles one iOS app, unchanged, against OpenKit (the patched OpenSwiftUI checkout and this
+# package's OpenUIKit). irisrun-ios-build reads the app's Xcode project, picks its iOS app target
+# and writes a SwiftPM package to $IRISRUN_IOS_WORK/apps/<name>: the target's Swift files without
+# previews, its Swift packages, Info.plist and resources, with SwiftUI aliased to OpenSwiftUI,
+# Observation to OpenObservation and UIKit to OpenUIKit.
 # A directory with no Xcode project counts as one target of all its Swift files but tests. This
 # script then builds the package. On success it prints the path of the executable, linked into a
 # directory with the app's resources, or the module's name when the app has no entry point; what
@@ -27,8 +28,9 @@ render_lib="${CARGO_TARGET_DIR:-$ios/../../target}/release"
 
 tool="$IRISRUN_IOS_WORK/build/tool"
 swift build --package-path "$ios" --scratch-path "$tool" --product irisrun-ios-build -q >&2
-summary="$("$tool/debug/irisrun-ios-build" "$app" --out "$pkg" \
-    --openswiftui "$IRISRUN_IOS_WORK/checkouts/OpenSwiftUI" --render-lib "$render_lib")"
+# The app depends on this package by the path OpenSwiftUI does (env.sh), or SwiftPM sees two.
+summary="$("$tool/debug/irisrun-ios-build" "$app" --out "$pkg" --openswiftui "$IRISRUN_IOS_WORK/checkouts/OpenSwiftUI" \
+    --runtime "$OPENSWIFTUI_IRIS_RUNTIME_PATH" --render-lib "$render_lib")"
 echo "$summary" >&2
 module="$(sed -n 's/^ *"module" : "\(.*\)",$/\1/p' <<< "$summary")"
 if grep -q '"executable" : true' <<< "$summary" && [ ! -f "$render_lib/libirisrun_render.a" ]; then

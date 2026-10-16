@@ -1,0 +1,254 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 22:44:15 +0700
+Subject: [PATCH 30/37] Read asset catalogs with Iris's host
+
+UIKit on Linux (Iris's OpenUIKit) reads the same asset catalogs for
+UIImage(named:), so the reader and the encoded image it gives move to the
+IrisHost target in Iris's runtimes/ios, next to the window's scene.
+OpenSwiftUICore keeps turning an image set's template rendering intent
+into its own rendering mode.
+---
+ .../View/Image/GraphicsImage.swift            |  20 +--
+ .../View/Image/IrisAssetCatalog.swift         | 164 ------------------
+ .../View/Image/NamedImage.swift               |   5 +-
+ 3 files changed, 9 insertions(+), 180 deletions(-)
+ delete mode 100644 Sources/OpenSwiftUICore/View/Image/IrisAssetCatalog.swift
+
+diff --git a/Sources/OpenSwiftUICore/View/Image/GraphicsImage.swift b/Sources/OpenSwiftUICore/View/Image/GraphicsImage.swift
+index b9cf2b2..47956b0 100644
+--- a/Sources/OpenSwiftUICore/View/Image/GraphicsImage.swift
++++ b/Sources/OpenSwiftUICore/View/Image/GraphicsImage.swift
+@@ -15,6 +15,9 @@ import CoreGraphics_Private
+ #if OPENSWIFTUI_LINK_COREUI
+ package import CoreUI
+ #endif
++#if !canImport(Darwin)
++package import IrisHost
++#endif
+ 
+ // MARK: - GraphicsImage
+ 
+@@ -26,8 +29,10 @@ package struct GraphicsImage: Equatable, Sendable {
+         indirect case vectorLayer(VectorImageLayer)
+         indirect case color(Color.Resolved)
+         indirect case named(NamedImage.Key)
++        #if !canImport(Darwin)
+         /// Iris: an encoded image (PNG, JPEG, WebP…) that Iris's render core decodes.
+         indirect case irisEncoded(IrisEncodedImage)
++        #endif
+     }
+ 
+     package var contents: GraphicsImage.Contents?
+@@ -352,18 +357,3 @@ extension GraphicsImage {
+         return renderedSize
+     }
+ }
+-
+-// MARK: - IrisEncodedImage
+-
+-/// Iris: the bytes of an image file, kept once however many views show it.
+-package final class IrisEncodedImage: Equatable, @unchecked Sendable {
+-    package let bytes: [UInt8]
+-
+-    package init(bytes: [UInt8]) {
+-        self.bytes = bytes
+-    }
+-
+-    package static func == (lhs: IrisEncodedImage, rhs: IrisEncodedImage) -> Bool {
+-        lhs === rhs || lhs.bytes == rhs.bytes
+-    }
+-}
+diff --git a/Sources/OpenSwiftUICore/View/Image/IrisAssetCatalog.swift b/Sources/OpenSwiftUICore/View/Image/IrisAssetCatalog.swift
+deleted file mode 100644
+index 62a0a9b..0000000
+--- a/Sources/OpenSwiftUICore/View/Image/IrisAssetCatalog.swift
++++ /dev/null
+@@ -1,164 +0,0 @@
+-//
+-//  IrisAssetCatalog.swift
+-//  OpenSwiftUICore
+-//
+-//  Status: Iris
+-
+-#if !canImport(Darwin)
+-package import Foundation
+-import IrisRender
+-
+-/// Iris: image sets of the asset catalogs (`.xcassets`) in a bundle's resources, read as Xcode
+-/// writes them, since there is no CoreUI to compile them. irisrun puts an app's resources next
+-/// to its executable, where `Bundle.main` finds them. Loose files (`name.png`, `name@2x.png`)
+-/// count too. ponytail: PNG, JPEG, WebP, GIF and BMP images; vector images (PDF, SVG),
+-/// appearances and template rendering come later.
+-package enum IrisAssetCatalog {
+-    package struct Image {
+-        package var bytes: IrisEncodedImage
+-        package var scale: CGFloat
+-        package var pixelSize: CGSize
+-        package var renderingMode: OpenSwiftUICore.Image.TemplateRenderingMode?
+-    }
+-
+-    /// The image named `name` in `bundle`, in the variant closest to `scale`.
+-    package static func image(named name: String, in bundle: Bundle, scale: CGFloat) -> Image? {
+-        let key = Key(bundle: bundle.bundleURL, name: name, scale: scale)
+-        lock.lock()
+-        defer { lock.unlock() }
+-        if let cached = cache[key] {
+-            return cached
+-        }
+-        let image = load(named: name, in: bundle, scale: scale)
+-        cache[key] = image
+-        return image
+-    }
+-
+-    private struct Key: Hashable {
+-        var bundle: URL
+-        var name: String
+-        var scale: CGFloat
+-    }
+-
+-    private static let lock = NSLock()
+-    nonisolated(unsafe) private static var cache: [Key: Image?] = [:]
+-    nonisolated(unsafe) private static var imageSets: [URL: [String: URL]] = [:]
+-
+-    private static func load(named name: String, in bundle: Bundle, scale: CGFloat) -> Image? {
+-        guard let resources = bundle.resourceURL ?? Optional(URL(fileURLWithPath: bundle.bundlePath)) else {
+-            return nil
+-        }
+-        if let set = sets(in: resources)[name], let image = image(inSet: set, scale: scale) {
+-            return image
+-        }
+-        // Loose files, the best scale first.
+-        let scales = [Int(scale.rounded()), 3, 2, 1].filter { $0 > 0 }
+-        for candidate in scales {
+-            let suffix = candidate == 1 ? "" : "@\(candidate)x"
+-            for ext in ["png", "jpg", "jpeg"] {
+-                let url = resources.appendingPathComponent("\(name)\(suffix).\(ext)")
+-                if let image = decode(url, scale: CGFloat(candidate), renderingMode: nil) {
+-                    return image
+-                }
+-            }
+-        }
+-        return nil
+-    }
+-
+-    /// Every image set under the resources, by the name Xcode gives it: folders that provide
+-    /// a namespace prefix it, `Folder/name`.
+-    private static func sets(in resources: URL) -> [String: URL] {
+-        if let sets = imageSets[resources] {
+-            return sets
+-        }
+-        var sets: [String: URL] = [:]
+-        let manager = FileManager.default
+-        let catalogs = (try? manager.contentsOfDirectory(at: resources, includingPropertiesForKeys: nil)) ?? []
+-        for catalog in catalogs where catalog.pathExtension == "xcassets" {
+-            func walk(_ directory: URL, prefix: String) {
+-                let entries = (try? manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+-                for entry in entries {
+-                    switch entry.pathExtension {
+-                    case "imageset":
+-                        let name = prefix + entry.deletingPathExtension().lastPathComponent
+-                        // The first catalog wins, as Xcode reports a clash.
+-                        if sets[name] == nil {
+-                            sets[name] = entry
+-                        }
+-                    case "":
+-                        var isDirectory: ObjCBool = false
+-                        guard manager.fileExists(atPath: entry.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+-                            continue
+-                        }
+-                        let contents = json(entry.appendingPathComponent("Contents.json"))
+-                        let properties = contents?["properties"] as? [String: Any]
+-                        let namespaced = properties?["provides-namespace"] as? Bool ?? false
+-                        walk(entry, prefix: namespaced ? prefix + entry.lastPathComponent + "/" : prefix)
+-                    default:
+-                        continue
+-                    }
+-                }
+-            }
+-            walk(catalog, prefix: "")
+-        }
+-        imageSets[resources] = sets
+-        return sets
+-    }
+-
+-    private static func image(inSet set: URL, scale: CGFloat) -> Image? {
+-        guard let contents = json(set.appendingPathComponent("Contents.json")),
+-              let entries = contents["images"] as? [[String: Any]]
+-        else { return nil }
+-        let properties = contents["properties"] as? [String: Any]
+-        let renderingMode: OpenSwiftUICore.Image.TemplateRenderingMode? = switch properties?["template-rendering-intent"] as? String {
+-        case "template": .template
+-        case "original": .original
+-        default: nil
+-        }
+-        // Entries with a file, for the phone or for every device, best scale first: the
+-        // smallest at or above the screen's, then the largest below it.
+-        let candidates = entries.compactMap { entry -> (file: String, scale: CGFloat)? in
+-            guard let file = entry["filename"] as? String,
+-                  ["universal", "iphone", nil].contains(entry["idiom"] as? String)
+-            else { return nil }
+-            let scale = (entry["scale"] as? String).flatMap { Double($0.dropLast()) } ?? 1
+-            return (file, CGFloat(scale))
+-        }
+-        let ordered = candidates.sorted { a, b in
+-            switch (a.scale >= scale, b.scale >= scale) {
+-            case (true, false): true
+-            case (false, true): false
+-            case (true, true): a.scale < b.scale
+-            case (false, false): a.scale > b.scale
+-            }
+-        }
+-        for candidate in ordered {
+-            if let image = decode(set.appendingPathComponent(candidate.file), scale: candidate.scale, renderingMode: renderingMode) {
+-                return image
+-            }
+-        }
+-        return nil
+-    }
+-
+-    private static func decode(
+-        _ url: URL,
+-        scale: CGFloat,
+-        renderingMode: OpenSwiftUICore.Image.TemplateRenderingMode?
+-    ) -> Image? {
+-        guard let data = FileManager.default.contents(atPath: url.path) else { return nil }
+-        let bytes = [UInt8](data)
+-        guard let size = IrisRender.Layer.imageSize(bytes) else { return nil }
+-        return Image(
+-            bytes: IrisEncodedImage(bytes: bytes),
+-            scale: scale,
+-            pixelSize: CGSize(width: size.width, height: size.height),
+-            renderingMode: renderingMode
+-        )
+-    }
+-
+-    private static func json(_ url: URL) -> [String: Any]? {
+-        guard let data = FileManager.default.contents(atPath: url.path) else { return nil }
+-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+-    }
+-}
+-#endif
+diff --git a/Sources/OpenSwiftUICore/View/Image/NamedImage.swift b/Sources/OpenSwiftUICore/View/Image/NamedImage.swift
+index e1790d7..03d1e94 100644
+--- a/Sources/OpenSwiftUICore/View/Image/NamedImage.swift
++++ b/Sources/OpenSwiftUICore/View/Image/NamedImage.swift
+@@ -16,6 +16,9 @@ import CoreGraphics_Private
+ package import CoreUI
+ import GraphicsServices_Private
+ #endif
++#if !canImport(Darwin)
++import IrisHost
++#endif
+ #if OPENSWIFTUI_LINK_SFSYMBOLS
+ import SFSymbols
+ #endif
+@@ -416,7 +419,7 @@ package enum NamedImage {
+                 scale: image.scale,
+                 orientation: .up,
+                 unrotatedPixelSize: image.pixelSize,
+-                renderingMode: image.renderingMode,
++                renderingMode: image.isTemplate.map { $0 ? .template : .original },
+                 resizingInfo: nil
+             )
+             #else

@@ -1,0 +1,662 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 07:42:04 +0700
+Subject: [PATCH 36/37] Embed UIKit views and view controllers with
+ representables on Linux
+
+UIViewRepresentable and UIViewControllerRepresentable now work with Iris's
+UIKit, with the lifecycle of SwiftUI's own code, opened for Linux: the
+coordinator first, then makeUIView and updateUIView, updateUIView again as
+the view's inputs or the environment it reads change, and
+dismantleUIView once the view goes; sizeThatFits(_:uiView:context:), or
+else the view's intrinsic size and content priorities, size it.
+
+As on iOS, the view sits in a PlatformViewHost, a subview of the hosting
+view, which sizes it to its bounds, tells SwiftUI when its intrinsic size
+changes, and makes a view controller a child of the hosting controller
+while it is in a window. The layer renderer finds the display list's
+platform views and leaves a layer at their places among SwiftUI's
+layers, which their own layers draw in, so that SwiftUI content drawn
+over them stays in front and their opacity, clips and transforms apply;
+the hosting view gives them the matching frames in UIKit.
+
+A representable's view has a responder among SwiftUI's, so the hosting
+view asks SwiftUI's hit-testing which side a touch goes to: into the
+UIKit view, hit-tested there as UIKit does, unless SwiftUI content in
+front of it takes the touch.
+---
+ .../Hosting/UIKit/View/IrisHostingView.swift  |  56 ++++-
+ .../Platform/IrisPlatformViewHost.swift       | 230 ++++++++++++++++++
+ .../Platform/PlatformViewRepresentable.swift  |  26 +-
+ .../UIKit/UIViewControllerRepresentable.swift |  13 +-
+ .../UIKit/UIViewRepresentable.swift           |  13 +-
+ .../DisplayListLayerRenderer.swift            |  75 ++++--
+ 6 files changed, 385 insertions(+), 28 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+
+diff --git a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+index 1a17e14..1d76cb9 100644
+--- a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
++++ b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+@@ -21,7 +21,8 @@ import OpenUIKit
+ /// layer of its own that the view's layer holds (`IrisLayerHost`). UIKit hit-tests touches to
+ /// it as to any view, and they go on to SwiftUI's gestures. While one of its text fields is
+ /// focused it is UIKit's first responder, so that the keyboard reaches SwiftUI, and a UIKit
+-/// text input that takes the keyboard ends SwiftUI's editing.
++/// text input that takes the keyboard ends SwiftUI's editing. The UIKit views of the content's
++/// representables are its subviews, placed and drawn where the display list shows them.
+ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDelegate, EventGraphHost, IrisLayerHost where Content: View {
+     typealias RootView = ModifiedContent<ModifiedContent<Content, IrisPresentationHost>, HitTestBindingModifier>
+ 
+@@ -61,6 +62,9 @@ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDe
+     private var lastIdealSize: CGSize?
+     /// The SwiftUI text field this view stands in for as UIKit's first responder.
+     private var focusedSession: TextEditingSession?
++    /// The views that hold the UIKit views of representables, as the display list last placed
++    /// them (`PlatformViewHost`).
++    private var platformViews: [UIView] = []
+ 
+     init(rootView: Content) {
+         self.rootView = rootView
+@@ -172,6 +176,52 @@ final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDe
+         invalidateProperties([.environment, .safeArea])
+     }
+ 
++    // MARK: Platform views
++
++    /// Representables' views: subviews, whose geometry in UIKit matches where the display list
++    /// draws them, for hit-testing and conversions, and whose layers draw at their places among
++    /// SwiftUI's layers. Those the display list no longer shows leave.
++    func irisPlace(_ placements: [IrisPlatformViewPlacement]) {
++        let views = placements.compactMap { $0.view as? UIView }
++        for view in platformViews where !views.contains(where: { $0 === view }) {
++            view.layer._irisOwnerLayer = nil
++            view.removeFromSuperview()
++        }
++        platformViews = views
++        for placement in placements {
++            guard let view = placement.view as? UIView else { continue }
++            let transform = placement.transform
++            view.bounds.size = placement.frame.size
++            view.center = CGPoint(x: placement.frame.midX, y: placement.frame.midY).applying(transform)
++            view.transform = CGAffineTransform(a: transform.a, b: transform.b, c: transform.c, d: transform.d, tx: 0, ty: 0)
++            view.layer._irisOwnerLayer = placement.slot
++            if view.superview !== self {
++                addSubview(view)
++            }
++        }
++    }
++
++    /// Touches go where SwiftUI's responders say, front to back, as on iOS: into a
++    /// representable's UIKit view, hit-tested there as UIKit does, unless SwiftUI content drawn
++    /// over it takes them; elsewhere to SwiftUI through this view. A view the app adds to this
++    /// one is hit as UIKit hits it.
++    // ponytail: a SwiftUI clip leaves the clipped part of a UIKit view hittable, as both
++    // UIKit's frame and the responder's are the whole view; iOS puts the view in clipping
++    // container views, which this would need.
++    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        let hit = super.hitTest(point, with: event)
++        guard let hit, hit !== self, platformViews.contains(where: { hit.isDescendant(of: $0) }) else {
++            return hit
++        }
++        let responder = Update.ensure {
++            (responderNode as? ViewResponder)?.hitTest(globalPoint: point, radius: 1)
++        }
++        guard let hostView = (responder as? UIViewResponder)?.hostView else {
++            return self
++        }
++        return hit.isDescendant(of: hostView) ? hit : hostView.hitTest(convert(point, to: hostView), with: event) ?? self
++    }
++
+     // MARK: Input
+ 
+     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+@@ -394,7 +444,7 @@ extension _UIHostingView: _IrisScreenContent {
+     }
+ }
+ 
+-// ponytail: no platform views yet; UIViewRepresentable's will be the hosting view's subviews,
+-// placed by the display list (P1-16, step 7b).
++/// Iris: what `DisplayList.ViewRenderer` asks of a platform; the layer renderer places platform
++/// views itself (`irisPlace(_:)`).
+ private final class IrisPlatformViewDefinition: PlatformViewDefinition, @unchecked Sendable {}
+ #endif
+diff --git a/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift b/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+new file mode 100644
+index 0000000..2931e9a
+--- /dev/null
++++ b/Sources/OpenSwiftUI/Integration/Representable/Platform/IrisPlatformViewHost.swift
+@@ -0,0 +1,230 @@
++//
++//  IrisPlatformViewHost.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++import OpenSwiftUICore
++import OpenAttributeGraphShims
++import OpenUIKit
++
++typealias PlatformEdgeInsets = UIEdgeInsets
++
++// MARK: - PlatformViewHost
++
++/// Iris: the view that holds a representable's UIKit view, or its view controller's view, as on
++/// iOS. The hosting view makes it a subview where the display list places it
++/// (`_UIHostingView.irisPlace(_:)`); it sizes the view to its bounds, tells SwiftUI the view's
++/// intrinsic size and content priorities and when they change, and makes a view controller a
++/// child of the hosting view's controller while it is in a window.
++final class PlatformViewHost<Content>: UIView, AnyPlatformViewHost, AnyPlatformViewProviderHost where Content: PlatformViewRepresentable {
++    var importer: EmptyPreferenceImporter
++    var environment: EnvironmentValues
++    var viewPhase: _GraphInputs.Phase
++    let representedViewProvider: Content.PlatformViewProvider
++    weak var host: ViewRendererHost?
++    var focusedValues = FocusedValues()
++    weak var responder: PlatformViewResponder?
++    var layoutInvalidator: PlatformViewLayoutInvalidator?
++    private var invalidationPending = false
++    private var cachedLayoutTraits: _LayoutTraits?
++
++    /// The UIKit view shown, filling this one.
++    private var hostedView: UIView? {
++        didSet {
++            guard hostedView !== oldValue else { return }
++            oldValue?.removeFromSuperview()
++            if let hostedView {
++                addSubview(hostedView)
++            }
++        }
++    }
++
++    init(
++        _ provider: Content.PlatformViewProvider,
++        host: ViewRendererHost?,
++        environment: EnvironmentValues,
++        viewPhase: _GraphInputs.Phase,
++        importer: EmptyPreferenceImporter
++    ) {
++        self.environment = environment
++        self.viewPhase = viewPhase
++        self.representedViewProvider = provider
++        self.host = host
++        self.importer = importer
++        super.init(frame: .zero)
++        // A view controller's view comes in once it joins its parent (didMoveToWindow).
++        if !Content.isViewController {
++            let view = Content.platformView(for: provider)
++            hostedView = view
++            addSubview(view)
++        }
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    // ponytail: SwiftUI's environment doesn't reach UIKit's traits, and safe area insets don't
++    // propagate (the SPI layout option `propagatesSafeArea`).
++    func updateEnvironment(_ environment: EnvironmentValues, viewPhase: _GraphInputs.Phase) {
++        self.environment = environment
++        self.viewPhase = viewPhase
++    }
++
++    func updateSafeAreaInsets(_ insets: PlatformEdgeInsets?) {}
++
++    // ponytail: no text baselines; SwiftUI aligns the view by its top and bottom.
++    func _baselineOffsets(at size: CGSize) -> (firstTextBaseline: CGFloat, lastTextBaseline: CGFloat) {
++        (.nan, .nan)
++    }
++
++    // MARK: Layout
++
++    /// How SwiftUI sizes the view along each axis, as on iOS: by its intrinsic content size,
++    /// which it shrinks below only if it resists compression weakly and grows past only if it
++    /// hugs weakly; along an axis with no intrinsic size it takes any size.
++    func layoutTraits() -> _LayoutTraits {
++        if let cachedLayoutTraits {
++            return cachedLayoutTraits
++        }
++        func dimension(value: CGFloat, axis: NSLayoutConstraint.Axis) -> _LayoutTraits.Dimension {
++            guard value != UIView.noIntrinsicMetric else {
++                return .init(min: .zero, ideal: .zero, max: .infinity)
++            }
++            let ideal = max(value, .zero)
++            let minValue = contentCompressionResistancePriority(for: axis) >= .defaultHigh ? ideal : .zero
++            let maxValue = contentHuggingPriority(for: axis) >= .defaultHigh ? ideal : .infinity
++            return .init(min: minValue, ideal: ideal, max: maxValue)
++        }
++        let size = intrinsicContentSize
++        let traits = _LayoutTraits(
++            width: dimension(value: size.width, axis: .horizontal),
++            height: dimension(value: size.height, axis: .vertical)
++        )
++        cachedLayoutTraits = traits
++        return traits
++    }
++
++    override var intrinsicContentSize: CGSize {
++        Content.isViewController ? super.intrinsicContentSize : Content.platformView(for: representedViewProvider).intrinsicContentSize
++    }
++
++    override func contentHuggingPriority(for axis: NSLayoutConstraint.Axis) -> UILayoutPriority {
++        Content.isViewController ? super.contentHuggingPriority(for: axis) : Content.platformView(for: representedViewProvider).contentHuggingPriority(for: axis)
++    }
++
++    override func contentCompressionResistancePriority(for axis: NSLayoutConstraint.Axis) -> UILayoutPriority {
++        Content.isViewController ? super.contentCompressionResistancePriority(for: axis) : Content.platformView(for: representedViewProvider).contentCompressionResistancePriority(for: axis)
++    }
++
++    /// The view's intrinsic size changed, such as a label's text in `updateUIView`: SwiftUI lays
++    /// it out again, after the update that may be running.
++    override func _intrinsicContentSizeInvalidated(forChildView view: UIView) {
++        guard view === hostedView else { return }
++        cachedLayoutTraits = nil
++        guard !invalidationPending, let layoutInvalidator else { return }
++        invalidationPending = true
++        Update.enqueueAction { [weak self] in
++            self?.invalidationPending = false
++            guard let computer = layoutInvalidator.layoutComputer.attribute else { return }
++            computer.invalidateValue()
++            layoutInvalidator.graphHost?.graphInvalidation(from: nil)
++        }
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        guard let hostedView, bounds.width != .zero, bounds.height != .zero else { return }
++        hostedView.frame = bounds
++    }
++
++    /// Only the hosted views take touches; elsewhere in the frame they go on to SwiftUI.
++    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
++        let result = super.hitTest(point, with: event)
++        return result === self ? nil : result
++    }
++
++    // MARK: View controllers
++
++    /// A view controller is a child of the nearest view controller above, the hosting
++    /// controller, while its view is in a window, with UIKit's containment calls.
++    // ponytail: no appearance callbacks; UIKit has none yet (P1-16, step 4).
++    override func didMoveToWindow() {
++        super.didMoveToWindow()
++        guard let viewController = representedViewProvider as? UIViewController else { return }
++        guard window != nil else {
++            guard viewController.parent != nil else { return }
++            viewController.willMove(toParent: nil)
++            viewController.removeFromParent()
++            return
++        }
++        var responder: UIResponder? = superview
++        while let current = responder, !(current is UIViewController) {
++            responder = current.next
++        }
++        guard let parent = responder as? UIViewController, viewController.parent !== parent else { return }
++        parent.addChild(viewController)
++        hostedView = viewController.view
++        viewController.didMove(toParent: parent)
++    }
++}
++
++// MARK: - UIViewResponder
++
++/// Iris: a representable's view among SwiftUI's responders, as on iOS, so that SwiftUI's
++/// hit-testing tells whether the view or SwiftUI content drawn over it takes a touch
++/// (`_UIHostingView.hitTest(_:with:)`).
++final class UIViewResponder: ViewResponder {
++    weak var hostView: UIView?
++    var helper = ContentResponderHelper<TrivialContentResponder>()
++
++    override func containsGlobalPoints(_ points: [CGPoint], cacheKey: UInt32?, options: ContainsPointsOptions) -> ContainsPointsResult {
++        guard let hostView, options.contains(.allowDisabledViews) || hostView.isUserInteractionEnabled else {
++            return super.containsGlobalPoints(points, cacheKey: cacheKey, options: options)
++        }
++        var result = helper.containsGlobalPoints(points, cacheKey: cacheKey, options: options, children: children)
++        if !result.mask.isEmpty, !options.contains(.useZDistanceAsPriority) {
++            result.priority = max(result.priority, Self.gestureContainmentPriority)
++        }
++        return result
++    }
++
++    override func addContentPath(to path: inout Path, kind: ContentShapeKinds, in space: CoordinateSpace, observer: (any ContentPathObserver)?) {
++        helper.addContentPath(to: &path, kind: kind, in: space, observer: observer)
++    }
++}
++
++/// Iris: keeps a representable's responder where its view is, as `LeafResponderFilter` does for
++/// leaf views.
++struct PlatformViewResponderFilter<Content>: StatefulRule where Content: PlatformViewRepresentable {
++    @Attribute var view: ViewLeafView<Content>
++    @Attribute var size: ViewSize
++    @Attribute var position: ViewOrigin
++    @Attribute var transform: ViewTransform
++    let responder = UIViewResponder()
++
++    typealias Value = [ViewResponder]
++
++    mutating func updateValue() {
++        let (view, viewChanged) = $view.changedValue()
++        if viewChanged {
++            responder.hostView = view.platformView
++            view.platformView.responder = responder
++        }
++        responder.helper.update(
++            data: (TrivialContentResponder(), !hasValue),
++            size: $size.changedValue(),
++            position: $position.changedValue(),
++            transform: $transform.changedValue(),
++            parent: responder
++        )
++        if !hasValue {
++            value = [responder]
++        }
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/Integration/Representable/Platform/PlatformViewRepresentable.swift b/Sources/OpenSwiftUI/Integration/Representable/Platform/PlatformViewRepresentable.swift
+index 3754cc6..897df72 100644
+--- a/Sources/OpenSwiftUI/Integration/Representable/Platform/PlatformViewRepresentable.swift
++++ b/Sources/OpenSwiftUI/Integration/Representable/Platform/PlatformViewRepresentable.swift
+@@ -6,8 +6,13 @@
+ //  Status: WIP
+ //  ID: A513612C07DFA438E70B9FA90719B40D (SwiftUI)
+ 
+-#if os(iOS) || os(visionOS)
++// Iris: Iris's UIKit has the views on Linux.
++#if os(iOS) || os(visionOS) || !canImport(Darwin)
++#if canImport(Darwin)
+ import UIKit
++#else
++import OpenUIKit
++#endif
+ typealias PlatformView = UIView
+ typealias PlatformScrollView = UIScrollView
+ typealias PlatformViewController = UIViewController
+@@ -84,7 +89,8 @@ extension PlatformViewRepresentable {
+     }
+ 
+     nonisolated static func _makeView(view: _GraphValue<Self>, inputs: _ViewInputs) -> _ViewOutputs {
+-        #if canImport(Darwin)
++        // Iris: also on Linux, with Iris's UIKit.
++        #if canImport(Darwin) || os(Linux)
+         guard !inputs.archivedView.isArchived else {
+             var outputs = _ViewOutputs()
+             guard inputs.preferences.requiresDisplayList else {
+@@ -144,7 +150,8 @@ extension PlatformViewRepresentable {
+     }
+ }
+ 
+-#if canImport(Darwin)
++// Iris: also on Linux, with Iris's UIKit.
++#if canImport(Darwin) || os(Linux)
+ 
+ extension PlatformViewRepresentable where PlatformViewProvider: PlatformView {
+     static func platformView(for provider: PlatformViewProvider) -> PlatformView {
+@@ -544,6 +551,19 @@ struct ViewLeafView<Content>: PrimitiveView, UnaryView where Content: PlatformVi
+                 )
+             )
+         }
++        #if !canImport(Darwin)
++        // Iris: the view's responder, for SwiftUI's hit-testing to find it among its content.
++        if inputs.preferences.requiresViewResponders {
++            outputs.preferences.viewResponders = Attribute(
++                PlatformViewResponderFilter(
++                    view: view.value,
++                    size: inputs.animatedSize(),
++                    position: inputs.animatedPosition(),
++                    transform: inputs.transform
++                )
++            )
++        }
++        #endif
+         return outputs
+     }
+ }
+diff --git a/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewControllerRepresentable.swift b/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewControllerRepresentable.swift
+index 91466cf..3dfd674 100644
+--- a/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewControllerRepresentable.swift
++++ b/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewControllerRepresentable.swift
+@@ -6,9 +6,14 @@
+ //  Status: Blocked by makePreferenceWriter & UIKitAnimationBridge
+ //  ID: F0196C17270D74A1F1A35F1926215FB3 (SwiftUI)
+ 
+-#if os(iOS) || os(visionOS)
++// Iris: also for Iris's UIKit on Linux.
++#if os(iOS) || os(visionOS) || !canImport(Darwin)
+ 
++#if canImport(Darwin)
+ public import UIKit
++#else
++public import OpenUIKit
++#endif
+ public import OpenSwiftUICore
+ import OpenAttributeGraphShims
+ 
+@@ -435,6 +440,12 @@ public struct UIViewControllerRepresentableContext<Representable> where Represen
+         }
+         // TODO
+         // UIKitAnimationBridge.withAnimation
++        #if !canImport(Darwin)
++        // Iris: the changes happen at once; UIKit animations come later (P1-16, step 4).
++        _ = animation
++        changes()
++        completion?()
++        #endif
+     }
+ }
+ 
+diff --git a/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewRepresentable.swift b/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewRepresentable.swift
+index 51d56c5..98b6a70 100644
+--- a/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewRepresentable.swift
++++ b/Sources/OpenSwiftUI/Integration/Representable/UIKit/UIViewRepresentable.swift
+@@ -6,9 +6,14 @@
+ //  Status: WIP
+ //  ID: 19642D833A8FE469B137699ED1426762 (SwiftUI)
+ 
+-#if os(iOS) || os(visionOS)
++// Iris: also for Iris's UIKit on Linux.
++#if os(iOS) || os(visionOS) || !canImport(Darwin)
+ 
++#if canImport(Darwin)
+ public import UIKit
++#else
++public import OpenUIKit
++#endif
+ public import OpenSwiftUICore
+ import OpenAttributeGraphShims
+ 
+@@ -447,6 +452,12 @@ public struct UIViewRepresentableContext<Representable> where Representable: UIV
+         }
+         // TODO
+         // UIKitAnimationBridge.withAnimation
++        #if !canImport(Darwin)
++        // Iris: the changes happen at once; UIKit animations come later (P1-16, step 4).
++        _ = animation
++        changes()
++        completion?()
++        #endif
+     }
+ }
+ 
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index 7d1ebaa..7ed5b3c 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -6,6 +6,7 @@
+ 
+ #if !canImport(Darwin)
+ package import Foundation
++package import OpenCoreGraphicsShims
+ // Iris: the window's scene, `irisScene`, is shared with Iris's UIKit.
+ import IrisHost
+ package import IrisRender
+@@ -16,6 +17,20 @@ package import IrisRender
+ /// Iris's UIKit, which owns the window's layers and places this one in the hosting view's.
+ package protocol IrisLayerHost: AnyObject {
+     var irisLayer: IrisRender.Layer { get }
++
++    /// Puts the platform views of the display list just drawn where it shows them, such as the
++    /// UIKit views of representables, which a hosting view makes its subviews.
++    func irisPlace(_ platformViews: [IrisPlatformViewPlacement])
++}
++
++/// Iris: a platform view that a display list shows (`.platformView`): its frame, the transform
++/// from the coordinates of that frame to the host layer's, and the layer at its place among the
++/// display list's layers, in the host layer's coordinates, that the view's layer goes in.
++package struct IrisPlatformViewPlacement {
++    package var view: AnyObject
++    package var frame: CGRect
++    package var transform: CGAffineTransform
++    package var slot: Layer
+ }
+ 
+ // MARK: - LayerRenderer
+@@ -50,8 +65,12 @@ final class LayerRenderer: ViewRendererBase {
+         }
+         seed = nextSeed
+         // The stdout app, which apps that ask for the stdout renderer get, has the scene's root
+-        // to itself.
+-        irisScene.show(list, in: (host as? any IrisLayerHost)?.irisLayer ?? irisScene.root)
++        // to itself, and no platform views.
++        if let host = host as? any IrisLayerHost {
++            host.irisPlace(irisScene.show(list, in: host.irisLayer))
++        } else {
++            irisScene.show(list, in: irisScene.root)
++        }
+         irisSceneVersion += 1
+         if let host, let observer = host.as(ViewGraphRenderObserver.self) {
+             observer.didRender()
+@@ -79,28 +98,33 @@ final class LayerRenderer: ViewRendererBase {
+ // MARK: - Display list to layers
+ 
+ extension IrisRender.Scene {
+-    /// Replaces what `layer` holds with layers that draw `list`, from the layer's origin.
++    /// Replaces what `layer` holds with layers that draw `list`, from the layer's origin, and
++    /// returns where the list's platform views go.
+     // ponytail: rebuilds every layer for each display list; keep layers by item identity once
+     // screens are big enough for this to show in frame times.
+-    package func show(_ list: DisplayList, in layer: Layer) {
++    @discardableResult
++    package func show(_ list: DisplayList, in layer: Layer) -> [IrisPlatformViewPlacement] {
+         for sublayer in layer.sublayers {
+             sublayer.removeFromSuperlayer()
+         }
+-        add(list, to: layer, at: .zero)
++        var platformViews: [IrisPlatformViewPlacement] = []
++        add(list, to: layer, at: .zero, space: .identity, platformViews: &platformViews)
++        return platformViews
+     }
+ 
+-    /// Items are placed from the origin of the item that holds their list.
+-    private func add(_ list: DisplayList, to parent: Layer, at origin: CGPoint) {
++    /// Items are placed from the origin of the item that holds their list. `space` maps
++    /// `parent`'s coordinates to those of the layer shown in.
++    private func add(_ list: DisplayList, to parent: Layer, at origin: CGPoint, space: CGAffineTransform, platformViews: inout [IrisPlatformViewPlacement]) {
+         for item in list.items {
+             let frame = item.frame.offsetBy(dx: origin.x, dy: origin.y)
+             switch item.value {
+             case let .content(content):
+-                add(content, in: frame, to: parent)
++                add(content, in: frame, to: parent, space: space, platformViews: &platformViews)
+             case let .effect(effect, list):
+-                add(list, with: effect, in: frame, to: parent)
++                add(list, with: effect, in: frame, to: parent, space: space, platformViews: &platformViews)
+             case let .states(states):
+                 for (_, list) in states {
+-                    add(list, to: parent, at: frame.origin)
++                    add(list, to: parent, at: frame.origin, space: space, platformViews: &platformViews)
+                 }
+             case .empty:
+                 break
+@@ -108,7 +132,7 @@ extension IrisRender.Scene {
+         }
+     }
+ 
+-    private func add(_ content: DisplayList.Content, in frame: CGRect, to parent: Layer) {
++    private func add(_ content: DisplayList.Content, in frame: CGRect, to parent: Layer, space: CGAffineTransform, platformViews: inout [IrisPlatformViewPlacement]) {
+         switch content.value {
+         case let .color(color):
+             parent.addSublayer(box(frame, color: color))
+@@ -159,7 +183,7 @@ extension IrisRender.Scene {
+             ))
+             parent.addSublayer(layer)
+         case let .flattened(list, offset, _):
+-            add(list, to: parent, at: CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y))
++            add(list, to: parent, at: CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y), space: space, platformViews: &platformViews)
+         case let .image(image):
+             // Layout has already sized the image; it fills its frame. ponytail: encoded images
+             // from asset catalogs only, drawn without template tint or resizing insets.
+@@ -171,10 +195,18 @@ extension IrisRender.Scene {
+             layer.contentMode = .scaleToFill
+             _ = layer.setImage(encoded.bytes, scale: Float(image.scale))
+             parent.addSublayer(layer)
++        case let .platformView(factory):
++            // The view's layer draws here, in front of what came before and behind what comes
++            // after, in a layer whose coordinates are those of the layer shown in, where the host
++            // places the view.
++            guard let view = factory.makePlatformView() else { break }
++            let slot = Layer(in: self)
++            let inverse = space.inverted()
++            slot.transform = [inverse.a, inverse.b, inverse.c, inverse.d, inverse.tx, inverse.ty].map { Float($0) }
++            parent.addSublayer(slot)
++            platformViews.append(IrisPlatformViewPlacement(view: view, frame: frame, transform: space, slot: slot))
+         default:
+-            // ponytail: shape shadows, backdrops and platform views draw nothing yet. A
+-            // platform view (`.platformView`) will place its UIKit view's layer here, at
+-            // `frame` in `parent` (P1-16, step 7b).
++            // ponytail: shape shadows and backdrops draw nothing yet.
+             break
+         }
+     }
+@@ -187,8 +219,10 @@ extension IrisRender.Scene {
+         return layer
+     }
+ 
+-    private func add(_ list: DisplayList, with effect: DisplayList.Effect, in frame: CGRect, to parent: Layer) {
++    private func add(_ list: DisplayList, with effect: DisplayList.Effect, in frame: CGRect, to parent: Layer, space: CGAffineTransform, platformViews: inout [IrisPlatformViewPlacement]) {
+         let group: Layer
++        // What the group's content is drawn in: the group's frame, then a transform.
++        var content = CGAffineTransform(translationX: frame.minX, y: frame.minY).concatenating(space)
+         switch effect {
+         case let .opacity(opacity):
+             group = Layer(in: self)
+@@ -205,6 +239,7 @@ extension IrisRender.Scene {
+                 transform.a, transform.b, transform.c, transform.d,
+                 translation.x - center.x, translation.y - center.y,
+             ].map { Float($0) }
++            content = transform.concatenating(content)
+         case let .filter(.shadow(shadow)) where !shadow.kind.contains(.inner):
+             // The shadow of everything in the group, as a CALayer's. ponytail: drop shadows
+             // only; inner shadows draw their content as is.
+@@ -220,7 +255,7 @@ extension IrisRender.Scene {
+                 group.frame = Rect(frame)
+                 group.mask = path.irisPath
+                 parent.addSublayer(group)
+-                add(list, to: group, at: .zero)
++                add(list, to: group, at: .zero, space: content, platformViews: &platformViews)
+                 return
+             }
+             let clip = shape.rect.offsetBy(dx: frame.minX, dy: frame.minY)
+@@ -229,15 +264,15 @@ extension IrisRender.Scene {
+             group.masksToBounds = true
+             group.cornerRadius = Float(min(shape.cornerSize.width, shape.cornerSize.height))
+             parent.addSublayer(group)
+-            add(list, to: group, at: CGPoint(x: frame.minX - clip.minX, y: frame.minY - clip.minY))
++            add(list, to: group, at: CGPoint(x: frame.minX - clip.minX, y: frame.minY - clip.minY), space: CGAffineTransform(translationX: clip.minX, y: clip.minY).concatenating(space), platformViews: &platformViews)
+             return
+         default:
+-            add(list, to: parent, at: frame.origin)
++            add(list, to: parent, at: frame.origin, space: space, platformViews: &platformViews)
+             return
+         }
+         group.frame = Rect(frame)
+         parent.addSublayer(group)
+-        add(list, to: group, at: .zero)
++        add(list, to: group, at: .zero, space: content, platformViews: &platformViews)
+     }
+ }
+ 

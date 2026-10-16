@@ -20,6 +20,8 @@ public struct AppTarget: Sendable {
     public var conditions: [String]
     /// `Info.plist` keys Xcode generates from `INFOPLIST_KEY_*` settings.
     public var infoPlistKeys: [String: String]
+    /// The Info.plist Xcode puts in the app, as XML.
+    public var infoPlist: Data?
     /// Things the build leaves out or may get wrong.
     public var warnings: [String]
 
@@ -49,13 +51,15 @@ public struct AppTarget: Sendable {
     }
 
     /// An app with no Xcode project: every Swift file under `directory` but
-    /// tests and dependencies, and the resources next to them.
+    /// tests and dependencies, and the resources next to them. Its Info.plist is the one in the
+    /// folder, if any, with the keys Xcode generates for a new app, the scene manifest among them.
     public init(folder directory: URL) {
         name = directory.lastPathComponent
         moduleName = c99Identifier(name)
         (bundleIdentifier, deploymentTarget) = (nil, nil)
         (packages, conditions, infoPlistKeys, warnings) = ([], ["DEBUG"], [:], [])
         (sources, otherSources, resources) = ([], [], [])
+        var infoPlistFile: URL?
         let enumerator = FileManager.default.enumerator(
             at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
         )
@@ -70,9 +74,16 @@ public struct AppTarget: Sendable {
                 sources.append(file)
             } else if ["xcstrings", "ttf", "otf", "json"].contains(file.pathExtension) {
                 resources.append(file)
+            } else if name == "Info.plist", infoPlistFile == nil {
+                infoPlistFile = file
             }
         }
         sources.sort { $0.path < $1.path }
+        // As Xcode's app templates set it (GENERATE_INFOPLIST_FILE): SwiftUI apps run in scenes.
+        // ponytail: a UIKit app of this kind that makes its window in the app delegate needs an
+        // Info.plist with a manifest of its own, or none.
+        let settings = ["PRODUCT_NAME": name, "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES"]
+        infoPlist = Self.infoPlist(file: infoPlistFile, settings: settings, moduleName: moduleName)
     }
 
     public init(project: XcodeProject, target: XcodeProject.Target, configuration: String = "Debug") {
@@ -92,6 +103,7 @@ public struct AppTarget: Sendable {
         warnings = []
 
         let infoPlist = settings["INFOPLIST_FILE"].map { project.sourceRoot.appending(path: $0).standardizedFileURL }
+        self.infoPlist = Self.infoPlist(file: infoPlist, settings: settings, moduleName: moduleName)
         var sources: [URL] = []
         var otherSources: [URL] = []
         var resources: [URL] = []
@@ -132,6 +144,62 @@ public struct AppTarget: Sendable {
         if !missing.isEmpty {
             warnings.append("\(missing.count) Swift files in the project are missing on disk, such as \(relative(missing[0], to: project.sourceRoot))")
         }
+    }
+}
+
+extension AppTarget {
+    /// The target's Info.plist file with the keys Xcode adds: the bundle's own and those it
+    /// generates from `INFOPLIST_KEY_*` settings, with build settings in its strings expanded,
+    /// such as the `$(PRODUCT_MODULE_NAME).SceneDelegate` of a scene manifest.
+    // ponytail: generated keys are strings and booleans, and of the `_Generation` flags only
+    // the scene manifest's, which apps run by; the others and the per-device variants (`_iPhone`,
+    // `_iPad`) are left out until something reads them.
+    static func infoPlist(file: URL?, settings: [String: String], moduleName: String) -> Data? {
+        var info = file.flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) as? [String: Any] } ?? [:]
+        var settings = settings
+        settings["PRODUCT_MODULE_NAME"] = moduleName
+        settings["EXECUTABLE_NAME"] = moduleName
+        settings["DEVELOPMENT_LANGUAGE"] = settings["DEVELOPMENT_LANGUAGE"] ?? "en"
+        settings["PRODUCT_BUNDLE_PACKAGE_TYPE"] = settings["PRODUCT_BUNDLE_PACKAGE_TYPE"] ?? "APPL"
+        var generated = [
+            "CFBundleIdentifier": "$(PRODUCT_BUNDLE_IDENTIFIER)",
+            "CFBundleExecutable": "$(EXECUTABLE_NAME)",
+            "CFBundleName": "$(PRODUCT_NAME)",
+            "CFBundlePackageType": "$(PRODUCT_BUNDLE_PACKAGE_TYPE)",
+            "CFBundleDevelopmentRegion": "$(DEVELOPMENT_LANGUAGE)",
+            "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+            "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+        ]
+        for (key, value) in settings where key.hasPrefix("INFOPLIST_KEY_") {
+            let name = String(key.dropFirst("INFOPLIST_KEY_".count))
+            if !name.hasSuffix("_Generation"), !name.hasSuffix("_iPhone"), !name.hasSuffix("_iPad") {
+                generated[name] = value
+            }
+        }
+        func expanded(_ value: Any) -> Any {
+            switch value {
+            case let string as String: expand(string, with: settings)
+            case let array as [Any]: array.map(expanded)
+            case let dictionary as [String: Any]: dictionary.mapValues(expanded)
+            default: value
+            }
+        }
+        for (key, value) in generated where info[key] == nil {
+            let value = expand(value, with: settings)
+            if value == "YES" || value == "NO" {
+                info[key] = value == "YES"
+            } else if !value.isEmpty {
+                info[key] = value
+            }
+        }
+        // The manifest that puts the app in scenes, as Xcode writes it for SwiftUI apps, whose
+        // app delegate gives the configurations.
+        if expand(settings["INFOPLIST_KEY_UIApplicationSceneManifest_Generation"] ?? "", with: settings) == "YES",
+           info["UIApplicationSceneManifest"] == nil {
+            info["UIApplicationSceneManifest"] = ["UIApplicationSupportsMultipleScenes": true]
+        }
+        return try? PropertyListSerialization.data(fromPropertyList: expanded(info), format: .xml, options: 0)
     }
 }
 

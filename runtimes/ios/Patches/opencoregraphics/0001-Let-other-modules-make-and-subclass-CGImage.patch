@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Thu, 15 Oct 2026 22:32:25 +0700
+Subject: [PATCH] Let other modules make and subclass CGImage
+
+UIKit on Linux (Iris's OpenUIKit) gives UIImage.cgImage a CGImage that
+carries the encoded image its renderer draws. CGImage had no public
+initializer and could not be subclassed outside this module.
+---
+ Sources/OpenCoreGraphics/CGImage.swift | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/Sources/OpenCoreGraphics/CGImage.swift b/Sources/OpenCoreGraphics/CGImage.swift
+index d3b5779..c16304c 100644
+--- a/Sources/OpenCoreGraphics/CGImage.swift
++++ b/Sources/OpenCoreGraphics/CGImage.swift
+@@ -4,7 +4,11 @@
+ //
+ //  Created by Kyle on 1/11/26.
+ 
+-public class CGImage: Hashable {
++// Iris: open, with a public initializer, so that UIKit on Linux (Iris's OpenUIKit) can make
++// images that carry what its renderer draws.
++open class CGImage: Hashable {
++    public init() {}
++
+     public func hash(into hasher: inout Hasher) {
+         hasher.combine(ObjectIdentifier(self))
+     }

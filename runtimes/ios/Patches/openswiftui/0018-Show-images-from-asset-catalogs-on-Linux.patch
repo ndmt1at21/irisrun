@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 17:10:59 +0700
-Subject: [PATCH 18/28] Show images from asset catalogs on Linux
+Subject: [PATCH 18/37] Show images from asset catalogs on Linux
 
 Without CoreUI, Image(_:bundle:) resolved to nothing. On Linux it now reads
 the image sets of the bundle's .xcassets folders as Xcode writes them (with

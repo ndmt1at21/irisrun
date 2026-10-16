@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 18:47:34 +0700
-Subject: [PATCH 25/28] Present sheets, covers, alerts and dialogs on Linux
+Subject: [PATCH 25/37] Present sheets, covers, alerts and dialogs on Linux
 
 A presented view travels up as a preference to a host at the root of the
 scene, which shows it over the app with the environment of the view that

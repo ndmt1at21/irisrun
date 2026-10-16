@@ -1,0 +1,242 @@
+# Input for IrisUIKitSample on the stdout runtime, one command per line: the commands of
+# OpenSwiftUI's sample (`tap <text>`, `tap <x> <y>`, `hold`, `drag`, `fling`, `type`, `compose`,
+# `key`; IrisHost's runScriptCommand). Each command prints the screen as a tree of views, with
+# accessibility labels in quotes. runtimes/ios/Scripts/check-sample.sh examples/ios-uikit checks
+# every `# expect` line against the screen after the command above it (the first screen for the
+# ones on top).
+#
+# The app delegate, the scene delegate from Info.plist and the window ran in iOS order.
+# expect launch → connect → foreground → active
+# A NotificationCenter observer with a selector saw the app become active.
+# expect Notification: active
+# The screen, laid out for 320 points and stretched to 390 by autoresizing. A segmented control
+# in the header picks the page; the touch page shows first.
+# expect Header
+# expect Touch
+# expect Controls
+# expect Card
+# expect Red
+# expect Orange
+# expect Green
+# expect Blue
+# expect Clipped box
+# expect Clipped square
+# expect Box
+# expect Square
+# expect Rotated
+# expect Half transparent
+# expect Footer
+# expect Tap to change color
+# Above the footer: a touch pad, the logo from the asset catalog and a handle to drag.
+# expect Touch pad
+# expect Logo
+# expect Drag me
+# The button is a UIControl with a UIAction for touchUpInside, which recolors and relabels it.
+tap Tap to change color
+# expect Color: green
+# The view controller is also a target of the button, for touchDown and touchUpInside.
+# expect Button down 1, up 1
+tap Color: green
+# expect Color: orange
+# A finger that lifts more than 70 points off the button sends touchUpOutside instead.
+drag 195 798 195 600
+# expect Released outside
+# expect Button down 3, up 2
+tap Released outside
+# expect Color: blue
+# touchesBegan and touchesEnded of a view: the pad counts the touches that lift on it.
+tap Touch pad
+# expect Touch pad: 1 tap
+hold Touch pad: 1 tap
+# expect Touch pad: 2 taps
+# The timer of 0.3 s sent its selector while the finger was down, with its userInfo.
+# expect Timer: fired (tick)
+# touchesMoved moves the handle with the finger.
+drag 48 682 168 642
+# expect Dragged by 120, -40
+# A touch on a view with no handler goes up the responder chain and changes nothing.
+tap 100 300
+# expect Clipped box
+# Gesture recognizers send their actions by selector. A double tap sends the handle home.
+tap 168 642
+# expect Dragged by 120, -40
+tap 168 642
+# expect Drag me
+# A long press on the card.
+hold Card
+# expect Card held
+# Panning the logo moves it.
+drag 306 575 306 515
+# expect Logo moved by 0, -60
+# The controls page: labels with attributed, truncated and shrunk text, and image views.
+tap Controls
+# expect Bold red, underlined, spaced
+# expect This line is far too long to fit in its label, so it ends in an ellipsis
+# expect This one shrinks to fit the width of its label
+# expect Tinted logo
+# expect Last tap: none
+# Buttons of each type send their actions: target and action, and UIActions.
+tap System
+# expect Last tap: System
+tap 123 309
+# expect Last tap: Info
+tap 163 309
+# expect Last tap: Add
+tap 207 309
+# expect Last tap: Close
+tap Filled
+# expect Last tap: Filled
+tap Tinted
+# expect Last tap: Tinted
+tap Gray
+# expect Last tap: Gray
+tap Plain
+# expect Last tap: Plain
+tap Download
+# expect Last tap: Download
+# A toggle button's update handler retitles it when it is selected.
+# expect Favorite
+tap Favorite
+# expect Favorited
+# The switch flips with a tap, and back with a drag of its knob.
+tap 41 449
+# expect Wi-Fi: on
+drag 55 449 20 449
+# expect Wi-Fi: off
+# Dragging the slider's thumb moves the value and the progress view.
+# expect Volume: 50
+drag 195 494 277 494
+# expect Volume: 75
+# A segment selects a size.
+tap Large
+# expect Size: Large
+# The spinner starts and stops.
+tap Start spinner
+# expect Spinner: running
+# expect Stop spinner
+tap Stop spinner
+# expect Spinner: stopped
+# The form page: a login form in a scroll view, the button waiting for both fields.
+tap Form
+# expect Form page
+# expect Tên đăng nhập
+# expect Mật khẩu
+# expect Điền tên và mật khẩu
+tap Đăng nhập
+# expect Điền tên và mật khẩu
+# Telex composes Vietnamese before committing it, as the Device UI sends it: the marked text
+# is in the field's text meanwhile, and the field's editingChanged target sees it.
+tap Tên đăng nhập
+compose n
+compose Nguyê
+# expect Đang soạn: Nguyê
+compose Nguyễn
+# expect Nguyễn
+type Nguyễn
+# expect Điền tên và mật khẩu
+# Two spaces: the text typed starts with one.
+type  Thị Ánh
+key Backspace
+# expect Nguyễn Thị Án
+type h
+# expect Nguyễn Thị Ánh
+# A correction from the input method deletes around the caret, then types again.
+delete 1 0
+type h
+# expect Nguyễn Thị Ánh
+# Return moves to the password (textFieldShouldReturn), which shows bullets.
+key Enter
+type matkhau
+# expect •••••••
+# expect Sẵn sàng đăng nhập
+# A tap on the name puts the caret where it lands; the arrows and Home move it.
+tap 40 228
+key End
+key ArrowLeft
+type x
+# expect Nguyễn Thị Ánxh
+key Backspace
+# expect Nguyễn Thị Ánh
+# The note takes several lines; Return makes a new one.
+tap 195 500
+type Trăm năm
+key Enter
+type trong cõi
+# expect Trăm năm\ntrong cõi
+# expect Ghi chú (18 ký tự)
+# Dragging the form scrolls it and puts the keyboard away (keyboardDismissMode .onDrag);
+# past the end it stretches and springs back.
+drag 195 800 195 500
+# expect Đã cuộn 96 điểm
+# Logging in greets by name in an alert; its button dismisses it.
+tap Đăng nhập
+# expect Xin chào, Nguyễn Thị Ánh!
+# expect Bạn đã đăng nhập vào Iris.
+tap Vào ứng dụng
+# expect Đã đăng nhập: Nguyễn Thị Ánh
+# Back to the touch page, as it was.
+tap Touch
+# expect Card held
+# A SwiftUI card in the UIKit screen: a UIHostingController added as a child view controller,
+# sized by sizeThatFits(in:). Taps and typing in the card reach SwiftUI, which tells UIKit
+# through a closure; the UIKit label, field and button around it go on working.
+tap SwiftUI
+# expect SwiftUI page
+# expect Thẻ SwiftUI
+# expect Đã chạm 0 lần
+# expect UIKit nghe được: chưa có gì
+# expect Cỡ thẻ: 358 × 172
+tap Chạm vào SwiftUI
+# expect Đã chạm 1 lần
+# expect UIKit nghe được: 1 lần chạm
+# The SwiftUI field takes the keyboard, Telex composing included.
+tap Tên trong SwiftUI
+compose Á
+# expect Á
+type Ánh
+# expect Xin chào, Ánh!
+# UIKit's field takes the keyboard from SwiftUI's, and the text typed goes to it alone; then
+# back, with the caret where the tap lands, moved to the end.
+tap Ô của UIKit
+type ơi
+# expect ơi
+# expect Xin chào, Ánh!
+tap Ánh
+key End
+type  Nguyễn
+# expect Xin chào, Ánh Nguyễn!
+# expect ơi
+# UIKit gives the card a new root view; SwiftUI keeps its state.
+tap Đổi tiêu đề
+# expect Tiêu đề từ UIKit
+# expect Đã chạm 1 lần
+# expect Xin chào, Ánh Nguyễn!
+# A page laid out by constraints only (AutoLayoutPage), frames in the page (390 × 698 under the
+# header). The title sits in the layout margins (12 and 16 points); the avatar 1.5 system
+# spacings below it, as wide as high.
+tap Layout
+# expect Auto Layout page
+# expect frame "Auto Layout" x:16.0 y:12.0 w:130.0 h:27.0
+# expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
+# The name is too long for its row and resists compression less than the badge, which hugs its
+# text at the trailing margin: the name is cut. The badge sits on the name's baseline.
+# expect frame "Nguyễn Thị Ánh Dương, kỹ sư phần mềm" x:84.0 y:68.7 w:255.0 h:21.0
+# expect frame "PRO" x:347.0 y:72.7 w:27.0 h:16.0
+# The body wraps its lines at the margins' width, 358 points.
+# expect frame "Màn này dựng hoàn toàn bằng constraint: anchor, NSLayoutConstraint, một layout guide, safe area và margin. Nhãn nhiều dòng xuống dòng theo bề rộng mà Auto Layout cho nó." x:16.0 y:123.0 w:358.0 h:72.0
+# Two buttons as wide as each other, a 12-point layout guide between them.
+# expect frame "Phóng to" x:16.0 y:211.0 w:173.0 h:35.0
+# expect frame "Đặt lại" x:201.0 y:211.0 w:173.0 h:35.0
+# Half the page's width, centered; it wishes to be 400 high at priority 250, but must end 16
+# points above the footer, which is 12 points above the safe area: 34 points above the bottom.
+# expect frame "Priority box" x:97.7 y:262.0 w:195.0 h:358.0
+# expect frame "Ghim trên vạch Home" x:16.0 y:636.0 w:358.0 h:16.0
+# A constant changes: the avatar grows to 80, and everything below and beside it follows.
+tap Phóng to
+# expect frame "Avatar" x:16.0 y:51.0 w:80.0 h:80.0
+# expect frame "Nguyễn Thị Ánh Dương, kỹ sư phần mềm" x:108.0 y:80.7 w:231.0 h:21.0
+# expect frame "Thu nhỏ" x:16.0 y:235.0 w:173.0 h:35.0
+# expect frame "Priority box" x:97.7 y:286.0 w:195.0 h:334.0
+tap Đặt lại
+# expect frame "Avatar" x:16.0 y:51.0 w:56.0 h:56.0
+# expect frame "Priority box" x:97.7 y:262.0 w:195.0 h:358.0

@@ -4,21 +4,32 @@ import Foundation
 public struct PackageWriter {
     /// The patched OpenSwiftUI checkout.
     public var openSwiftUI: URL
+    /// Iris's runtimes/ios, for OpenUIKit, by the path OpenSwiftUI depends on it by.
+    public var runtime: URL
     /// Where `libirisrun_render.a` is, for linking an app.
     public var renderLibrary: URL
 
-    public init(openSwiftUI: URL, renderLibrary: URL) {
+    public init(openSwiftUI: URL, runtime: URL, renderLibrary: URL) {
         self.openSwiftUI = openSwiftUI
+        self.runtime = runtime
         self.renderLibrary = renderLibrary
     }
 
-    /// Writes `Package.swift`, the app's Swift files without previews under
-    /// `Sources/<module>`, and its resources under `Resources`, ready to sit
-    /// next to the executable: asset catalogs as they are, since OpenKit reads
-    /// their `Contents.json`, and string catalogs turned into `.lproj` tables,
-    /// which Foundation reads. Returns whether the package is an executable.
+    /// What `write` made.
+    public struct Written {
+        public var isExecutable: Bool
+        /// What the Objective-C rewrite found and did, by kind.
+        public var objc: [String: Int]
+    }
+
+    /// Writes `Package.swift`, the app's Swift files without previews, without
+    /// Objective-C and adapted for UIKit under `Sources/<module>`, and its
+    /// resources under `Resources`, ready to sit next to the executable: the
+    /// Info.plist, which Foundation reads there, asset catalogs as they are,
+    /// since OpenKit reads their `Contents.json`, and string catalogs turned
+    /// into `.lproj` tables.
     @discardableResult
-    public func write(_ app: AppTarget, sourceRoot: URL, to package: URL) throws -> Bool {
+    public func write(_ app: AppTarget, sourceRoot: URL, to package: URL) throws -> Written {
         let fileManager = FileManager.default
         let sources = package.appending(path: "Sources/\(app.moduleName)")
         let resources = package.appending(path: "Resources")
@@ -27,20 +38,27 @@ public struct PackageWriter {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
+        let paths = app.sources.map { placement(of: $0, in: sourceRoot) }
+        let objc = try ObjCRewriter(files: zip(paths, app.sources).map { path, file in
+            (path, strippingPreviews(try String(contentsOf: file, encoding: .utf8)))
+        })
+        let (rewritten, registration) = objc.rewrite()
+        try registration.write(to: sources.appending(path: "_IrisMethodTables.swift"), atomically: true, encoding: .utf8)
         var isExecutable = false
-        for file in app.sources {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            let stripped = strippingPreviews(source)
+        var made: Set<String> = []
+        for (index, file) in app.sources.enumerated() {
+            let adapted = adaptingForUIKit(rewritten[index], made: &made)
             isExecutable = isExecutable || file.lastPathComponent == "main.swift"
-                || stripped.split(separator: "\n").contains { line in
+                || adapted.split(separator: "\n").contains { line in
                     let code = line.drop { $0 == " " || $0 == "\t" }
                     return code.hasPrefix("@main") || code.hasPrefix("@UIApplicationMain")
                 }
-            let out = sources.appending(path: placement(of: file, in: sourceRoot))
+            let out = sources.appending(path: paths[index])
             try fileManager.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try stripped.write(to: out, atomically: true, encoding: .utf8)
+            try adapted.write(to: out, atomically: true, encoding: .utf8)
         }
 
+        try app.infoPlist?.write(to: resources.appending(path: "Info.plist"))
         for file in app.resources {
             if file.pathExtension == "xcstrings" {
                 try StringCatalog(contentsOf: file).writeTables(to: resources)
@@ -61,7 +79,7 @@ public struct PackageWriter {
         }
 
         try manifest(for: app, executable: isExecutable).write(to: package.appending(path: "Package.swift"), atomically: true, encoding: .utf8)
-        return isExecutable
+        return Written(isExecutable: isExecutable, objc: objc.counts)
     }
 
     /// Where a source goes under `Sources/<module>`: its path in the
@@ -72,8 +90,8 @@ public struct PackageWriter {
     }
 
     func manifest(for app: AppTarget, executable: Bool) -> String {
-        var dependencies = [#".package(path: \#(literal(openSwiftUI.path)))"#]
-        var products = [#".product(name: "OpenSwiftUI", package: "OpenSwiftUI")"#]
+        var dependencies = [#".package(path: \#(literal(openSwiftUI.path)))"#, #".package(path: \#(literal(runtime.path)))"#]
+        var products = [#".product(name: "OpenSwiftUI", package: "OpenSwiftUI")"#, #".product(name: "OpenUIKit", package: "ios")"#]
         for package in app.packages {
             switch package.source {
             case let .remote(url, requirement):
@@ -85,9 +103,17 @@ public struct PackageWriter {
                 products.append(".product(name: \(literal(product)), package: \(literal(package.identity)))")
             }
         }
-        let settings = app.conditions.map { ".define(\(literal($0)))" } + [
-            #".unsafeFlags(["-module-alias", "SwiftUI=OpenSwiftUI", "-module-alias", "Observation=OpenObservation"])"#,
+        // `import QuartzCore` loads OpenUIKit through a module of its own: one module can't
+        // stand for two aliases.
+        let aliases = [
+            "SwiftUI=OpenSwiftUI", "Observation=OpenObservation", "UIKit=OpenUIKit",
+            "CoreGraphics=OpenCoreGraphics", "QuartzCore=IrisQuartzCore",
         ]
+        // Every file sees selectors and the Foundation API that takes them, as on Darwin, where
+        // Foundation has them from the Objective-C runtime.
+        let flags = (aliases.map { #""-module-alias", "\#($0)""# } + [#""-Xfrontend", "-import-module", "-Xfrontend", "IrisObjC""#])
+            .joined(separator: ", ")
+        let settings = app.conditions.map { ".define(\(literal($0)))" } + [".unsafeFlags([\(flags)])"]
         let list = { (items: [String], indent: String) in items.map { "\(indent)\($0)," }.joined(separator: "\n") }
         return """
         // swift-tools-version: 6.0

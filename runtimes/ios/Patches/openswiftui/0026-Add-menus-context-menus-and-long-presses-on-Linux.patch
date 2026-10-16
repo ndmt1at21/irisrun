@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: irisrun <irisrun@localhost>
 Date: Thu, 15 Oct 2026 18:54:08 +0700
-Subject: [PATCH 26/28] Add menus, context menus and long presses on Linux
+Subject: [PATCH 26/37] Add menus, context menus and long presses on Linux
 
 Menu opens a panel of its items next to its label, below it when there is
 room, each item a row with its icon at the trailing edge; a tap outside

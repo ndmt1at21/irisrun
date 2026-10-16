@@ -55,6 +55,7 @@ typedef struct {
   uint32_t traits;        // IrisTextTraits
   float letter_spacing;   // points added after each character
   float baseline_offset;  // points the run is raised by
+  uint32_t background;    // 0xAARRGGBB filling the run's line boxes; 0 for none
 } IrisTextRun;
 
 typedef struct {
@@ -284,6 +285,9 @@ bool iris_layer_set_shadow(IrisScene *scene, IrisLayer layer, uint32_t argb, flo
 // Where an image goes in the bounds: a raw value of UIView.ContentMode, from
 // scaleToFill (0) to bottomRight (12).
 bool iris_layer_set_content_mode(IrisScene *scene, IrisLayer layer, uint32_t mode);
+// Paints an image's opaque parts in one color, as UIKit draws template images;
+// argb 0 draws the image's own colors.
+bool iris_layer_set_content_tint(IrisScene *scene, IrisLayer layer, uint32_t argb);
 
 // Content: one of text, an image, a shape or a gradient. Setting one
 // replaces the other.
@@ -311,6 +315,36 @@ bool iris_layer_clear_content(IrisScene *scene, IrisLayer layer);
 // Starts an animation, replacing one of the same property.
 bool iris_layer_add_animation(IrisScene *scene, IrisLayer layer, const IrisAnimation *animation);
 bool iris_layer_remove_animations(IrisScene *scene, IrisLayer layer);
+
+// ---- Layout
+//
+// Auto Layout's linear constraints over numbered variables, kept solved by the
+// Cassowary simplex as they come and go. A solver is not thread-safe.
+
+typedef struct IrisLayoutSolver IrisLayoutSolver;
+
+typedef struct {
+  uint32_t variable;
+  double coefficient;
+} IrisLayoutTerm;
+
+// The strength of a constraint that must hold. Weaker constraints are wishes,
+// met as far as the required ones and stronger wishes let them.
+#define IRIS_LAYOUT_REQUIRED 1001001000.0
+
+IrisLayoutSolver *iris_layout_solver_new(void);
+void iris_layout_solver_free(IrisLayoutSolver *solver);
+// A new variable, numbered from 0 up; it is 0 until a constraint moves it.
+uint32_t iris_layout_variable_new(IrisLayoutSolver *solver);
+// Adds sum(coefficient * variable) + constant <relation> 0, where relation is
+// -1 (<=), 0 (==) or 1 (>=), at strength. Returns the constraint's id, or 0,
+// changing nothing, for a bad variable or relation, or a required constraint
+// that contradicts the required ones in the solver.
+uint64_t iris_layout_add(IrisLayoutSolver *solver, const IrisLayoutTerm *terms, size_t count, double constant,
+                         int32_t relation, double strength);
+// False if the constraint is not in the solver.
+bool iris_layout_remove(IrisLayoutSolver *solver, uint64_t constraint);
+double iris_layout_value(const IrisLayoutSolver *solver, uint32_t variable);
 
 #ifdef __cplusplus
 }

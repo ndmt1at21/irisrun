@@ -12,7 +12,7 @@ use skia_safe::textlayout::{
     TextStyle as SkTextStyle, TypefaceFontProvider,
 };
 use skia_safe::{
-    Color, Data, Font, FontArguments, FontMgr, FontStyle, FourByteTag, Point, Typeface,
+    Color, Data, Font, FontArguments, FontMgr, FontStyle, FourByteTag, Paint, Point, Typeface,
 };
 
 const WEIGHT_AXIS: FourByteTag = FourByteTag::from_chars('w', 'g', 'h', 't');
@@ -40,6 +40,8 @@ pub struct RunStyle {
     pub letter_spacing: f32,
     /// How far the run sits above the baseline, in points.
     pub baseline_offset: f32,
+    /// Fills the run's line boxes; transparent for none.
+    pub background: Color,
 }
 
 impl Default for RunStyle {
@@ -53,6 +55,7 @@ impl Default for RunStyle {
             strikethrough: false,
             letter_spacing: 0.0,
             baseline_offset: 0.0,
+            background: Color::TRANSPARENT,
         }
     }
 }
@@ -333,6 +336,11 @@ impl Fonts {
         decoration.set(TextDecoration::LINE_THROUGH, run.strikethrough);
         style.set_decoration_type(decoration);
         style.set_decoration_color(run.color);
+        if run.background.a() > 0 {
+            let mut background = Paint::default();
+            background.set_color(run.background);
+            style.set_background_paint(&background);
+        }
         if line_spacing != 0.0
             && let Some(metrics) = self.metrics(run.size, weight)
             && run.size > 0.0

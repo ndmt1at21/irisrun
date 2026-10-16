@@ -1,9 +1,10 @@
 name: iOS sample
 
-# The iOS sample app on OpenKit, as `irisrun start` builds it: OpenSwiftUI with the Iris
-# patches, the sample compiled against it, then examples/ios-swiftui/session.txt played
-# through the stdout renderer with every `# expect` checked (runtimes/ios/Scripts/check-sample.sh).
-# Building OpenSwiftUI takes a while, so this runs only when what it builds changes.
+# The iOS sample apps on OpenKit, as `irisrun start` builds them: OpenSwiftUI with the Iris
+# patches and OpenUIKit, each sample compiled against them, then its session.txt played through
+# the stdout renderer with every `# expect` checked (runtimes/ios/Scripts/check-sample.sh). The
+# tests of runtimes/ios that need OpenKit's checkouts and the render core (OpenUIKit) run here
+# too, and so does runtimes/ios/Tests/Apps, apps that check OpenKit the same way. Building OpenSwiftUI takes a while, so this runs only when what it builds changes.
 
 on:
   push:
@@ -11,12 +12,14 @@ on:
     paths:
       - runtimes/ios/**
       - examples/ios-swiftui/**
+      - examples/ios-uikit/**
       - crates/render/**
       - .github/workflows/ios-sample.yml
   pull_request:
     paths:
       - runtimes/ios/**
       - examples/ios-swiftui/**
+      - examples/ios-uikit/**
       - crates/render/**
       - .github/workflows/ios-sample.yml
 
@@ -48,4 +51,9 @@ jobs:
           path: ~/.cache/irisrun/p0-05
           key: openkit-${{ hashFiles('runtimes/ios/Patches/**', 'runtimes/ios/Scripts/fetch-openswiftui.sh') }}
       - run: runtimes/ios/Scripts/fetch-openswiftui.sh
+      - working-directory: runtimes/ios
+        run: swift test -Xlinker -L"$GITHUB_WORKSPACE/target/release"
       - run: runtimes/ios/Scripts/check-sample.sh
+      - run: runtimes/ios/Scripts/check-sample.sh examples/ios-uikit
+      # What SwiftUI does with the UIKit views it embeds (UIViewRepresentable), in an app of its own.
+      - run: runtimes/ios/Scripts/check-sample.sh runtimes/ios/Tests/Apps/Representables

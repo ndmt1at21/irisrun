@@ -11,6 +11,7 @@ publish.workspace = true
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+kasuari.workspace = true
 skia-safe.workspace = true
 
 [lints]

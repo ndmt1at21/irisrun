@@ -1,0 +1,886 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 06:03:57 +0700
+Subject: [PATCH 33/37] Run apps in Iris's UIKit and host SwiftUI with
+ UIHostingController on Linux
+
+On iOS a SwiftUI app is a UIKit app: App.main() runs UIApplicationMain with
+SwiftUI's app delegate, whose scene delegate puts the scene's views in a
+window under a UIHostingController. On Linux apps now run the same way, in
+Iris's OpenUIKit, so SwiftUI and UIKit apps share one host: one Device
+Protocol device, one script language and one screen description. The stdout
+app is left for apps that ask for the stdout renderer.
+
+UIHostingController's view, _UIHostingView, is a ViewRendererHost like the
+stdout app's host: its content lays out in the view's bounds and safe area,
+takes UIKit's traits, renders when the view lays out, and draws through the
+render core into a layer of its own that the view's layer holds, so that
+UIKit owns the window's layers and SwiftUI no longer replaces them. Touches
+that UIKit hit-tests to the view go to SwiftUI's gestures; while one of its
+text fields is focused the view is UIKit's first responder, so the keyboard
+reaches SwiftUI, and a UIKit text input that takes the keyboard ends
+SwiftUI's editing. In a script SwiftUI's clock moves on while a step settles
+and while a finger is held, as before.
+
+UIApplicationDelegateAdaptor makes the app's delegate on Linux too, through
+the factory irisrun-ios-build gives such classes; SwiftUI's app delegate
+passes UIKit's lifecycle callbacks on to it.
+---
+ Sources/OpenSwiftUI/App/App/App.swift         |   5 +
+ .../OpenSwiftUI/App/App/Stdout/IrisApp.swift  | 138 ++++++
+ .../App/App/Stdout/StdoutApp.swift            |   2 +-
+ .../UIKit/UIApplicationDelegateAdaptor.swift  |  37 +-
+ .../Controller/IrisHostingController.swift    |  65 +++
+ .../UIHostingControllerSizingOptions.swift    |   3 +-
+ .../Hosting/UIKit/View/IrisHostingView.swift  | 400 ++++++++++++++++++
+ .../DisplayListLayerRenderer.swift            |  30 +-
+ .../DisplayListStdoutRenderer.swift           |   6 +
+ 9 files changed, 674 insertions(+), 12 deletions(-)
+ create mode 100644 Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift
+ create mode 100644 Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/IrisHostingController.swift
+ create mode 100644 Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+
+diff --git a/Sources/OpenSwiftUI/App/App/App.swift b/Sources/OpenSwiftUI/App/App/App.swift
+index 002e6eb..0563d41 100644
+--- a/Sources/OpenSwiftUI/App/App/App.swift
++++ b/Sources/OpenSwiftUI/App/App/App.swift
+@@ -214,6 +214,10 @@ typealias PlatformApplication = NSObject
+ typealias PlatformApplicationDelegate = AnyObject
+ 
+ func runApp<Application>(_ app: Application) -> Never where Application: App {
++    #if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++    // Iris: apps run as on iOS, in Iris's UIKit (IrisApp.swift).
++    runIrisApp(app)
++    #else
+     // Iris: an iPhone-sized surface, in points, unless the app asks for another.
+     var options = _RendererConfiguration.StdoutOptions()
+     options.surface = CGSize(width: 390, height: 844)
+@@ -223,6 +227,7 @@ func runApp<Application>(_ app: Application) -> Never where Application: App {
+         exit(1)
+     }
+     runStdoutApp(app, options: options)
++    #endif
+ }
+ 
+ func runTestingApp<V1, V2>(rootView: V1, comparisonView: V2, didLaunch: @escaping (any TestHost, any TestHost) -> ()) -> Never where V1: View, V2: View {
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift
+new file mode 100644
+index 0000000..7cff5d4
+--- /dev/null
++++ b/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift
+@@ -0,0 +1,138 @@
++//
++//  IrisApp.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++import OpenSwiftUICore
++import IrisHost
++import OpenUIKit
++
++// MARK: - runIrisApp
++
++/// Iris: runs the app as on iOS, in Iris's UIKit, which shows it on a device or plays a script
++/// against it with the host it has for every app: UIKit launches with SwiftUI's app delegate,
++/// whose scene delegate shows the app's first scene in a window, under a UIHostingController.
++func runIrisApp(_ app: some App) -> Never {
++    Update.dispatchImmediately(reason: nil) {
++        let graph = AppGraph(app: app)
++        graph.instantiate()
++        AppGraph.shared = graph
++    }
++    MainActor.assumeIsolated {
++        IrisAppDelegate.main()
++    }
++    exit(0)
++}
++
++// MARK: - IrisAppDelegate
++
++/// Iris: SwiftUI's app delegate. It passes UIKit's callbacks on to the app's own delegate, if
++/// the app has one (`UIApplicationDelegateAdaptor`), and makes the app's window scene with
++/// `IrisSceneDelegate`.
++// ponytail: the lifecycle callbacks are passed on, not every method as SwiftUI forwards them on
++// iOS; the app delegate's own scene configurations and delegates are not asked.
++final class IrisAppDelegate: UIResponder, UIApplicationDelegate, _IrisInstantiable {
++    static func _irisMake() -> AnyObject {
++        IrisAppDelegate()
++    }
++
++    private lazy var fallback = AppGraph.delegateBox?.delegate as? any UIApplicationDelegate
++
++    func application(_ application: UIApplication, willFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
++        fallback?.application(application, willFinishLaunchingWithOptions: launchOptions) ?? true
++    }
++
++    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
++        fallback?.application(application, didFinishLaunchingWithOptions: launchOptions) ?? true
++    }
++
++    func applicationDidBecomeActive(_ application: UIApplication) {
++        fallback?.applicationDidBecomeActive(application)
++    }
++
++    func applicationWillResignActive(_ application: UIApplication) {
++        fallback?.applicationWillResignActive(application)
++    }
++
++    func applicationDidEnterBackground(_ application: UIApplication) {
++        fallback?.applicationDidEnterBackground(application)
++    }
++
++    func applicationWillEnterForeground(_ application: UIApplication) {
++        fallback?.applicationWillEnterForeground(application)
++    }
++
++    func applicationWillTerminate(_ application: UIApplication) {
++        fallback?.applicationWillTerminate(application)
++    }
++
++    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
++        let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
++        configuration.delegateClass = IrisSceneDelegate.self
++        return configuration
++    }
++}
++
++// MARK: - IrisSceneDelegate
++
++/// Iris: shows the app's first scene in the window scene that UIKit connects, in a window whose
++/// root is a UIHostingController, with UIKit's scene phase in the scene's environment.
++// ponytail: one scene, made once; changes to the app's scenes and scene storage come later.
++final class IrisSceneDelegate: UIResponder, UIWindowSceneDelegate, _IrisInstantiable {
++    static func _irisMake() -> AnyObject {
++        IrisSceneDelegate()
++    }
++
++    var window: UIWindow?
++    private var controller: UIHostingController<IrisSceneRoot>?
++
++    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
++        guard let windowScene = scene as? UIWindowScene,
++              let item = Update.ensure({ AppGraph.shared?.rootSceneList?.items.first }) else {
++            printError("OpenSwiftUI: the app has no scene to show")
++            return
++        }
++        let controller = UIHostingController(rootView: IrisSceneRoot(content: item.value.view, phase: .inactive))
++        controller.host.inheritedEnvironment = item.environment
++        // ponytail: the app's views lay out under the status bar and the home indicator, as
++        // Iris has always shown SwiftUI apps; UIKit's safe area (47 and 34 points) once the
++        // SwiftUI sample's session and frames are made anew for it.
++        controller.safeAreaRegions = []
++        let window = UIWindow(windowScene: windowScene)
++        window.rootViewController = controller
++        window.makeKeyAndVisible()
++        self.window = window
++        self.controller = controller
++    }
++
++    func sceneWillEnterForeground(_ scene: UIScene) {
++        controller?.rootView.phase = .inactive
++    }
++
++    func sceneDidBecomeActive(_ scene: UIScene) {
++        controller?.rootView.phase = .active
++    }
++
++    func sceneWillResignActive(_ scene: UIScene) {
++        controller?.rootView.phase = .inactive
++    }
++
++    func sceneDidEnterBackground(_ scene: UIScene) {
++        controller?.rootView.phase = .background
++    }
++}
++
++/// Iris: a scene's views, in its phase.
++struct IrisSceneRoot: View {
++    var content: AnyView
++    var phase: ScenePhase
++
++    var body: some View {
++        content.environment(\.scenePhase, phase)
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+index 02db71d..0135843 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/StdoutApp.swift
+@@ -219,7 +219,7 @@ private func writeFrame<Content>(
+     var drawing = Duration.zero
+     var bytes = 0
+     for _ in 0 ..< count {
+-        layers += clock.measure { irisScene.show(list) }
++        layers += clock.measure { irisScene.show(list, in: irisScene.root) }
+         drawing += clock.measure { bytes += irisScene.encode(.jpeg)?.count ?? 0 }
+     }
+     let perFrame = (layers + drawing) / count
+diff --git a/Sources/OpenSwiftUI/App/App/UIKit/UIApplicationDelegateAdaptor.swift b/Sources/OpenSwiftUI/App/App/UIKit/UIApplicationDelegateAdaptor.swift
+index 9158b59..daf3f72 100644
+--- a/Sources/OpenSwiftUI/App/App/UIKit/UIApplicationDelegateAdaptor.swift
++++ b/Sources/OpenSwiftUI/App/App/UIKit/UIApplicationDelegateAdaptor.swift
+@@ -5,8 +5,13 @@
+ //  Audited for 6.5.4
+ //  Status: Complete
+ 
+-#if os(iOS) || os(visionOS)
++// Iris: also for Iris's UIKit on Linux.
++#if os(iOS) || os(visionOS) || !canImport(Darwin)
++#if canImport(Darwin)
+ public import UIKit
++#else
++public import OpenUIKit
++#endif
+ @_spi(ForOpenSwiftUIOnly)
+ import OpenSwiftUICore
+ #if OPENSWIFTUI_OPENCOMBINE
+@@ -162,7 +167,13 @@ public struct UIApplicationDelegateAdaptor<DelegateType>: DynamicProperty where
+     ///   [UIApplicationDelegate](https://developer.apple.com/documentation/uikit/uiapplicationdelegate)
+     ///   protocol.
+     public init(_ delegateType: DelegateType.Type = DelegateType.self) {
++        #if canImport(Darwin)
+         let box = FallbackDelegateBox<DelegateType>(nil)
++        #else
++        // Iris: Swift on Linux makes a class it knows by type alone through a factory, which
++        // irisrun-ios-build gives the classes that adopt UIApplicationDelegate.
++        let box = IrisDelegateBox((DelegateType.self as? any _IrisInstantiable.Type)?._irisMake() as? NSObject)
++        #endif
+         AppGraph.delegateBox = box
+     }
+ 
+@@ -184,6 +195,9 @@ public struct UIApplicationDelegateAdaptor<DelegateType>: DynamicProperty where
+ @available(OpenSwiftUI_v2_0, *)
+ extension UIApplicationDelegateAdaptor where DelegateType: ObservableObject {
+ 
++    // Iris: not on Linux, where such a delegate is made as any other and stays out of the
++    // environment.
++    #if canImport(Darwin)
+     /// Creates a UIKit app delegate adaptor using a delegate that's
+     /// an observable object.
+     ///
+@@ -224,6 +238,7 @@ extension UIApplicationDelegateAdaptor where DelegateType: ObservableObject {
+         let box = ObservableObjectFallbackDelegateBox<DelegateType>()
+         AppGraph.delegateBox = box
+     }
++    #endif
+ 
+     /// A projection of the observed object that provides bindings to its
+     /// properties.
+@@ -267,6 +282,9 @@ extension UIApplicationDelegateAdaptor where DelegateType: ObservableObject {
+ @available(watchOS, unavailable)
+ extension UIApplicationDelegateAdaptor where DelegateType: Observable {
+ 
++    // Iris: not on Linux, where such a delegate is made as any other and stays out of the
++    // environment.
++    #if canImport(Darwin)
+     /// Creates a UIKit app delegate adaptor using an observable delegate.
+     ///
+     /// Call this initializer indirectly by creating a property with the
+@@ -305,10 +323,27 @@ extension UIApplicationDelegateAdaptor where DelegateType: Observable {
+         let box = ObservableFallbackDelegateBox<DelegateType>()
+         AppGraph.delegateBox = box
+     }
++    #endif
+ }
+ 
+ @available(OpenSwiftUI_v2_0, *)
+ @available(macOS, unavailable)
+ @available(watchOS, unavailable)
+ extension UIApplicationDelegateAdaptor: Sendable {}
++
++#if !canImport(Darwin)
++/// Iris: holds the app delegate that `UIApplicationDelegateAdaptor` made.
++final class IrisDelegateBox: AnyFallbackDelegateBox {
++    private let instance: NSObject?
++
++    init(_ instance: NSObject?) {
++        self.instance = instance
++        super.init()
++    }
++
++    override var delegate: NSObject? {
++        instance
++    }
++}
++#endif
+ #endif
+diff --git a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/IrisHostingController.swift b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/IrisHostingController.swift
+new file mode 100644
+index 0000000..c211d92
+--- /dev/null
++++ b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/IrisHostingController.swift
+@@ -0,0 +1,65 @@
++//
++//  IrisHostingController.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++public import OpenUIKit
++
++/// A UIKit view controller that manages a SwiftUI view hierarchy.
++///
++/// Iris: in Iris's UIKit, with a `_UIHostingView` (IrisHostingView.swift) as its view.
++@MainActor
++@preconcurrency
++open class UIHostingController<Content>: UIViewController where Content: View {
++    let host: _UIHostingView<Content>
++
++    public init(rootView: Content) {
++        host = _UIHostingView(rootView: rootView)
++        super.init(nibName: nil, bundle: nil)
++        host.hostingController = self
++    }
++
++    public init?(coder aDecoder: NSCoder, rootView: Content) {
++        host = _UIHostingView(rootView: rootView)
++        super.init(coder: aDecoder)
++        host.hostingController = self
++    }
++
++    public required init?(coder aDecoder: NSCoder) {
++        preconditionFailure("init(coder:) must be implemented in a subclass and call super.init(coder:, rootView:)")
++    }
++
++    open override func loadView() {
++        view = host
++    }
++
++    /// The root view of the SwiftUI view hierarchy managed by this view controller.
++    public var rootView: Content {
++        get { host.rootView }
++        set { host.rootView = newValue }
++    }
++
++    /// The options for how the hosting controller tracks changes to the size of its SwiftUI
++    /// content.
++    public var sizingOptions: UIHostingControllerSizingOptions {
++        get { host.sizingOptions }
++        set {
++            host.sizingOptions = newValue
++            host.setNeedsLayout()
++        }
++    }
++
++    /// Calculates and returns the most appropriate size for the current view.
++    public func sizeThatFits(in size: CGSize) -> CGSize {
++        host.sizeThatFits(size)
++    }
++
++    /// The safe area regions that this view controller adds to its view.
++    public var safeAreaRegions: SafeAreaRegions {
++        get { host.safeAreaRegions }
++        set { host.safeAreaRegions = newValue }
++    }
++}
++#endif
+diff --git a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/UIHostingControllerSizingOptions.swift b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/UIHostingControllerSizingOptions.swift
+index 5271637..56675ba 100644
+--- a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/UIHostingControllerSizingOptions.swift
++++ b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/Controller/UIHostingControllerSizingOptions.swift
+@@ -5,7 +5,8 @@
+ //  Audited for 6.0.87
+ //  Status: Complete
+ 
+-#if os(iOS) || os(visionOS)
++// Iris: also for Iris's UIKit on Linux.
++#if os(iOS) || os(visionOS) || !canImport(Darwin)
+ 
+ /// Options for how a hosting controller tracks its content’s size.
+ @available(macOS, unavailable)
+diff --git a/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+new file mode 100644
+index 0000000..1a17e14
+--- /dev/null
++++ b/Sources/OpenSwiftUI/Integration/Hosting/UIKit/View/IrisHostingView.swift
+@@ -0,0 +1,400 @@
++//
++//  IrisHostingView.swift
++//  OpenSwiftUI
++//
++//  Status: Iris
++
++#if !OPENSWIFTUI_SWIFTUI_RENDERER && !canImport(Darwin)
++import Foundation
++@_spi(ForOpenSwiftUIOnly)
++@_spi(DisplayList_ViewSystem)
++import OpenSwiftUICore
++import IrisHost
++import IrisRender
++import OpenUIKit
++
++// MARK: - _UIHostingView
++
++/// Iris: the view of a `UIHostingController` in Iris's UIKit. Its SwiftUI content lays out in
++/// the view's bounds and safe area, renders when the view lays out (the view asks for layout
++/// whenever the view graph asks for an update), and draws through the render core into a
++/// layer of its own that the view's layer holds (`IrisLayerHost`). UIKit hit-tests touches to
++/// it as to any view, and they go on to SwiftUI's gestures. While one of its text fields is
++/// focused it is UIKit's first responder, so that the keyboard reaches SwiftUI, and a UIKit
++/// text input that takes the keyboard ends SwiftUI's editing.
++final class _UIHostingView<Content>: UIView, ViewRendererHost, ViewGraphRenderDelegate, EventGraphHost, IrisLayerHost where Content: View {
++    typealias RootView = ModifiedContent<ModifiedContent<Content, IrisPresentationHost>, HitTestBindingModifier>
++
++    let viewGraph: ViewGraph
++    let renderer = DisplayList.ViewRenderer(platform: .init(definition: IrisPlatformViewDefinition.self))
++    let eventBindingManager = EventBindingManager()
++    private lazy var input = DeviceInput(manager: eventBindingManager)
++
++    var rootView: Content {
++        didSet { invalidateProperties(.rootView) }
++    }
++
++    /// The environment the content starts from, such as its scene's; UIKit's traits go over it.
++    var inheritedEnvironment: EnvironmentValues? {
++        didSet { invalidateProperties(.environment) }
++    }
++
++    var safeAreaRegions = SafeAreaRegions.all {
++        didSet { invalidateProperties(.safeArea) }
++    }
++
++    var sizingOptions: UIHostingControllerSizingOptions = []
++    weak var hostingController: UIViewController?
++
++    var currentTimestamp: Time = .zero
++    var propertiesNeedingUpdate: ViewRendererHostProperties = .all
++    var renderingPhase: ViewRenderingPhase = .none
++    var externalUpdateCount: Int = .zero
++
++    /// The soonest update the view graph asked for, in seconds, for a script to settle.
++    private var requestedUpdate: Double?
++    /// The script's `irisScriptTime` that the view graph's clock has caught up with.
++    private var scriptTime = irisScriptTime
++    /// When the device next renders, at the latest.
++    private var scheduledRender: DispatchTime?
++    private var laidOut: (size: CGSize, safeArea: UIEdgeInsets)?
++    private var lastIdealSize: CGSize?
++    /// The SwiftUI text field this view stands in for as UIKit's first responder.
++    private var focusedSession: TextEditingSession?
++
++    init(rootView: Content) {
++        self.rootView = rootView
++        Update.begin()
++        viewGraph = ViewGraph(rootViewType: RootView.self, requestedOutputs: [.displayList, .layout, .viewResponders])
++        super.init(frame: .zero)
++        renderer.host = self
++        eventBindingManager.host = self
++        initializeViewGraph()
++        Update.end()
++        // As UIHostingController's view on iOS.
++        backgroundColor = .systemBackground
++    }
++
++    required init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    /// The render core layer the display list draws in, in this view's layer.
++    lazy var irisLayer: IrisRender.Layer = {
++        let layer = IrisRender.Layer(in: irisScene)
++        self.layer._irisContentLayer = layer
++        return layer
++    }()
++
++    // MARK: Rendering
++
++    /// Renders with the view graph's clock caught up: on a device it follows the uptime clock,
++    /// as touches do; a script's moves on by the time its steps let pass (`irisScriptTime`), as
++    /// while a finger is held, and while a step settles.
++    private func renderCaughtUp() {
++        let interval = irisAnimates ? max(Time.systemUptime - currentTimestamp, 0) : irisScriptTime - scriptTime
++        scriptTime = irisScriptTime
++        render(interval: interval, targetTimestamp: nil)
++    }
++
++    override func layoutSubviews() {
++        super.layoutSubviews()
++        let safeArea = safeAreaRegions.contains(.container) ? safeAreaInsets : .zero
++        if laidOut?.size != bounds.size {
++            invalidateProperties([.size, .containerSize])
++        }
++        if laidOut?.safeArea != safeArea {
++            invalidateProperties(.safeArea)
++        }
++        laidOut = (bounds.size, safeArea)
++        irisLayer.frame = Rect(x: 0, y: 0, width: Float(bounds.width), height: Float(bounds.height))
++        reconcilingFocus {
++            renderCaughtUp()
++            if !irisAnimates {
++                settle()
++            }
++        }
++        updateSizing()
++    }
++
++    /// Renders the updates the view graph asks for, such as the frames of an animation, on a
++    /// virtual 60 Hz clock until none is left, so that a script's step ends where SwiftUI
++    /// settles.
++    private func settle() {
++        var elapsed = 0.0
++        while let delay = requestedUpdate {
++            requestedUpdate = nil
++            // Endless animations and repeating timers never settle.
++            guard elapsed < 2 else {
++                printError("still updating after 2 s of app time; taking the frame as it is")
++                return
++            }
++            let interval = max(delay, 1.0 / 60)
++            elapsed += interval
++            render(interval: interval, targetTimestamp: nil)
++        }
++    }
++
++    /// What `sizingOptions` ask for after a render: the content's ideal size as the
++    /// controller's preferred size, or as the view's intrinsic size.
++    private func updateSizing() {
++        guard !sizingOptions.isEmpty else { return }
++        let size = intrinsicContentSize
++        if sizingOptions.contains(.preferredContentSize) {
++            hostingController?.preferredContentSize = size
++        }
++        if sizingOptions.contains(.intrinsicContentSize), lastIdealSize != size {
++            invalidateIntrinsicContentSize()
++        }
++        lastIdealSize = size
++    }
++
++    override var intrinsicContentSize: CGSize {
++        sizeThatFits(CGSize(width: CGFloat.infinity, height: .infinity))
++    }
++
++    /// The content's size for a proposal; dimensions beyond any screen are left to the content.
++    override func sizeThatFits(_ size: CGSize) -> CGSize {
++        let unspecified = 2_777_780.0
++        let fitting = sizeThatFits(_ProposedSize(
++            width: size.width >= unspecified ? nil : size.width,
++            height: size.height >= unspecified ? nil : size.height
++        ))
++        let pixelLength = 1 / (window?.screen.scale ?? UIScreen.main.scale)
++        return CGSize(
++            width: fitting.width.rounded(.up, toMultipleOf: pixelLength),
++            height: fitting.height.rounded(.up, toMultipleOf: pixelLength)
++        )
++    }
++
++    override func didMoveToWindow() {
++        super.didMoveToWindow()
++        invalidateProperties([.environment, .safeArea])
++    }
++
++    // MARK: Input
++
++    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
++        forward(touches, as: .began)
++    }
++
++    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
++        forward(touches, as: .moved)
++    }
++
++    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
++        forward(touches, as: .ended)
++    }
++
++    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
++        forward(touches, as: .cancelled)
++    }
++
++    /// The touches UIKit gives this view, in its coordinates, as SwiftUI's gestures take them.
++    private func forward(_ touches: Set<UITouch>, as phase: DeviceTouch.Phase) {
++        let time = touches.map(\.timestamp).max() ?? ProcessInfo.processInfo.systemUptime
++        touch(touches.map { touch in
++            DeviceTouch(id: UInt32(truncatingIfNeeded: ObjectIdentifier(touch).hashValue), phase: phase, location: touch.location(in: self))
++        }, at: time)
++    }
++
++    /// Runs input through SwiftUI's event system and text fields, with the view graph's clock
++    /// caught up first, as gestures such as a long press time touches with it; the result shows
++    /// when the view next lays out.
++    private func send(_ body: (DeviceInput) -> Void) {
++        reconcilingFocus {
++            if irisAnimates || scriptTime != irisScriptTime {
++                renderCaughtUp()
++            }
++            body(input)
++        }
++        setNeedsLayout()
++    }
++
++    // MARK: Focus
++
++    override var canBecomeFirstResponder: Bool {
++        focusedSession != nil
++    }
++
++    /// UIKit gives the keyboard to another responder, such as a UITextField: SwiftUI's text
++    /// field stops editing.
++    override func resignFirstResponder() -> Bool {
++        guard super.resignFirstResponder() else { return false }
++        if let focusedSession, TextInputFocus.shared.session === focusedSession {
++            TextInputFocus.shared.session = nil
++            setNeedsLayout()
++        }
++        focusedSession = nil
++        return true
++    }
++
++    /// Runs SwiftUI's input or rendering, then takes UIKit's keyboard if it focused one of this
++    /// view's text fields, or gives it back once editing ended.
++    private func reconcilingFocus(_ body: () -> Void) {
++        let before = TextInputFocus.shared.session
++        body()
++        guard let session = TextInputFocus.shared.session else {
++            if before != nil, isFirstResponder {
++                resignFirstResponder()
++            }
++            return
++        }
++        guard session !== before else { return }
++        focusedSession = session
++        if !becomeFirstResponder() {
++            // UIKit's first responder kept the keyboard.
++            focusedSession = nil
++            TextInputFocus.shared.session = nil
++        }
++    }
++
++    // MARK: ViewRendererHost
++
++    func updateRootView() {
++        viewGraph.setRootView(Self.makeRootView(rootView.modifier(IrisPresentationHost())))
++    }
++
++    func updateEnvironment() {
++        var environment = inheritedEnvironment ?? EnvironmentValues()
++        // UIKit's traits, as an iPhone in portrait has them in light mode. Layout rounds to the
++        // pixels of the frames drawn, so hairlines stay.
++        environment.displayScale = window?.screen.scale ?? UIScreen.main.scale
++        environment.horizontalSizeClass = .compact
++        environment.verticalSizeClass = .regular
++        environment.colorScheme = .light
++        viewGraph.setEnvironment(environment)
++    }
++
++    func updateTransform() {
++        viewGraph.invalidateTransform()
++    }
++
++    func updateSize() {
++        viewGraph.setProposedSize(bounds.size)
++    }
++
++    func updateSafeArea() {
++        let insets = safeAreaRegions.contains(.container) ? safeAreaInsets : .zero
++        viewGraph.setSafeAreaInsets(EdgeInsets(top: insets.top, leading: insets.left, bottom: insets.bottom, trailing: insets.right))
++    }
++
++    func updateContainerSize() {
++        viewGraph.setContainerSize(.fixed(bounds.size))
++    }
++
++    func updateFocusStore() {}
++
++    func updateFocusedItem() {}
++
++    func updateFocusedValues() {}
++
++    func updateAccessibilityEnvironment() {}
++
++    func `as`<T>(_ type: T.Type) -> T? {
++        if ViewGraphRenderDelegate.self == T.self {
++            return unsafeBitCast(self as any ViewGraphRenderDelegate, to: T.self)
++        } else if DisplayList.ViewRenderer.self == T.self {
++            return unsafeBitCast(renderer, to: T.self)
++        } else if EventGraphHost.self == T.self {
++            return unsafeBitCast(self as any EventGraphHost, to: T.self)
++        } else {
++            return nil
++        }
++    }
++
++    /// A device renders again after the delay, at most 60 times a second; a script settles
++    /// what is asked for while it renders, and renders the rest when the view lays out.
++    func requestUpdate(after delay: Double) {
++        requestedUpdate = min(requestedUpdate ?? delay, delay)
++        guard irisAnimates else {
++            if !isRendering {
++                setNeedsLayout()
++            }
++            return
++        }
++        let time = DispatchTime.now() + max(delay, 1.0 / 60)
++        if let scheduledRender, scheduledRender <= time {
++            return
++        }
++        scheduledRender = time
++        DispatchQueue.main.asyncAfter(deadline: time) { [weak self] in
++            guard let self else { return }
++            MainActor.assumeIsolated {
++                guard let scheduledRender = self.scheduledRender, scheduledRender <= .now() else { return }
++                self.scheduledRender = nil
++                self.setNeedsLayout()
++            }
++        }
++    }
++
++    /// Also while rendering: a change made then, such as by an onAppear action, still needs a
++    /// frame of its own.
++    func graphDidChange() {
++        requestUpdate(after: .zero)
++    }
++
++    // MARK: ViewGraphRenderDelegate
++
++    var renderingRootView: AnyObject {
++        self
++    }
++
++    func updateRenderContext(_ context: inout ViewGraphRenderContext) {
++        context.contentsScale = 1.0
++        context.opaqueBackground = false
++    }
++
++    func withMainThreadRender(wasAsync: Bool, _ body: () -> Time) -> Time {
++        body()
++    }
++
++    // MARK: EventGraphHost
++
++    var focusedResponder: ResponderNode? { nil }
++}
++
++// MARK: - Input from the host
++
++/// Iris: while this view is UIKit's first responder, the host's keyboard input comes here, and
++/// goes on to the focused SwiftUI text field.
++extension _UIHostingView: @preconcurrency DeviceInputHandler {
++    func touch(_ touches: [DeviceTouch], at time: TimeInterval) {
++        send { $0.touch(touches, at: time) }
++    }
++
++    func commit(_ text: String) {
++        send { $0.commit(text) }
++    }
++
++    func compose(_ text: String) {
++        send { $0.compose(text) }
++    }
++
++    func deleteSurrounding(before: Int, after: Int) {
++        send { $0.deleteSurrounding(before: before, after: after) }
++    }
++
++    func press(_ code: String, command: Bool) {
++        send { $0.press(code, command: command) }
++    }
++}
++
++// MARK: - The screen as text
++
++/// Iris: the SwiftUI content in the host's screen description, as the stdout renderer lists
++/// it, and its text for `tap <text>`.
++extension _UIHostingView: _IrisScreenContent {
++    var _irisScreenLines: [String] {
++        Update.ensure { viewGraph.displayList() }.0.stdoutLines
++    }
++
++    func _irisFrame(ofText text: String) -> CGRect? {
++        Update.ensure { viewGraph.displayList() }.0.stdoutFrame(ofText: text)
++    }
++}
++
++// ponytail: no platform views yet; UIViewRepresentable's will be the hosting view's subviews,
++// placed by the display list (P1-16, step 7b).
++private final class IrisPlatformViewDefinition: PlatformViewDefinition, @unchecked Sendable {}
++#endif
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+index cd42649..306a7b5 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListLayerRenderer.swift
+@@ -10,10 +10,18 @@ package import Foundation
+ import IrisHost
+ package import IrisRender
+ 
++// MARK: - IrisLayerHost
++
++/// Iris: a host whose views show in a render core layer of its own, as a hosting view's do in
++/// Iris's UIKit, which owns the window's layers and places this one in the hosting view's.
++package protocol IrisLayerHost: AnyObject {
++    var irisLayer: IrisRender.Layer { get }
++}
++
+ // MARK: - LayerRenderer
+ 
+-/// Iris: the platform renderer on Linux. It mirrors each new display list into the layers of
+-/// `irisScene`, which the host encodes into frames.
++/// Iris: the platform renderer on Linux. It mirrors each new display list into the render core
++/// layer of its host (`IrisLayerHost`), in `irisScene`, which the host encodes into frames.
+ final class LayerRenderer: ViewRendererBase {
+     let platform: DisplayList.ViewUpdater.Platform
+     weak var host: (any ViewRendererHost)?
+@@ -41,7 +49,9 @@ final class LayerRenderer: ViewRendererBase {
+             return .infinity
+         }
+         seed = nextSeed
+-        irisScene.show(list)
++        // The stdout app, which apps that ask for the stdout renderer get, has the scene's root
++        // to itself.
++        irisScene.show(list, in: (host as? any IrisLayerHost)?.irisLayer ?? irisScene.root)
+         irisSceneVersion += 1
+         if let host, let observer = host.as(ViewGraphRenderObserver.self) {
+             observer.didRender()
+@@ -69,14 +79,14 @@ final class LayerRenderer: ViewRendererBase {
+ // MARK: - Display list to layers
+ 
+ extension IrisRender.Scene {
+-    /// Replaces the window's layers with ones that draw `list`.
++    /// Replaces what `layer` holds with layers that draw `list`, from the layer's origin.
+     // ponytail: rebuilds every layer for each display list; keep layers by item identity once
+     // screens are big enough for this to show in frame times.
+-    package func show(_ list: DisplayList) {
+-        for layer in root.sublayers {
+-            layer.removeFromSuperlayer()
++    package func show(_ list: DisplayList, in layer: Layer) {
++        for sublayer in layer.sublayers {
++            sublayer.removeFromSuperlayer()
+         }
+-        add(list, to: root, at: .zero)
++        add(list, to: layer, at: .zero)
+     }
+ 
+     /// Items are placed from the origin of the item that holds their list.
+@@ -162,7 +172,9 @@ extension IrisRender.Scene {
+             _ = layer.setImage(encoded.bytes, scale: Float(image.scale))
+             parent.addSublayer(layer)
+         default:
+-            // ponytail: shape shadows, backdrops and platform views draw nothing yet.
++            // ponytail: shape shadows, backdrops and platform views draw nothing yet. A
++            // platform view (`.platformView`) will place its UIKit view's layer here, at
++            // `frame` in `parent` (P1-16, step 7b).
+             break
+         }
+     }
+diff --git a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
+index 65d379c..bd7cea3 100644
+--- a/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
++++ b/Sources/OpenSwiftUICore/Render/DisplayList/DisplayListStdoutRenderer.swift
+@@ -64,6 +64,12 @@ extension DisplayList {
+         return visitor.commands
+     }
+ 
++    /// Iris: what the list draws, a line each, as `stdoutDescription` lists it, for Iris's
++    /// UIKit to show inside a hosting view.
++    package var stdoutLines: [String] {
++        stdoutRenderCommands().map(\.description)
++    }
++
+     /// Iris: the frame of the first text that reads `string`, so a script can tap it by name.
+     package func stdoutFrame(ofText string: String) -> CGRect? {
+         for case let .text(frame, runs, _, _) in stdoutRenderCommands()

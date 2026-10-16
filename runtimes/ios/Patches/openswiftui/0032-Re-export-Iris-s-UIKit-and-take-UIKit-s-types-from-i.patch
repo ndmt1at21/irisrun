@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 05:05:44 +0700
+Subject: [PATCH 32/37] Re-export Iris's UIKit and take UIKit's types from it
+ on Linux
+
+On iOS, SwiftUI re-exports UIKit: import SwiftUI alone sees UIColor or
+UIApplication, and a file that imports both sees one of each type. On Linux
+UIKit is OpenUIKit in Iris's runtimes/ios, which apps see as UIKit through
+-module-alias, so OpenSwiftUI depends on it and re-exports it. UIKeyboardType
+and UITextContentType, which the text input modifiers had here, are UIKit's
+now. CALayer and NSUnderlineStyle exist twice inside OpenSwiftUI, OpenUIKit's
+and those of the QuartzCore and UIFoundation shims, so the two files that use
+them name the shims' explicitly.
+---
+ Package.swift                                 |  2 +
+ Sources/OpenSwiftUI/Export.swift              |  4 ++
+ .../Platform/TextLineStyleConversions.swift   |  5 +-
+ Sources/OpenSwiftUI/View/CALayerView.swift    |  9 ++--
+ .../View/TextField/TextInputModifiers.swift   | 48 +------------------
+ 5 files changed, 16 insertions(+), 52 deletions(-)
+
+diff --git a/Package.swift b/Package.swift
+index 8e17f1c..d583157 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -1003,6 +1003,8 @@ if !buildForDarwinPlatform {
+     for target in [openSwiftUICoreTarget, openSwiftUITarget] {
+         target.dependencies.append(.product(name: "IrisHost", package: "ios"))
+     }
++    // UIKit, which SwiftUI re-exports on iOS: Iris's OpenUIKit, from the same package.
++    openSwiftUITarget.dependencies.append(.product(name: "OpenUIKit", package: "ios"))
+ }
+ 
+ #if TUIST
+diff --git a/Sources/OpenSwiftUI/Export.swift b/Sources/OpenSwiftUI/Export.swift
+index c0e4bd1..af56fdb 100644
+--- a/Sources/OpenSwiftUI/Export.swift
++++ b/Sources/OpenSwiftUI/Export.swift
+@@ -23,6 +23,10 @@ package typealias UniqueID = OpenSwiftUICore.UniqueID
+ // UUID…), so apps that import nothing else still compile.
+ @_exported public import Foundation
+ @_exported public import OpenCoreGraphicsShims
++// Iris: on iOS, SwiftUI re-exports UIKit, so `import SwiftUI` alone sees UIColor or
++// UIApplication. UIKit on Linux is Iris's OpenUIKit, which apps see as UIKit through
++// -module-alias.
++@_exported public import OpenUIKit
+ #endif
+ 
+ #if canImport(OpenCombine)
+diff --git a/Sources/OpenSwiftUI/Integration/Graphic/Platform/TextLineStyleConversions.swift b/Sources/OpenSwiftUI/Integration/Graphic/Platform/TextLineStyleConversions.swift
+index 6dcd507..51000e1 100644
+--- a/Sources/OpenSwiftUI/Integration/Graphic/Platform/TextLineStyleConversions.swift
++++ b/Sources/OpenSwiftUI/Integration/Graphic/Platform/TextLineStyleConversions.swift
+@@ -6,6 +6,7 @@
+ //  Status: Complete
+ 
+ #if canImport(UIFoundation_Private) && !OPENSWIFTUI_XCFRAMEWORK_BUILD
++// Iris: qualified, as OpenSwiftUI re-exports Iris's UIKit on Linux, which has NSUnderlineStyle too.
+ public import UIFoundation_Private
+ 
+ @available(OpenSwiftUI_v3_0, *)
+@@ -23,13 +24,13 @@ extension Text.LineStyle {
+     ///
+     /// - Returns: A new ``Text.LineStyle`` or `nil` when
+     /// `nsUnderlineStyle` contains styles not supported by ``Text.LineStyle``.
+-    public init?(nsUnderlineStyle: NSUnderlineStyle) {
++    public init?(nsUnderlineStyle: UIFoundation_Private.NSUnderlineStyle) {
+         self.init(_nsUnderlineStyle: nsUnderlineStyle)
+     }
+ }
+ 
+ @available(OpenSwiftUI_v3_0, *)
+-extension NSUnderlineStyle {
++extension UIFoundation_Private.NSUnderlineStyle {
+ 
+     /// Creates a ``NSUnderlineStyle`` from ``Text.LineStyle``.
+     ///
+diff --git a/Sources/OpenSwiftUI/View/CALayerView.swift b/Sources/OpenSwiftUI/View/CALayerView.swift
+index d8c0eeb..09a950e 100644
+--- a/Sources/OpenSwiftUI/View/CALayerView.swift
++++ b/Sources/OpenSwiftUI/View/CALayerView.swift
+@@ -5,11 +5,12 @@
+ //  Audited for 6.5.4
+ //  Status: Complete
+ 
++// Iris: qualified, as OpenSwiftUI re-exports Iris's UIKit on Linux, which has a CALayer of its own.
+ public import OpenQuartzCoreShims
+ public import OpenSwiftUICore
+ 
+ @available(OpenSwiftUI_v2_0, *)
+-public struct _CALayerView<LayerType>: View where LayerType: CALayer {
++public struct _CALayerView<LayerType>: View where LayerType: OpenQuartzCoreShims.CALayer {
+     /// The function used to update the layer instance.
+     public var update: (LayerType) -> Void
+ }
+@@ -40,17 +41,17 @@ extension _CALayerView: RendererLeafView, PlatformLayerFactory {
+         .platformLayer(self)
+     }
+ 
+-    package var platformLayerType: CALayer.Type {
++    package var platformLayerType: OpenQuartzCoreShims.CALayer.Type {
+         LayerType.self
+     }
+ 
+-    package func updatePlatformLayer(_ layer: CALayer) {
++    package func updatePlatformLayer(_ layer: OpenQuartzCoreShims.CALayer) {
+         update(layer as! LayerType)
+     }
+ }
+ 
+ @available(OpenSwiftUI_v2_0, *)
+-extension _CALayerView where LayerType == CALayer {
++extension _CALayerView where LayerType == OpenQuartzCoreShims.CALayer {
+     /// Initializes with a function to update the layer whenever the
+     /// view value changes.
+     nonisolated public init(onUpdate update: @escaping (LayerType) -> Void) {
+diff --git a/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift b/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift
+index 0bafbbb..94a2182 100644
+--- a/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift
++++ b/Sources/OpenSwiftUI/View/TextField/TextInputModifiers.swift
+@@ -8,6 +8,7 @@
+ public import Foundation
+ @_spi(ForOpenSwiftUIOnly)
+ public import OpenSwiftUICore
++public import OpenUIKit
+ 
+ // MARK: - Submit
+ 
+@@ -103,52 +104,7 @@ extension View {
+     }
+ }
+ 
+-// ponytail: UIKit's types live here until OpenKit has UIKit (P1-16); move them there then, and
+-// re-export UIKit from SwiftUI as Apple's does.
+-
+-/// The type of keyboard to display for a given text-based view.
+-public enum UIKeyboardType: Int, Sendable {
+-    case `default`
+-    case asciiCapable
+-    case numbersAndPunctuation
+-    case URL
+-    case numberPad
+-    case phonePad
+-    case namePhonePad
+-    case emailAddress
+-    case decimalPad
+-    case twitter
+-    case webSearch
+-    case asciiCapableNumberPad
+-
+-    public static var alphabet: UIKeyboardType { .asciiCapable }
+-}
+-
+-/// The semantic meaning for a text-entry area.
+-public struct UITextContentType: RawRepresentable, Hashable, Sendable {
+-    public var rawValue: String
+-
+-    public init(rawValue: String) {
+-        self.rawValue = rawValue
+-    }
+-
+-    public static let name = UITextContentType(rawValue: "name")
+-    public static let givenName = UITextContentType(rawValue: "given-name")
+-    public static let familyName = UITextContentType(rawValue: "family-name")
+-    public static let nickname = UITextContentType(rawValue: "nickname")
+-    public static let organizationName = UITextContentType(rawValue: "organization")
+-    public static let fullStreetAddress = UITextContentType(rawValue: "street-address")
+-    public static let addressCity = UITextContentType(rawValue: "address-level2")
+-    public static let postalCode = UITextContentType(rawValue: "postal-code")
+-    public static let countryName = UITextContentType(rawValue: "country-name")
+-    public static let telephoneNumber = UITextContentType(rawValue: "tel")
+-    public static let emailAddress = UITextContentType(rawValue: "email")
+-    public static let URL = UITextContentType(rawValue: "url")
+-    public static let username = UITextContentType(rawValue: "username")
+-    public static let password = UITextContentType(rawValue: "password")
+-    public static let newPassword = UITextContentType(rawValue: "new-password")
+-    public static let oneTimeCode = UITextContentType(rawValue: "one-time-code")
+-}
++// Iris: UIKeyboardType and UITextContentType are UIKit's (Iris's OpenUIKit), as on iOS.
+ 
+ extension View {
+     public func keyboardType(_ type: UIKeyboardType) -> some View {

@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: irisrun <irisrun@localhost>
+Date: Fri, 16 Oct 2026 07:41:54 +0700
+Subject: [PATCH 34/37] Lay out SwiftUI apps in iOS's safe area on Linux
+
+The window's hosting controller now keeps SwiftUI's content clear of the
+status bar and the home indicator, as on iOS, where it laid out from the
+edges of the screen before.
+
+As on iOS, scroll views reach under the bars and the home indicator along
+the axes they scroll, with their content starting and ending clear of
+them, and presentations cover the whole screen: their dimming, a sheet
+down to the bottom edge with its content above the home indicator, and
+menus, whose anchors are in the screen's coordinates.
+---
+ .../OpenSwiftUI/App/App/Stdout/IrisApp.swift    |  4 ----
+ .../View/Presentation/IrisMenu.swift            |  2 ++
+ .../View/Presentation/IrisPresentation.swift    | 17 ++++++++++++-----
+ .../OpenSwiftUI/View/Scroll/ScrollView.swift    | 11 +++++++++++
+ 4 files changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift b/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift
+index 7cff5d4..6f07033 100644
+--- a/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift
++++ b/Sources/OpenSwiftUI/App/App/Stdout/IrisApp.swift
+@@ -98,10 +98,6 @@ final class IrisSceneDelegate: UIResponder, UIWindowSceneDelegate, _IrisInstanti
+         }
+         let controller = UIHostingController(rootView: IrisSceneRoot(content: item.value.view, phase: .inactive))
+         controller.host.inheritedEnvironment = item.environment
+-        // ponytail: the app's views lay out under the status bar and the home indicator, as
+-        // Iris has always shown SwiftUI apps; UIKit's safe area (47 and 34 points) once the
+-        // SwiftUI sample's session and frames are made anew for it.
+-        controller.safeAreaRegions = []
+         let window = UIWindow(windowScene: windowScene)
+         window.rootViewController = controller
+         window.makeKeyAndVisible()
+diff --git a/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift b/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift
+index ee0f80f..eabf811 100644
+--- a/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift
++++ b/Sources/OpenSwiftUI/View/Presentation/IrisMenu.swift
+@@ -209,6 +209,8 @@ struct IrisMenuPanel<Content>: View where Content: View {
+                 }
+             }
+         }
++        // Over the whole screen, whose coordinates the anchor is in.
++        .ignoresSafeArea()
+     }
+ 
+     private var panel: some View {
+diff --git a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+index 11e28f8..122713e 100644
+--- a/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
++++ b/Sources/OpenSwiftUI/View/Presentation/IrisPresentation.swift
+@@ -21,8 +21,11 @@ private let secondaryLabel = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 25
+ private let separator = Color(red: 60 / 255, green: 60 / 255, blue: 67 / 255, opacity: 0.29)
+ /// The background of alerts and dialogs: a light material, opaque here.
+ private let materialBackground = Color(red: 242 / 255, green: 242 / 255, blue: 242 / 255)
+-/// The dimming behind a modal presentation.
+-private let dimming = Color(red: 0, green: 0, blue: 0, opacity: 0.2)
++/// The dimming behind a modal presentation, over the whole screen.
++private var dimming: some View {
++    Color(red: 0, green: 0, blue: 0, opacity: 0.2)
++        .ignoresSafeArea()
++}
+ 
+ // MARK: - Presentations
+ 
+@@ -367,8 +370,11 @@ private struct SheetContainer: View {
+     @GestureState private var drag: CGFloat = 0
+ 
+     var body: some View {
++        // The sheet reaches the bottom of the screen; its content stays clear of the home
++        // indicator.
+         GeometryReader { proxy in
+-            let full = max(proxy.size.height - 10, 0)
++            let bottom = proxy.safeAreaInsets.bottom
++            let full = max(proxy.size.height - bottom - 10, 0)
+             let detents = (options.detents ?? [.large]).sorted { $0.height(in: full) < $1.height(in: full) }
+             let current = options.selection?.wrappedValue ?? detent ?? detents.first ?? .large
+             let height = current.height(in: full)
+@@ -379,8 +385,8 @@ private struct SheetContainer: View {
+                 presentation.content.view
+                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                     .onPreferenceChange(IrisSheetOptionsKey.self) { options = $0 }
+-                    .padding(.bottom, radius)
+-                    .frame(height: height + radius)
++                    .padding(.bottom, radius + bottom)
++                    .frame(height: height + radius + bottom)
+                     .background(options.background ?? Color.white)
+                     .clipShape(RoundedRectangle(cornerRadius: radius))
+                     .overlay(alignment: .top) {
+@@ -409,6 +415,7 @@ private struct SheetContainer: View {
+             }
+             .transformPreference(IrisSheetOptionsKey.self) { $0 = IrisSheetOptions() }
+         }
++        .ignoresSafeArea(.container, edges: .bottom)
+     }
+ 
+     /// Rests the sheet at the detent closest to where a drag would take it, or dismisses it
+diff --git a/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift b/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+index d0881a9..890f2bd 100644
+--- a/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
++++ b/Sources/OpenSwiftUI/View/Scroll/ScrollView.swift
+@@ -45,10 +45,20 @@ public struct ScrollView<Content>: View where Content: View {
+ 
+     public var body: some View {
+         reader?.add(scroll.targets)
++        // As on iOS, the view reaches under the bars and the home indicator along the axes it
++        // scrolls, and its content starts and ends clear of them.
++        let edges: Edge.Set = [axes.contains(.vertical) ? .vertical : [], axes.contains(.horizontal) ? .horizontal : []]
+         return GeometryReader { viewport in
+             let _ = prepareTargets(viewport: viewport.size)
++            let insets = viewport.safeAreaInsets
+             content
+                 .environment(\.irisScrollTargets, scroll.targets)
++                .padding(EdgeInsets(
++                    top: edges.contains(.top) ? insets.top : 0,
++                    leading: edges.contains(.leading) ? insets.leading : 0,
++                    bottom: edges.contains(.bottom) ? insets.bottom : 0,
++                    trailing: edges.contains(.trailing) ? insets.trailing : 0
++                ))
+                 .fixedSize(horizontal: axes.contains(.horizontal), vertical: axes.contains(.vertical))
+                 // The content's own size: a frame would cap it at the size the view offers.
+                 .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
+@@ -71,6 +81,7 @@ public struct ScrollView<Content>: View where Content: View {
+                 .contentShape(Rectangle())
+                 .highPriorityGesture(scrollGesture(viewport: viewport.size))
+         }
++        .ignoresSafeArea(.container, edges: edges)
+     }
+ 
+     /// Content shorter than the view sits at its top, narrower content in its middle, as in
